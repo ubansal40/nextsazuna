@@ -30,6 +30,31 @@ export function SiteHeader({ cartCount = 0, customerName }: SiteHeaderProps) {
   const [cartOpen, setCartOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const accountRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+
+  /**
+   * Publish the header's real height as `--sz-header-h`.
+   *
+   * Anything sticking below the header — the listing toolbar, the filter rail —
+   * has to offset by it. A hardcoded value is wrong the moment the announcement
+   * bar collapses on scroll and the header shrinks, which shows up as a gap
+   * under the sticky toolbar. A ResizeObserver keeps it honest across the
+   * collapse, the logo resize, and any viewport change.
+   */
+  useEffect(() => {
+    const node = headerRef.current;
+    if (!node) return;
+    const publish = () => {
+      const height = Math.round(node.getBoundingClientRect().height);
+      if (height > 20) {
+        document.documentElement.style.setProperty("--sz-header-h", `${height}px`);
+      }
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   // One scroll listener for the whole shell: collapses the announcement bar and
   // shrinks the logo. Passive because it never calls preventDefault.
@@ -64,6 +89,7 @@ export function SiteHeader({ cartCount = 0, customerName }: SiteHeaderProps) {
       <AnnouncementBar collapsed={scrolled} />
 
       <header
+        ref={headerRef}
         className="sticky top-0 z-[60] border-b border-line bg-canvas"
         onMouseLeave={() => setOpenMega(null)}
       >

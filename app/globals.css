@@ -127,6 +127,9 @@
   --sz-text-page-title: 42px;
   --sz-text-page-title-sm: 30px;
   --sz-plp-sidebar: 256px;
+  /* Fallback only. SiteHeader measures itself and overwrites this on the root
+   * element, because the announcement bar collapses on scroll and the header's
+   * real height changes — a fixed value leaves a gap under the sticky toolbar. */
   --sz-header-h: 77px;
 
   --sz-control-h: 44px;             /* icon button, tap target */
@@ -239,6 +242,8 @@
   --animate-fade: sz-fade var(--sz-dur) ease;
   --animate-scale-in: sz-scale-in 240ms var(--sz-ease-out);
   --animate-slide-right: sz-slide-right var(--sz-dur-slow) var(--sz-ease-out);
+  --animate-slide-left: sz-slide-left var(--sz-dur-slow) var(--sz-ease-out);
+  --animate-sheet-up: sz-sheet-up 280ms var(--sz-ease-out);
   --animate-toast-in: sz-toast-in var(--sz-dur) var(--sz-ease-out);
   --animate-shimmer: sz-shimmer 1.4s infinite;
   --animate-lift: sz-lift 3s ease-in-out infinite;
@@ -254,6 +259,8 @@
   to { opacity: 1; transform: none }
 }
 @keyframes sz-slide-right { from { transform: translateX(102%) } to { transform: none } }
+@keyframes sz-slide-left { from { transform: translateX(-102%) } to { transform: none } }
+@keyframes sz-sheet-up { from { transform: translateY(24px); opacity: .4 } to { transform: none; opacity: 1 } }
 @keyframes sz-toast-in { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: none } }
 @keyframes sz-shimmer { 100% { transform: translateX(180%) } }
 @keyframes sz-lift { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-8px) } }

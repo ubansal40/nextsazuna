@@ -11,7 +11,11 @@ export interface ProductCardProps {
   compareAtPrice?: string;
   image?: { src: string; alt: string };
   certified?: boolean;
-  /** Corner flag, e.g. "Offer". */
+  /**
+   * Corner flag. Defaults to "Offer" whenever a compare-at price is present —
+   * the spec flags every discounted piece, so requiring callers to pass it
+   * meant the badge silently never appeared.
+   */
   offerLabel?: string;
   outOfStock?: boolean;
   className?: string;
@@ -36,6 +40,7 @@ export function ProductCard({
   className,
 }: ProductCardProps) {
   const onSale = Boolean(compareAtPrice);
+  const flag = offerLabel ?? (onSale ? "Offer" : undefined);
 
   return (
     <Link
@@ -78,9 +83,9 @@ export function ProductCard({
           )}
         </div>
 
-        {offerLabel && !outOfStock && (
+        {flag && !outOfStock && (
           <span className="absolute top-[11px] left-[11px] bg-primary-700 text-white font-mono text-[length:var(--sz-text-micro)] tracking-[var(--sz-tracking-caps)] uppercase rounded-[var(--sz-radius-pill)] px-[11px] py-[5px]">
-            {offerLabel}
+            {flag}
           </span>
         )}
 

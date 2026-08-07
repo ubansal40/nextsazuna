@@ -103,7 +103,7 @@ export function Toolbar({ countLabel, basePath, state, sort, facets }: Props) {
         </div>
       </div>
 
-      <Drawer open={sheet === "filter"} onClose={() => setSheet(null)} title="Filters" side="left">
+      <Drawer open={sheet === "filter"} onClose={() => setSheet(null)} title="Filters" side="bottom">
         {activeCount > 0 && (
           <Link
             href={clearAllUrl(basePath, extra)}
@@ -144,28 +144,33 @@ export function Toolbar({ countLabel, basePath, state, sort, facets }: Props) {
         ))}
       </Drawer>
 
-      <Drawer open={sheet === "sort"} onClose={() => setSheet(null)} title="Sort by" side="left">
-        <ul className="flex flex-col gap-1 list-none p-0 m-0">
-          {SORT_OPTIONS.map((option) => (
-            <li key={option.value}>
+      <Drawer open={sheet === "sort"} onClose={() => setSheet(null)} title="Sort by" side="bottom">
+        {/* radiogroup, not a list: these are mutually exclusive choices. */}
+        <div role="radiogroup" aria-label="Sort options" className="-mx-2 py-2">
+          {SORT_OPTIONS.map((option) => {
+            const selected = option.value === sort;
+            return (
               <Link
+                key={option.value}
                 href={sortUrl(basePath, state, option.value)}
                 onClick={() => setSheet(null)}
-                aria-current={option.value === sort ? "true" : undefined}
+                role="radio"
+                aria-checked={selected}
                 className={cn(
-                  "flex min-h-[44px] items-center justify-between rounded-[var(--sz-radius-sm)] px-3 py-3 text-sm no-underline",
-                  option.value === sort
-                    ? "bg-primary-50 font-semibold text-primary-700"
-                    : "text-body hover:bg-primary-50",
-                  "hover:no-underline",
+                  "flex min-h-12 w-full items-center justify-between gap-3 rounded-[10px] px-3.5 py-3.5",
+                  "text-[14.5px] no-underline transition-colors duration-[var(--sz-dur-fast)]",
+                  selected ? "font-semibold text-heading" : "text-body",
+                  "hover:bg-surface hover:no-underline",
                 )}
               >
                 {option.label}
-                {option.value === sort && <Icon name="check" size={16} />}
+                {selected && (
+                  <Icon name="check" size={17} strokeWidth={2.4} className="text-primary-700" />
+                )}
               </Link>
-            </li>
-          ))}
-        </ul>
+            );
+          })}
+        </div>
       </Drawer>
     </>
   );
