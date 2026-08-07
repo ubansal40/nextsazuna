@@ -28,6 +28,13 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Initial schema migration** — 26 tables ported from the Express application,
   with its destructive `DROP TABLE` bootstrap statements and MariaDB-only
   `IF NOT EXISTS` guards removed. Verified against MySQL 8.4.
+- **Coupons migration** — the `coupons` table and four `orders` discount columns,
+  found by diffing the live database against the generated schema rather than by
+  reading code. The new database now matches production exactly: 27 tables, zero drift.
+- `scripts/copy-database.mjs` — copies table data from a source database into this
+  one. Re-serialises driver-parsed JSON columns, which MariaDB stores as LONGTEXT
+  with a `json_valid()` constraint and would otherwise be written as
+  `[object Object]`.
 - **CI** — token parity, typecheck, lint and build on every push and pull request;
   commit message linting on pull requests.
 - Architecture decision records in `docs/adr`.
