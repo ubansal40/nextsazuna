@@ -2,13 +2,16 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { formatPrice } from "@/lib/format";
 import { Icon, useDialog } from "@/components/ui";
 
 export interface MiniCartLine {
   id: string;
   name: string;
-  /** Formatted, already localised. Money never round-trips through a float. */
+  /** Formatted, already localised. */
   price: string;
+  /** The same amount in paisa, as an exact integer, for the subtotal. */
+  priceMinor: number;
   quantity: number;
   href?: string;
   imageUrl?: string | null;
@@ -18,6 +21,10 @@ export interface MiniCartProps {
   open: boolean;
   onClose: () => void;
   lines?: MiniCartLine[];
+  /**
+   * Overrides the computed subtotal. The cart phase will pass a server-side
+   * total that also knows about coupons; until then this is summed from lines.
+   */
   subtotal?: string;
   /** True once the order qualifies for free insured shipping. */
   freeShipping?: boolean;
@@ -46,6 +53,16 @@ export function MiniCart({
 }: MiniCartProps) {
   const { ref, onBackdropClick } = useDialog(open, onClose);
   const empty = lines.length === 0;
+  // Pieces, not lines — two of the same ring is a bag of two. The header badge
+  // counts the same way, so the two can never disagree.
+  const count = lines.reduce((sum, line) => sum + line.quantity, 0);
+
+  // Summed in integer paisa, so several lines cannot drift the way repeated
+  // float addition would.
+  const total =
+    subtotal ??
+    formatPrice(lines.reduce((sum, line) => sum + line.priceMinor * line.quantity, 0) / 100) ??
+    "";
 
   return (
     <dialog
@@ -61,7 +78,7 @@ export function MiniCart({
             className="font-[family-name:var(--sz-font-display)] text-dropdown-title font-medium text-heading"
           >
             Your Bag{" "}
-            <span className="font-mono text-control-sm text-muted">({lines.length})</span>
+            <span className="font-mono text-control-sm text-muted">({count})</span>
           </h2>
           <button
             type="button"
@@ -189,7 +206,7 @@ export function MiniCart({
               <div className="mb-3.5 flex items-baseline justify-between">
                 <span className="text-sm text-muted">Subtotal</span>
                 <span className="font-mono text-md font-semibold tracking-tight text-primary-700">
-                  {subtotal}
+                  {total}
                 </span>
               </div>
               <Link href="/checkout" onClick={onClose} className={primaryButtonClass}>

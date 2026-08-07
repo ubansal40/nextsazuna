@@ -237,6 +237,53 @@
   --sz-dur-cart-drawer: 320ms;
 }
 
+/* ----------------------------------------------------------------------------
+ * PRODUCT DETAIL TOKENS — Sazuna Product Detail PDP.dc.html
+ * ------------------------------------------------------------------------- */
+:root {
+  --sz-pdp-aside: 440px;          /* buy column */
+  --sz-pdp-thumbs: 74px;          /* gallery thumbnail rail */
+  --sz-pdp-related-card: 60%;     /* carousel item width once the grid breaks */
+
+  --sz-text-pdp-title: 34px;
+  --sz-text-pdp-title-sm: 27px;
+  --sz-text-pdp-price: 21px;
+  --sz-text-section-title: 30px;
+  --sz-text-error-title: 26px;
+  --sz-text-modal-title: 22px;
+  --sz-text-accordion: 19px;
+  --sz-text-prose: 14.5px;        /* accordion + modal body, trust headline */
+  --sz-text-spec-key: 13.5px;
+  --sz-text-trust: 12.5px;
+  --sz-text-offer: 11.5px;
+  --sz-text-related-price: 15px;
+
+  --sz-radius-gallery: 16px;
+  --sz-radius-thumb: 9px;
+  --sz-radius-modal: 18px;
+  --sz-radius-sticky: 11px;
+
+  --sz-control-h-lg: 52px;        /* Add to Bag, WhatsApp, sticky primary */
+  --sz-control-h-md: 50px;        /* Notify Me */
+  --sz-notify-input-h: 46px;
+  --sz-gallery-dot-w: 22px;
+  --sz-gallery-dot-w-idle: 7px;
+  --sz-gallery-dot-h: 6px;
+
+  /* The SGL panel is the one surface that tints oxblood without being a CTA. */
+  --sz-sgl-bg: #FBF3F2;
+  --sz-sgl-border: #E5C9C4;
+  --sz-shadow-modal: 0 30px 80px -20px rgb(var(--sz-heading-rgb) / .5);
+}
+
+/* The PDP's own breakpoints, from its spec stylesheet: the two columns stack at
+ * 980, the page gutter and title step down at 760, and the related grid becomes
+ * a snap carousel at 640. */
+@custom-variant pdp-stacked (@media (width < 980px));
+@custom-variant pdp-split (@media (width >= 980px));
+@custom-variant pdp-narrow (@media (width < 760px));
+@custom-variant pdp-carousel (@media (width < 640px));
+
 /* The desktop nav collapses to the burger at 900px — narrower than Tailwind's
  * `lg`, because the seven category links plus the featured link only stop
  * fitting there. Declared once so no component carries the literal. */
@@ -288,6 +335,9 @@
   --color-whatsapp: var(--sz-whatsapp);
   --color-whatsapp-hover: var(--sz-whatsapp-hover);
 
+  --color-sgl-bg: var(--sz-sgl-bg);
+  --color-sgl-border: var(--sz-sgl-border);
+
   --color-control-track: var(--sz-control-track);
   --color-control-border: var(--sz-control-border);
   --color-control-ring: var(--sz-control-ring);
@@ -312,6 +362,9 @@
   --text-3xl: var(--sz-text-3xl);
   --text-4xl: var(--sz-text-4xl);
 
+  --text-micro: var(--sz-text-micro);
+  --text-control-sm: var(--sz-text-control-sm);
+  --text-control: var(--sz-text-control);
   --text-badge: var(--sz-text-badge);
   --text-eyebrow: var(--sz-text-eyebrow);
   --text-mega-note: var(--sz-text-mega-note);
@@ -320,6 +373,19 @@
   --text-otp: var(--sz-text-otp);
   --text-dropdown-title: var(--sz-text-dropdown-title);
   --text-cart-empty-title: var(--sz-text-cart-empty-title);
+
+  --text-pdp-title: var(--sz-text-pdp-title);
+  --text-pdp-title-sm: var(--sz-text-pdp-title-sm);
+  --text-pdp-price: var(--sz-text-pdp-price);
+  --text-section-title: var(--sz-text-section-title);
+  --text-error-title: var(--sz-text-error-title);
+  --text-modal-title: var(--sz-text-modal-title);
+  --text-accordion: var(--sz-text-accordion);
+  --text-prose: var(--sz-text-prose);
+  --text-spec-key: var(--sz-text-spec-key);
+  --text-trust: var(--sz-text-trust);
+  --text-offer: var(--sz-text-offer);
+  --text-related-price: var(--sz-text-related-price);
 
   --leading-tight: var(--sz-leading-tight);
   --leading-snug: var(--sz-leading-snug);
@@ -348,6 +414,7 @@
   --shadow-search: var(--sz-shadow-search);
   --shadow-drawer: var(--sz-shadow-drawer);
   --shadow-whatsapp: var(--sz-shadow-whatsapp);
+  --shadow-modal: var(--sz-shadow-modal);
 
   --ease-out: var(--sz-ease-out);
   --ease-in-out: var(--sz-ease-in-out);

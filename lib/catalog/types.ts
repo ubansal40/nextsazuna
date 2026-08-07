@@ -66,8 +66,16 @@ export interface ProductSummary {
   slug: string;
   href: string;
   sku: string | null;
-  /** The price a customer pays. */
+  /** The price a customer pays, formatted for display. */
   price: string;
+  /**
+   * The same amount in paisa, as an exact integer.
+   *
+   * Totals are summed on this, never on `price` re-parsed or on a rupee float —
+   * integer minor units are the only representation that stays exact when a
+   * cart adds several lines together.
+   */
+  priceMinor: number;
   /** MRP, present only when it genuinely exceeds the selling price. */
   compareAtPrice: string | null;
   imageUrl: string | null;
@@ -75,6 +83,12 @@ export interface ProductSummary {
 }
 
 export interface ProductDetail extends ProductSummary {
+  /**
+   * Gallery, in display order, with the primary image first and duplicates
+   * removed. Always contains `imageUrl` when there is one, so the gallery never
+   * has to fall back to the summary field.
+   */
+  images: string[];
   description: string | null;
   material: string | null;
   purity: string | null;

@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
+import { ADD_TO_BAG_EVENT, type AddToBagDetail } from "@/lib/cart-events";
 import { Icon } from "@/components/ui";
 import { jewelleryUrl, NAV_CATEGORIES, NAV_FEATURED, type NavCategory } from "@/lib/navigation";
 import { AccountMenu, type ShellCustomer } from "./account-menu";
@@ -24,7 +25,7 @@ export interface SiteHeaderProps {
   whatsappHref?: string | null;
   /** Signed-in customer. Absent renders the one-time-code panel. */
   customer?: ShellCustomer;
-  /** Cart contents. Empty until the cart phase lands. */
+  /** Seed cart contents. Empty until the cart phase lands a persisted store. */
   cartLines?: MiniCartLine[];
   cartSubtotal?: string;
   freeShipping?: boolean;
@@ -46,10 +47,11 @@ export function SiteHeader({
   announcement,
   whatsappHref,
   customer,
-  cartLines = [],
+  cartLines: seedLines = [],
   cartSubtotal,
   freeShipping,
 }: SiteHeaderProps) {
+  const [lines, setLines] = useState<MiniCartLine[]>(seedLines);
   const [scrolled, setScrolled] = useState(false);
   const [mega, setMega] = useState<NavCategory | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
@@ -108,7 +110,33 @@ export function SiteHeader({
     };
   }, [accountOpen]);
 
-  const cartCount = cartLines.reduce((total, line) => total + line.quantity, 0);
+  /**
+   * "Add to Bag" from a product page. Adding an item the bag already holds
+   * bumps its quantity rather than repeating the line, and always opens the
+   * drawer so the reader sees what just happened.
+   */
+  useEffect(() => {
+    const onAdd = (event: Event) => {
+      const { detail } = event as CustomEvent<AddToBagDetail>;
+      if (!detail?.id) return;
+      setLines((current) => {
+        const existing = current.find((line) => line.id === detail.id);
+        if (existing) {
+          return current.map((line) =>
+            line.id === detail.id ? { ...line, quantity: line.quantity + 1 } : line,
+          );
+        }
+        return [...current, { ...detail, quantity: 1 }];
+      });
+      setCartOpen(true);
+      setMega(null);
+      setAccountOpen(false);
+    };
+    window.addEventListener(ADD_TO_BAG_EVENT, onAdd);
+    return () => window.removeEventListener(ADD_TO_BAG_EVENT, onAdd);
+  }, []);
+
+  const cartCount = lines.reduce((total, line) => total + line.quantity, 0);
 
   function openMega(category: NavCategory) {
     setMega(category);
@@ -289,9 +317,17 @@ export function SiteHeader({
       <MiniCart
         open={cartOpen}
         onClose={() => setCartOpen(false)}
-        lines={cartLines}
+        lines={lines}
         subtotal={cartSubtotal}
         freeShipping={freeShipping}
+        onRemove={(id) => setLines((current) => current.filter((line) => line.id !== id))}
+        onQuantityChange={(id, quantity) =>
+          setLines((current) =>
+            quantity < 1
+              ? current.filter((line) => line.id !== id)
+              : current.map((line) => (line.id === id ? { ...line, quantity } : line)),
+          )
+        }
       />
     </>
   );

@@ -59,11 +59,10 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
         product.description?.slice(0, 160) ??
         `${product.name} — certified jewellery from Sazuna Jewellers.`,
       alternates: { canonical },
-      openGraph: {
-        title: product.name,
-        type: "website",
-        images: product.imageUrl ? [{ url: product.imageUrl }] : undefined,
-      },
+      // No `openGraph` block on purpose. Next has no "product" in its OpenGraph
+      // type union and emits `other` entries as <meta name>, which OG scrapers
+      // ignore — they read `property`. ProductDetailView renders the whole OG
+      // set itself; declaring any of it here would duplicate og:type.
     };
   }
 

@@ -53,3 +53,17 @@ export function formatWeight(value: string | number | null | undefined): string 
   if (!Number.isFinite(numeric) || numeric <= 0) return null;
   return `${numeric.toFixed(3)} g`;
 }
+
+/**
+ * Stone weights are carats, not grams.
+ *
+ * `products.diamond_weight` holds carats — the product copy on the same row
+ * reads "Diamond Weight 0.39 ct". Running it through formatWeight prints
+ * "0.390 g", which is both the wrong unit and off by a factor of five.
+ */
+export function formatCarats(value: string | number | null | undefined): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return `${numeric.toFixed(2)} ct`;
+}

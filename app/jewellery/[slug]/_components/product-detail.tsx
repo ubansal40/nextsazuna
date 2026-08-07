@@ -1,245 +1,343 @@
 import Image from "next/image";
 import Link from "next/link";
-import { Accordion, Badge, Icon, ProductCard, Tabs } from "@/components/ui";
+import { Accordion, Icon } from "@/components/ui";
 import { getRelatedProducts, type ProductDetail } from "@/lib/catalog";
-import { formatWeight } from "@/lib/format";
-import { AddToBag } from "./add-to-bag";
+import { getWhatsAppHref } from "@/lib/content";
+import { formatCarats, formatWeight } from "@/lib/format";
+import { NotifyMe } from "./notify-me";
+import { enquiryHref } from "@/lib/whatsapp";
+import { PdpActions, ShareButton } from "./pdp-actions";
+import { PdpStickyBar } from "./pdp-sticky-bar";
+import { ProductGallery } from "./product-gallery";
+import { TrustPanels } from "./trust-panels";
 
 /**
- * Product detail page.
+ * Product detail page — Sazuna Product Detail PDP.dc.html.
  *
- * A Server Component: the only interactive island is the quantity + add-to-bag
- * control, so everything else — including the price, which must be correct and
- * crawlable — is rendered on the server.
+ * A Server Component. The gallery, the buy actions, the trust modal, the
+ * waiting-list form and the mobile bar are the only client islands; everything
+ * that matters to a crawler — title, price, availability, specifications and
+ * the structured data — is rendered on the server.
  */
-export async function ProductDetailView({ product }: { product: ProductDetail }) {
-  const related = await getRelatedProducts(product.id);
 
-  const specs = [
-    ["Material", product.material],
-    ["Purity", product.purity],
-    ["Stone", product.stoneType],
-    ["Gross weight", formatWeight(product.grossWeight)],
-    ["Net weight", formatWeight(product.netWeight)],
-    ["Diamond weight", formatWeight(product.diamondWeight)],
-    ["Stone weight", formatWeight(product.stoneWeight)],
-    ["SKU", product.sku],
-  ].filter(([, value]) => Boolean(value)) as [string, string][];
+const CANONICAL_ORIGIN = "https://next.sazunajewellers.com";
+
+/**
+ * Policy copy, identical on every product. It belongs to the brand rather than
+ * the catalog, so it lives here; the product's own description supplies the
+ * first panel.
+ */
+const POLICY_PANELS = [
+  {
+    id: "care",
+    title: "Care Instructions",
+    paragraphs: [
+      "Store separately in the pouch provided to avoid scratches.",
+      "Avoid perfume, chlorine and abrasives; clean gently with a soft brush and mild soapy water.",
+    ],
+  },
+  {
+    id: "shipping",
+    title: "Shipping & Returns",
+    paragraphs: [
+      "Free insured shipping across Nepal, dispatched in 3–5 working days.",
+      "7-day returns on unworn pieces with the certificate and packaging intact.",
+    ],
+  },
+  {
+    id: "cert",
+    title: "Certification",
+    paragraphs: [
+      "Ships with an independent SGL certificate detailing the 4Cs — carat, colour, clarity and cut.",
+      "The certificate number is laser-inscribed and matched to your invoice.",
+    ],
+  },
+  {
+    id: "buyback",
+    title: "Buyback & Warranty",
+    paragraphs: [
+      "Lifetime buyback and exchange at prevailing value.",
+      "Covered against manufacturing defects, with free service for life.",
+    ],
+  },
+];
+
+function Paragraphs({ items }: { items: string[] }) {
+  return (
+    <>
+      {items.map((text) => (
+        <p key={text} className="m-0 mb-2.5 max-w-[70ch] [text-wrap:pretty]">
+          {text}
+        </p>
+      ))}
+    </>
+  );
+}
+
+export async function ProductDetailView({ product }: { product: ProductDetail }) {
+  const [related, whatsappBase] = await Promise.all([
+    getRelatedProducts(product.id),
+    getWhatsAppHref(),
+  ]);
+
+  const url = `${CANONICAL_ORIGIN}${product.href}`;
+  const whatsappHref = whatsappBase
+    ? enquiryHref(whatsappBase, product.name, product.sku, url)
+    : null;
+
+  // Spec's row order. Empty values are dropped rather than shown blank, which
+  // matters here: most of these columns are populated on a minority of rows.
+  const specs: [string, string][] = (
+    [
+      ["SKU", product.sku],
+      ["Diamond Weight", formatCarats(product.diamondWeight)],
+      ["Accent Gemstone", product.stoneType],
+      ["Gold Colour", product.material],
+      ["Purity", product.purity],
+      ["Gross Weight", formatWeight(product.grossWeight)],
+      ["Net Weight", formatWeight(product.netWeight)],
+    ] satisfies [string, string | null][]
+  ).filter((row): row is [string, string] => Boolean(row[1]?.trim()));
+
+  const panels = [
+    ...(product.description
+      ? [
+          {
+            id: "details",
+            title: "Product Details",
+            paragraphs: product.description
+              .split(/\n{2,}/)
+              .map((p) => p.trim())
+              .filter(Boolean),
+          },
+        ]
+      : []),
+    ...POLICY_PANELS,
+  ];
+
+  const bagItem = {
+    id: String(product.id),
+    name: product.name,
+    price: product.price,
+    priceMinor: product.priceMinor,
+    href: product.href,
+    imageUrl: product.imageUrl,
+  };
+
+  const category = product.categories[0];
+  // Bare number for the price tags; `price` is display-formatted.
+  const amount = (product.priceMinor / 100).toFixed(2);
+  const description =
+    product.description ?? `${product.name} — certified jewellery from Sazuna Jewellers.`;
 
   return (
-    <div className="mx-auto max-w-[var(--sz-container)] px-6 py-10 md:px-10">
-      <nav aria-label="Breadcrumb" className="mb-6">
-        <ol className="flex flex-wrap items-center gap-2 list-none p-0 m-0 text-xs text-muted">
-          <li>
-            <Link href="/" className="no-underline hover:text-primary-700">
-              Home
-            </Link>
-          </li>
-          {product.categories[0] && (
-            <>
-              <li aria-hidden="true">
-                <Icon name="chevron-right" size={12} />
-              </li>
-              <li>
-                <Link
-                  href={product.categories[0].href}
-                  className="no-underline hover:text-primary-700"
-                >
-                  {product.categories[0].name}
-                </Link>
-              </li>
-            </>
-          )}
-          <li aria-hidden="true">
-            <Icon name="chevron-right" size={12} />
-          </li>
-          <li className="truncate text-body">{product.name}</li>
-        </ol>
-      </nav>
+    <>
+      {/*
+        Open Graph, rendered here rather than through generateMetadata: Next has
+        no "product" in its OpenGraph type union, and its `other` field emits
+        <meta name>, which OG scrapers ignore. React hoists these into <head>.
+      */}
+      <meta property="og:type" content="product" />
+      <meta property="og:title" content={product.name} />
+      <meta property="og:description" content={description.slice(0, 200)} />
+      <meta property="og:url" content={url} />
+      {product.images.map((image) => (
+        <meta key={image} property="og:image" content={image} />
+      ))}
+      <meta property="og:price:amount" content={amount} />
+      <meta property="og:price:currency" content="NPR" />
+      <meta property="product:price:amount" content={amount} />
+      <meta property="product:price:currency" content="NPR" />
+      <meta
+        property="product:availability"
+        content={product.inStock ? "in stock" : "out of stock"}
+      />
+      {product.sku && <meta property="product:retailer_item_id" content={product.sku} />}
 
-      <div className="grid gap-10 lg:grid-cols-2 lg:gap-14">
-        {/* Media */}
-        <div
-          className="relative flex aspect-square items-center justify-center overflow-hidden rounded-[var(--sz-radius-lg)] border border-line"
-          style={{
-            background:
-              "radial-gradient(120% 120% at 32% 22%, var(--sz-media-from), var(--sz-media-to))",
-          }}
-        >
-          {product.imageUrl ? (
-            <Image
-              src={product.imageUrl}
-              alt={product.name}
-              fill
-              priority
-              sizes="(max-width: 1024px) 100vw, 50vw"
-              className="object-cover"
-            />
-          ) : (
-            <span
-              aria-hidden="true"
-              className="size-24 rotate-45 bg-accent opacity-50 shadow-[inset_0_0_0_1px_rgb(255_255_255/.55)]"
-            />
-          )}
+      {/* Structured data. Rendered from the same values the page shows, so the
+          two cannot disagree — a mismatched price is a Merchant Center error. */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org/",
+            "@type": "Product",
+            name: product.name,
+            sku: product.sku ?? undefined,
+            description: product.description ?? undefined,
+            image: product.images.length ? product.images : undefined,
+            brand: { "@type": "Brand", name: "Sazuna" },
+            category: category?.name,
+            offers: {
+              "@type": "Offer",
+              url,
+              priceCurrency: "NPR",
+              price: amount,
+              availability: product.inStock
+                ? "https://schema.org/InStock"
+                : "https://schema.org/OutOfStock",
+            },
+          }),
+        }}
+      />
 
-          <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 bg-[rgb(var(--sz-canvas-rgb)/.92)] py-2.5 border-t border-[rgb(var(--sz-accent-rgb)/.4)]">
-            <span aria-hidden="true" className="size-1.5 rotate-45 bg-accent" />
-            <span className="font-mono text-2xs uppercase tracking-[var(--sz-tracking-caps)] text-primary-700">
-              SGL certified
-            </span>
-          </span>
-        </div>
+      <div className="mx-auto max-w-[var(--sz-container)] px-10 pb-24 pdp-narrow:px-5">
+        <div className="mt-6 grid items-start gap-12 pdp-stacked:gap-6 pdp-split:grid-cols-[minmax(0,1fr)_var(--sz-pdp-aside)] pdp-narrow:mt-4">
+          <ProductGallery images={product.images} productName={product.name} />
 
-        {/* Detail */}
-        <div>
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            {product.inStock ? (
-              <Badge tone="inStock" size="sm">
-                In stock
-              </Badge>
-            ) : (
-              <Badge tone="outOfStock" size="sm">
-                Out of stock
-              </Badge>
-            )}
-            {product.tags.slice(0, 2).map((tag) => (
-              <Badge key={tag.slug} tone="outline" size="sm">
-                {tag.name}
-              </Badge>
-            ))}
-          </div>
+          <section>
+            <h1 className="m-0 mt-2 font-[family-name:var(--sz-font-display)] text-pdp-title font-normal leading-[1.08] tracking-tight text-heading [text-wrap:balance] pdp-narrow:text-pdp-title-sm">
+              {product.name}
+            </h1>
 
-          <h1 className="text-xl leading-[var(--sz-leading-snug)]">{product.name}</h1>
-
-          {/* Sale pricing is a hard design rule — see CLAUDE.md. Never restyle. */}
-          <div className="mt-4 flex items-baseline gap-3">
-            <span className="font-mono text-2xl font-semibold tabular-nums tracking-[var(--sz-tracking-price)] text-primary-700">
-              {product.price}
-            </span>
-            {product.compareAtPrice && (
-              <s className="font-mono text-md tabular-nums tracking-[var(--sz-tracking-price)] text-price-struck">
-                {product.compareAtPrice}
-              </s>
-            )}
-          </div>
-          <p className="mt-1.5 text-xs text-muted">Inclusive of all taxes.</p>
-
-          <div className="mt-7">
-            <AddToBag productId={product.id} inStock={product.inStock} />
-          </div>
-
-          <ul className="mt-7 grid grid-cols-2 gap-3 list-none p-0">
-            {[
-              { icon: "shield", label: "SGL certified" },
-              { icon: "truck", label: "Free insured shipping" },
-              { icon: "refresh", label: "Buyback & exchange" },
-              { icon: "star", label: "Lifetime repair" },
-            ].map((item) => (
-              <li key={item.label} className="flex items-center gap-2.5 text-sm text-body">
-                <Icon name={item.icon as "shield"} size={18} className="text-accent" />
-                {item.label}
-              </li>
-            ))}
-          </ul>
-
-          {specs.length > 0 && (
-            <div className="mt-9">
-              <Tabs
-                items={[
-                  {
-                    id: "specs",
-                    label: "Specifications",
-                    content: (
-                      <dl className="grid grid-cols-2 gap-y-2.5 font-mono text-[length:var(--sz-text-control-sm)]">
-                        {specs.map(([label, value]) => (
-                          <div key={label} className="contents">
-                            <dt className="text-muted">{label}</dt>
-                            <dd className="m-0 text-right text-body">{value}</dd>
-                          </div>
-                        ))}
-                      </dl>
-                    ),
-                  },
-                  {
-                    id: "care",
-                    label: "Care",
-                    content: (
-                      <p className="m-0 max-w-[60ch]">
-                        Store separately in the pouch provided. Avoid perfume and chlorine. We clean
-                        and re-polish free of charge at any Sazuna store.
-                      </p>
-                    ),
-                  },
-                  ...(product.description
-                    ? [
-                        {
-                          id: "story",
-                          label: "The Story",
-                          content: (
-                            <p className="m-0 max-w-[60ch] whitespace-pre-line">
-                              {product.description}
-                            </p>
-                          ),
-                        },
-                      ]
-                    : []),
-                ]}
-              />
+            {/* Sale pricing is a hard design rule — see CLAUDE.md. Never restyle. */}
+            <div className="mt-3.5 flex flex-wrap items-baseline gap-2.5">
+              <span className="font-mono text-pdp-price font-semibold tabular-nums tracking-tight text-primary-700">
+                {product.price}
+              </span>
+              {product.compareAtPrice && (
+                <>
+                  <s className="font-mono text-sm tabular-nums tracking-tight text-price-struck">
+                    {product.compareAtPrice}
+                  </s>
+                  <span className="rounded-pill border border-primary-200 bg-primary-50 px-2.5 py-1 text-offer font-semibold text-primary-700">
+                    Offer
+                  </span>
+                </>
+              )}
             </div>
-          )}
 
-          <div className="mt-9">
-            <Accordion
-              exclusive
-              items={[
-                {
-                  id: "shipping",
-                  question: "Shipping & delivery",
-                  answer:
-                    "Insured delivery within Kathmandu takes 1–2 working days, and 3–5 working days elsewhere in Nepal. Cash on delivery is available nationwide.",
-                },
-                {
-                  id: "returns",
-                  question: "Returns & exchange",
-                  answer:
-                    "Unworn pieces can be returned within 7 days in their original packaging. Personalised and engraved pieces are made to order and cannot be returned unless they arrive damaged.",
-                },
-                {
-                  id: "certificate",
-                  question: "Certification",
-                  answer:
-                    "Every diamond is graded by SGL. The physical certificate ships inside the box and a digital copy is attached to your order record.",
-                },
-              ]}
-            />
-          </div>
+            {!product.inStock && (
+              <p className="m-0 mt-[18px] inline-flex items-center gap-2 rounded-pill bg-surface px-3.5 py-1.5 text-control-sm font-semibold text-muted">
+                <span aria-hidden="true" className="size-[7px] rounded-pill bg-muted" />
+                Currently out of stock
+              </p>
+            )}
+
+            <div data-pdp-actions className="mt-[22px]">
+              {product.inStock ? (
+                <PdpActions product={bagItem} whatsappHref={whatsappHref} />
+              ) : (
+                <>
+                  <NotifyMe slug={product.slug} whatsappHref={whatsappHref} />
+                  <ShareButton title={product.name} />
+                </>
+              )}
+            </div>
+
+            <TrustPanels />
+
+            {specs.length > 0 && (
+              <div className="mt-7 border-t border-line-soft pt-5">
+                <h2 className="m-0 mb-1.5 font-[family-name:var(--sz-font-display)] text-md font-medium text-heading">
+                  Specifications
+                </h2>
+                <dl className="m-0">
+                  {specs.map(([label, value]) => (
+                    <div
+                      key={label}
+                      className="flex items-baseline justify-between gap-4 border-b border-surface py-[11px]"
+                    >
+                      <dt className="text-spec-key text-muted">{label}</dt>
+                      <dd className="m-0 text-right font-mono text-control-sm tabular-nums text-body">
+                        {value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
+          </section>
         </div>
+
+        {panels.length > 0 && (
+          <section className="mt-14 max-w-[860px]">
+            <Accordion
+              variant="section"
+              defaultOpen={[panels[0].id]}
+              items={panels.map((panel) => ({
+                id: panel.id,
+                question: panel.title,
+                answer: <Paragraphs items={panel.paragraphs} />,
+              }))}
+            />
+          </section>
+        )}
+
+        {related.length > 0 && (
+          <section className="mt-20 pdp-stacked:mt-13">
+            <div className="mb-7 flex items-end justify-between gap-5">
+              <div>
+                <p className="m-0 mb-3 flex items-center gap-2 font-mono text-2xs uppercase tracking-caps text-accent-strong">
+                  <span aria-hidden="true" className="size-[5px] rotate-45 bg-accent" />
+                  Pairs beautifully
+                </p>
+                <h2 className="m-0 font-[family-name:var(--sz-font-display)] text-section-title font-normal leading-[1.06] tracking-tight text-heading">
+                  You may also like
+                </h2>
+              </div>
+              {category && (
+                <Link
+                  href={category.href}
+                  className="inline-flex shrink-0 items-center gap-[7px] whitespace-nowrap text-sm font-semibold text-primary-700 no-underline hover:text-primary-800 hover:no-underline"
+                >
+                  View all
+                  <Icon name="arrow-right" size={14} strokeWidth={1.8} />
+                </Link>
+              )}
+            </div>
+
+            <div className="grid grid-cols-4 gap-x-[22px] gap-y-[26px] pdp-carousel:flex pdp-carousel:snap-x pdp-carousel:snap-mandatory pdp-carousel:gap-3.5 pdp-carousel:overflow-x-auto pdp-carousel:pb-2">
+              {related.map((item) => (
+                <Link
+                  key={item.id}
+                  href={item.href}
+                  className="group block overflow-hidden rounded-[var(--sz-radius-lg)] border border-line bg-raised text-body no-underline transition-[box-shadow,transform] duration-[var(--sz-dur-slow)] ease-[var(--sz-ease-out)] hover:-translate-y-1 hover:shadow-lg hover:no-underline pdp-carousel:w-[var(--sz-pdp-related-card)] pdp-carousel:shrink-0 pdp-carousel:snap-start"
+                >
+                  <div
+                    className="relative aspect-square overflow-hidden"
+                    style={{
+                      background:
+                        "radial-gradient(120% 120% at 32% 22%, var(--sz-media-from), var(--sz-media-to))",
+                    }}
+                  >
+                    {item.imageUrl ? (
+                      <Image
+                        src={item.imageUrl}
+                        alt=""
+                        fill
+                        sizes="(max-width: 640px) 60vw, 20vw"
+                        className="object-cover transition-transform duration-[550ms] ease-[var(--sz-ease-out)] group-hover:scale-105"
+                      />
+                    ) : (
+                      <span
+                        aria-hidden="true"
+                        className="absolute left-1/2 top-1/2 aspect-square w-[24%] -translate-x-1/2 -translate-y-1/2 rotate-45 bg-accent opacity-50"
+                      />
+                    )}
+                    <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1.5 border-t border-[rgb(var(--sz-accent-rgb)/.4)] bg-[rgb(var(--sz-canvas-rgb)/.92)] py-1.5">
+                      <span aria-hidden="true" className="size-1.5 rotate-45 bg-accent" />
+                      <span className="font-mono text-micro uppercase tracking-caps text-primary-700">
+                        Certified
+                      </span>
+                    </span>
+                  </div>
+                  <div className="border-t border-surface px-[15px] pb-[15px] pt-[13px]">
+                    <p className="m-0 truncate text-spec-key leading-[1.3] text-body">
+                      {item.name}
+                    </p>
+                    <p className="m-0 mt-1.5 whitespace-nowrap font-mono text-related-price font-medium tabular-nums tracking-tight text-heading">
+                      {item.price}
+                    </p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
 
-      {related.length > 0 && (
-        <section className="mt-20 border-t border-line pt-12">
-          <div className="mb-6 flex items-center gap-2.5">
-            <span aria-hidden="true" className="size-2 rotate-45 bg-accent" />
-            <span className="font-mono text-2xs uppercase tracking-[var(--sz-tracking-caps)] text-primary-700">
-              You may also like
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {related.map((item) => (
-              <ProductCard
-                key={item.id}
-                title={item.name}
-                href={item.href}
-                price={item.price}
-                compareAtPrice={item.compareAtPrice ?? undefined}
-                image={item.imageUrl ? { src: item.imageUrl, alt: item.name } : undefined}
-                outOfStock={!item.inStock}
-                certified
-              />
-            ))}
-          </div>
-        </section>
-      )}
-    </div>
+      <PdpStickyBar product={bagItem} inStock={product.inStock} whatsappHref={whatsappHref} />
+    </>
   );
 }

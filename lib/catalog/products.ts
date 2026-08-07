@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { RowDataPacket } from "mysql2";
 import { query, queryOne, type SqlParam } from "@/lib/db";
 import { formatPrice } from "@/lib/format";
 import { jewelleryUrl } from "@/lib/navigation";
@@ -14,6 +15,23 @@ import type {
   SortKey,
   TaxonRow,
 } from "./types";
+
+interface ImageRow extends RowDataPacket {
+  image_url: string | null;
+}
+
+/**
+ * Keep only image URLs this deployment can actually serve.
+ *
+ * A handful of rows still hold `/uploads/...` paths pointing at the Express
+ * app's own filesystem. There is no such file here, so next/image answers 400
+ * and the page shows a blank frame. Dropping them instead lets the gallery fall
+ * through to its "photography in progress" state, which is the truth.
+ */
+function usableImage(url: string | null | undefined): string | null {
+  const value = url?.trim();
+  return value && /^https?:\/\//i.test(value) ? value : null;
+}
 
 const DEFAULT_PAGE_SIZE = 24;
 const MAX_PAGE_SIZE = 96;
@@ -45,8 +63,9 @@ function toSummary(row: ProductRow): ProductSummary {
     href: jewelleryHref(row.slug),
     sku: row.sku,
     price: formatPrice(effective) ?? "",
+    priceMinor: Math.round(Number(effective) * 100),
     compareAtPrice: hasRealDiscount ? formatPrice(row.price) : null,
-    imageUrl: row.image_url,
+    imageUrl: usableImage(row.image_url),
     inStock: row.always_available === 1 || (row.stock ?? 0) > 0,
   };
 }
@@ -194,7 +213,7 @@ export async function getProductBySlug(slug: string): Promise<ProductDetail | nu
   );
   if (!row) return null;
 
-  const [categories, tags] = await Promise.all([
+  const [categories, tags, gallery] = await Promise.all([
     query<TaxonRow>(
       `SELECT c.id, c.name, c.slug FROM categories c
          JOIN product_categories pc ON pc.category_id = c.id
@@ -207,12 +226,30 @@ export async function getProductBySlug(slug: string): Promise<ProductDetail | nu
         WHERE pt.product_id = ? ORDER BY t.name`,
       [row.id],
     ),
+    query<ImageRow>(
+      `SELECT image_url FROM product_images
+        WHERE product_id = ? AND image_url <> ''
+        ORDER BY sort_order, id`,
+      [row.id],
+    ),
   ]);
 
   const taxon = (t: TaxonRow) => ({ name: t.name, slug: t.slug, href: jewelleryHref(t.slug) });
 
+  // `product_images` usually repeats the product's primary image as its first
+  // row, so the primary is placed first and the set deduplicated rather than
+  // trusting either source alone.
+  const images = [
+    ...new Set(
+      [row.image_url, ...gallery.map((g) => g.image_url)]
+        .map(usableImage)
+        .filter((url): url is string => url !== null),
+    ),
+  ];
+
   return {
     ...toSummary(row),
+    images,
     description: row.description,
     material: row.material,
     purity: row.purity,
