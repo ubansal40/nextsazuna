@@ -6,7 +6,7 @@
  *   fix(shell): reopen mini-cart after a native dialog close
  *   chore(deps): bump next to 16.3.1
  */
-export default {
+const config = {
   extends: ["@commitlint/config-conventional"],
   rules: {
     "scope-enum": [
@@ -32,3 +32,5 @@ export default {
     "body-max-line-length": [1, "always", 100],
   },
 };
+
+export default config;

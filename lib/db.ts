@@ -14,7 +14,6 @@ import { env } from "./env";
  * and exhaust the connection cap on shared hosting within minutes.
  */
 declare global {
-  // eslint-disable-next-line no-var
   var __sazunaPool: Pool | undefined;
 }
 
