@@ -1,0 +1,72 @@
+/* CEREMONY TOKEN SPEC — DO NOT EDIT BY HAND.
+ *
+ * Verbatim copy of the :root block from the Claude Design project
+ *   deea797d-e4b5-409c-b32f-f5f926846bb6 → "Sazuna Design System.dc.html" §Token file
+ *
+ * This file exists so `npm run check:tokens` has an offline copy of the design
+ * source of truth to diff app/globals.css against. When the spec changes,
+ * re-export this file from the design project — never hand-patch it to make the
+ * check pass, which would defeat the point.
+ *
+ * The three --sz-font-* tokens legitimately differ in app/globals.css: the spec
+ * names the families directly, the app routes them through next/font/local
+ * variables. The checker knows about that and verifies the family name instead.
+ */
+:root {
+  --sz-primary-50:#FAEEEC;   --sz-primary-50-rgb:250 238 236;
+  --sz-primary-100:#F3D9D4;  --sz-primary-100-rgb:243 217 212;
+  --sz-primary-200:#E5B7AF;  --sz-primary-200-rgb:229 183 175;
+  --sz-primary-300:#D0928A;  --sz-primary-300-rgb:208 146 138;
+  --sz-primary-400:#B4685F;  --sz-primary-400-rgb:180 104 95;
+  --sz-primary-500:#9B4A3E;  --sz-primary-500-rgb:155 74 62;
+  --sz-primary-600:#86332D;  --sz-primary-600-rgb:134 51 45;
+  --sz-primary-700:#7A2226;  --sz-primary-700-rgb:122 34 38;
+  --sz-primary-800:#5B1A1E;  --sz-primary-800-rgb:91 26 30;
+  --sz-primary-900:#3E1416;  --sz-primary-900-rgb:62 20 22;
+
+  --sz-accent:#C9A15A;        --sz-accent-rgb:201 161 90;
+  --sz-accent-soft:#E7D3AC;   --sz-accent-soft-rgb:231 211 172;
+  --sz-accent-strong:#B7893F; --sz-accent-strong-rgb:183 137 63;
+
+  --sz-canvas:#FBF8F3;        --sz-canvas-rgb:251 248 243;
+  --sz-surface:#F3ECE0;       --sz-surface-rgb:243 236 224;
+  --sz-surface-raised:#FFFFFF;--sz-surface-raised-rgb:255 255 255;
+  --sz-line:#E6DCC9;          --sz-line-rgb:230 220 201;
+  --sz-line-soft:#EFE7D8;     --sz-line-soft-rgb:239 231 216;
+  --sz-muted:#6E6559;         --sz-muted-rgb:110 101 89;
+  --sz-body:#2A2320;          --sz-body-rgb:42 35 32;
+  --sz-heading:#191512;       --sz-heading-rgb:25 21 18;
+
+  --sz-success:#3F7B3F; --sz-success-soft:#E7F0E4;
+  --sz-error:#A53D3F;   --sz-error-soft:#F6E3E1;
+  --sz-warning:#B68C32; --sz-warning-soft:#F6ECD3;
+  --sz-info:#3F6B82;    --sz-info-soft:#E1ECF1;
+
+  --sz-focus-ring:0 0 0 2px var(--sz-canvas), 0 0 0 4px rgb(var(--sz-primary-700-rgb) / .55);
+  --sz-overlay:rgb(var(--sz-heading-rgb) / .55);
+
+  --sz-font-display:'Fraunces', Georgia, serif;
+  --sz-font-ui:'General Sans', system-ui, sans-serif;
+  --sz-font-mono:'Geist Mono', ui-monospace, monospace;
+  --sz-text-2xs:11px; --sz-text-xs:12px; --sz-text-sm:14px; --sz-text-base:16px;
+  --sz-text-md:18px;  --sz-text-lg:22px; --sz-text-xl:28px; --sz-text-2xl:36px;
+  --sz-text-3xl:48px; --sz-text-4xl:60px;
+  --sz-leading-tight:1.1; --sz-leading-snug:1.25; --sz-leading-normal:1.55; --sz-leading-relaxed:1.7;
+  --sz-tracking-tight:-.02em; --sz-tracking-normal:0; --sz-tracking-wide:.04em; --sz-tracking-caps:.16em;
+
+  --sz-space-4:4px;  --sz-space-8:8px;   --sz-space-12:12px; --sz-space-16:16px;
+  --sz-space-24:24px;--sz-space-32:32px; --sz-space-48:48px; --sz-space-64:64px; --sz-space-96:96px;
+
+  --sz-radius-xs:4px; --sz-radius-sm:6px; --sz-radius-md:10px; --sz-radius-lg:14px; --sz-radius-pill:999px;
+
+  --sz-shadow-xs:0 1px 2px rgb(var(--sz-body-rgb) / .06);
+  --sz-shadow-sm:0 2px 6px rgb(var(--sz-body-rgb) / .08);
+  --sz-shadow-md:0 8px 20px -6px rgb(var(--sz-body-rgb) / .12);
+  --sz-shadow-lg:0 20px 48px -12px rgb(var(--sz-body-rgb) / .18);
+
+  --sz-ease-out:cubic-bezier(.22, 1, .36, 1);
+  --sz-ease-in-out:cubic-bezier(.65, 0, .35, 1);
+  --sz-dur-fast:120ms; --sz-dur:200ms; --sz-dur-slow:360ms;
+
+  --sz-container:1280px; --sz-container-narrow:720px; --sz-container-wide:1440px;
+}

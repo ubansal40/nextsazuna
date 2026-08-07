@@ -1,0 +1,310 @@
+@import "tailwindcss";
+
+/* ============================================================================
+ * CEREMONY DESIGN SYSTEM — TOKEN SOURCE OF TRUTH
+ *
+ * Transcribed verbatim from the Claude Design project
+ *   deea797d-e4b5-409c-b32f-f5f926846bb6 → "Sazuna Design System.dc.html" §Token file
+ *
+ * RULES
+ *  1. This :root block is the ONLY place a raw value may appear. Never hardcode
+ *     a colour, size, radius, shadow or duration a token already covers.
+ *  2. Every brand colour ships a hex track AND an `-rgb` twin. The -rgb track is
+ *     space-separated and MUST be consumed as `rgb(var(--x-rgb) / <alpha>)`.
+ *     `rgba(var(--x-rgb), .5)` is invalid CSS and fails silently.
+ *  3. Changes come from the spec, not from here. `npm run check:tokens` fails the
+ *     build if this block drifts from design-spec/ceremony-tokens.css.
+ * ========================================================================== */
+
+:root {
+  /* Primary — Oxblood (hex + -rgb twin) */
+  --sz-primary-50: #FAEEEC;   --sz-primary-50-rgb: 250 238 236;
+  --sz-primary-100: #F3D9D4;  --sz-primary-100-rgb: 243 217 212;
+  --sz-primary-200: #E5B7AF;  --sz-primary-200-rgb: 229 183 175;
+  --sz-primary-300: #D0928A;  --sz-primary-300-rgb: 208 146 138;
+  --sz-primary-400: #B4685F;  --sz-primary-400-rgb: 180 104 95;
+  --sz-primary-500: #9B4A3E;  --sz-primary-500-rgb: 155 74 62;
+  --sz-primary-600: #86332D;  --sz-primary-600-rgb: 134 51 45;
+  --sz-primary-700: #7A2226;  --sz-primary-700-rgb: 122 34 38;   /* default CTA */
+  --sz-primary-800: #5B1A1E;  --sz-primary-800-rgb: 91 26 30;    /* hover */
+  --sz-primary-900: #3E1416;  --sz-primary-900-rgb: 62 20 22;    /* active */
+
+  /* Accent — Champagne Gold */
+  --sz-accent: #C9A15A;        --sz-accent-rgb: 201 161 90;
+  --sz-accent-soft: #E7D3AC;   --sz-accent-soft-rgb: 231 211 172;
+  --sz-accent-strong: #B7893F; --sz-accent-strong-rgb: 183 137 63;
+
+  /* Neutrals — Warm Ivory */
+  --sz-canvas: #FBF8F3;         --sz-canvas-rgb: 251 248 243;
+  --sz-surface: #F3ECE0;        --sz-surface-rgb: 243 236 224;
+  --sz-surface-raised: #FFFFFF; --sz-surface-raised-rgb: 255 255 255;
+  --sz-line: #E6DCC9;           --sz-line-rgb: 230 220 201;
+  --sz-line-soft: #EFE7D8;      --sz-line-soft-rgb: 239 231 216;
+  --sz-muted: #6E6559;          --sz-muted-rgb: 110 101 89;
+  --sz-body: #2A2320;           --sz-body-rgb: 42 35 32;
+  --sz-heading: #191512;        --sz-heading-rgb: 25 21 18;
+
+  /* Semantic (+ soft) */
+  --sz-success: #3F7B3F; --sz-success-soft: #E7F0E4;
+  --sz-error: #A53D3F;   --sz-error-soft: #F6E3E1;
+  --sz-warning: #B68C32; --sz-warning-soft: #F6ECD3;
+  --sz-info: #3F6B82;    --sz-info-soft: #E1ECF1;
+
+  /* Focus & overlay */
+  --sz-focus-ring: 0 0 0 2px var(--sz-canvas), 0 0 0 4px rgb(var(--sz-primary-700-rgb) / .55);
+  --sz-overlay: rgb(var(--sz-heading-rgb) / .55);
+
+  /* Typography */
+  --sz-font-display: var(--font-fraunces), Georgia, serif;
+  --sz-font-ui: var(--font-general-sans), system-ui, sans-serif;
+  --sz-font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --sz-text-2xs: 11px; --sz-text-xs: 12px; --sz-text-sm: 14px; --sz-text-base: 16px;
+  --sz-text-md: 18px;  --sz-text-lg: 22px; --sz-text-xl: 28px; --sz-text-2xl: 36px;
+  --sz-text-3xl: 48px; --sz-text-4xl: 60px;
+  --sz-leading-tight: 1.1; --sz-leading-snug: 1.25; --sz-leading-normal: 1.55; --sz-leading-relaxed: 1.7;
+  --sz-tracking-tight: -.02em; --sz-tracking-normal: 0; --sz-tracking-wide: .04em; --sz-tracking-caps: .16em;
+
+  /* Spacing · 4px base */
+  --sz-space-4: 4px;  --sz-space-8: 8px;   --sz-space-12: 12px; --sz-space-16: 16px;
+  --sz-space-24: 24px; --sz-space-32: 32px; --sz-space-48: 48px; --sz-space-64: 64px; --sz-space-96: 96px;
+
+  /* Radius */
+  --sz-radius-xs: 4px; --sz-radius-sm: 6px; --sz-radius-md: 10px; --sz-radius-lg: 14px; --sz-radius-pill: 999px;
+
+  /* Elevation — warm-tinted */
+  --sz-shadow-xs: 0 1px 2px rgb(var(--sz-body-rgb) / .06);
+  --sz-shadow-sm: 0 2px 6px rgb(var(--sz-body-rgb) / .08);
+  --sz-shadow-md: 0 8px 20px -6px rgb(var(--sz-body-rgb) / .12);
+  --sz-shadow-lg: 0 20px 48px -12px rgb(var(--sz-body-rgb) / .18);
+
+  /* Motion */
+  --sz-ease-out: cubic-bezier(.22, 1, .36, 1);
+  --sz-ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --sz-dur-fast: 120ms; --sz-dur: 200ms; --sz-dur-slow: 360ms;
+
+  /* Layout */
+  --sz-container: 1280px; --sz-container-narrow: 720px; --sz-container-wide: 1440px;
+}
+
+/* ----------------------------------------------------------------------------
+ * COMPONENT TOKENS
+ * Values the spec uses in its component sections that the canonical :root does
+ * not name. Declared here so components never carry a literal. Derived from the
+ * spec's own renderings, not invented.
+ * ------------------------------------------------------------------------- */
+:root {
+  --sz-control-track: #D8CBB2;      /* toggle, off */
+  --sz-control-border: #C7BBA4;     /* checkbox, unchecked */
+  --sz-control-ring: #B4A98F;       /* radio ring */
+  --sz-price-struck: #9C9384;       /* struck original price */
+  --sz-danger-hover: #8F3335;       /* danger button, hover */
+  --sz-metal-yellow: #E1B94E;
+  --sz-metal-white: #D9D6CE;
+  --sz-metal-rose: #E0B4A0;
+  --sz-media-from: #FDFBF7;         /* product media radial gradient */
+  --sz-media-to: #EBE1CF;
+  --sz-media-from-oos: #F4F0E8;     /* out of stock — desaturated */
+  --sz-media-to-oos: #E6DFD2;
+
+  /* Control sizing. The spec's components use a finer ramp than the core type
+   * and radius scales express; these name it so components stay literal-free. */
+  --sz-text-micro: 8px;             /* card flags, CERTIFIED strip */
+  --sz-text-control-sm: 13px;       /* small button, label, chip */
+  --sz-text-price: 14px;            /* sale price on a card */
+  --sz-text-control: 15px;          /* button, input, select, textarea */
+  --sz-text-card-title: 13.5px;
+  --sz-text-price-struck: 11.5px;
+  /* Prices are set tighter than body copy so long figures stay compact. */
+  --sz-tracking-price: -.03em;
+
+  --sz-radius-btn-sm: 7px;
+  --sz-radius-control: 8px;         /* button md, input, select, stepper */
+  --sz-radius-btn-lg: 9px;
+  --sz-radius-xl: 16px;             /* modal panel */
+
+  --sz-control-h: 44px;             /* icon button, tap target */
+  --sz-stepper-h: 42px;
+  --sz-toggle-w: 46px;
+  --sz-toggle-h: 26px;
+  --sz-toggle-knob: 20px;
+  --sz-checkbox: 22px;
+  --sz-radio: 16px;
+
+  --sz-error-rgb: 165 61 63;
+  --sz-ring-focus-soft: 0 0 0 3px rgb(var(--sz-primary-700-rgb) / .15);
+  --sz-ring-error: 0 0 0 3px rgb(var(--sz-error-rgb) / .14);
+
+  --sz-disabled-opacity: .42;
+}
+
+/* ----------------------------------------------------------------------------
+ * TAILWIND THEME BRIDGE
+ * `inline` emits utilities that reference the custom properties above rather
+ * than copying their values — so a utility can never drift from the token.
+ * ------------------------------------------------------------------------- */
+@theme inline {
+  --color-primary-50: var(--sz-primary-50);
+  --color-primary-100: var(--sz-primary-100);
+  --color-primary-200: var(--sz-primary-200);
+  --color-primary-300: var(--sz-primary-300);
+  --color-primary-400: var(--sz-primary-400);
+  --color-primary-500: var(--sz-primary-500);
+  --color-primary-600: var(--sz-primary-600);
+  --color-primary-700: var(--sz-primary-700);
+  --color-primary-800: var(--sz-primary-800);
+  --color-primary-900: var(--sz-primary-900);
+
+  --color-accent: var(--sz-accent);
+  --color-accent-soft: var(--sz-accent-soft);
+  --color-accent-strong: var(--sz-accent-strong);
+
+  --color-canvas: var(--sz-canvas);
+  --color-surface: var(--sz-surface);
+  --color-raised: var(--sz-surface-raised);
+  --color-line: var(--sz-line);
+  --color-line-soft: var(--sz-line-soft);
+  --color-muted: var(--sz-muted);
+  --color-body: var(--sz-body);
+  --color-heading: var(--sz-heading);
+
+  --color-success: var(--sz-success);
+  --color-success-soft: var(--sz-success-soft);
+  --color-error: var(--sz-error);
+  --color-error-soft: var(--sz-error-soft);
+  --color-warning: var(--sz-warning);
+  --color-warning-soft: var(--sz-warning-soft);
+  --color-info: var(--sz-info);
+  --color-info-soft: var(--sz-info-soft);
+
+  --color-control-track: var(--sz-control-track);
+  --color-control-border: var(--sz-control-border);
+  --color-control-ring: var(--sz-control-ring);
+  --color-price-struck: var(--sz-price-struck);
+  --color-danger-hover: var(--sz-danger-hover);
+  --color-metal-yellow: var(--sz-metal-yellow);
+  --color-metal-white: var(--sz-metal-white);
+  --color-metal-rose: var(--sz-metal-rose);
+
+  --font-display: var(--sz-font-display);
+  --font-ui: var(--sz-font-ui);
+  --font-mono: var(--sz-font-mono);
+
+  --text-2xs: var(--sz-text-2xs);
+  --text-xs: var(--sz-text-xs);
+  --text-sm: var(--sz-text-sm);
+  --text-base: var(--sz-text-base);
+  --text-md: var(--sz-text-md);
+  --text-lg: var(--sz-text-lg);
+  --text-xl: var(--sz-text-xl);
+  --text-2xl: var(--sz-text-2xl);
+  --text-3xl: var(--sz-text-3xl);
+  --text-4xl: var(--sz-text-4xl);
+
+  --leading-tight: var(--sz-leading-tight);
+  --leading-snug: var(--sz-leading-snug);
+  --leading-normal: var(--sz-leading-normal);
+  --leading-relaxed: var(--sz-leading-relaxed);
+
+  --tracking-tight: var(--sz-tracking-tight);
+  --tracking-normal: var(--sz-tracking-normal);
+  --tracking-wide: var(--sz-tracking-wide);
+  --tracking-caps: var(--sz-tracking-caps);
+
+  --radius-xs: var(--sz-radius-xs);
+  --radius-sm: var(--sz-radius-sm);
+  --radius-md: var(--sz-radius-md);
+  --radius-lg: var(--sz-radius-lg);
+  --radius-pill: var(--sz-radius-pill);
+
+  --shadow-xs: var(--sz-shadow-xs);
+  --shadow-sm: var(--sz-shadow-sm);
+  --shadow-md: var(--sz-shadow-md);
+  --shadow-lg: var(--sz-shadow-lg);
+
+  --ease-out: var(--sz-ease-out);
+  --ease-in-out: var(--sz-ease-in-out);
+
+  --container-narrow: var(--sz-container-narrow);
+  --container-default: var(--sz-container);
+  --container-wide: var(--sz-container-wide);
+
+  --animate-spin: sz-spin .7s linear infinite;
+  --animate-fade: sz-fade var(--sz-dur) ease;
+  --animate-scale-in: sz-scale-in 240ms var(--sz-ease-out);
+  --animate-slide-right: sz-slide-right var(--sz-dur-slow) var(--sz-ease-out);
+  --animate-toast-in: sz-toast-in var(--sz-dur) var(--sz-ease-out);
+  --animate-shimmer: sz-shimmer 1.4s infinite;
+  --animate-lift: sz-lift 3s ease-in-out infinite;
+}
+
+/* ----------------------------------------------------------------------------
+ * KEYFRAMES — from the spec's <style> block
+ * ------------------------------------------------------------------------- */
+@keyframes sz-spin { to { transform: rotate(360deg) } }
+@keyframes sz-fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes sz-scale-in {
+  from { opacity: 0; transform: translateY(10px) scale(.985) }
+  to { opacity: 1; transform: none }
+}
+@keyframes sz-slide-right { from { transform: translateX(102%) } to { transform: none } }
+@keyframes sz-toast-in { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: none } }
+@keyframes sz-shimmer { 100% { transform: translateX(180%) } }
+@keyframes sz-lift { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-8px) } }
+
+/* ----------------------------------------------------------------------------
+ * BASE LAYER
+ * ------------------------------------------------------------------------- */
+@layer base {
+  * { box-sizing: border-box }
+  html { scroll-behavior: smooth }
+
+  body {
+    margin: 0;
+    font-family: var(--sz-font-ui);
+    font-size: var(--sz-text-base);
+    line-height: var(--sz-leading-normal);
+    color: var(--sz-body);
+    background: var(--sz-canvas);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--sz-font-display);
+    color: var(--sz-heading);
+    font-weight: 500;
+    line-height: var(--sz-leading-tight);
+    margin: 0;
+  }
+
+  button, input, select, textarea { font-family: inherit }
+
+  a {
+    color: var(--sz-primary-700);
+    text-decoration: none;
+  }
+  a:hover {
+    color: var(--sz-primary-800);
+    text-decoration: underline;
+  }
+
+  ::selection {
+    background: var(--sz-primary-200);
+    color: var(--sz-primary-900);
+  }
+
+  /* Every interactive element gets the same ring. Never restyle per component. */
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--sz-focus-ring);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
