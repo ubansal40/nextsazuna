@@ -22,6 +22,22 @@ const nextConfig: NextConfig = {
    */
   output: "standalone",
 
+  /**
+   * Product imagery is hosted on silveejewels.com (2,575 of 2,577 active
+   * products). next/image refuses unlisted hosts by design, so this is required
+   * rather than optional.
+   *
+   * Worth naming: the storefront's images depend on a separate site staying up.
+   * That coupling is inherited from the Express app, not introduced here, but it
+   * should move to storage this project controls before launch.
+   */
+  images: {
+    remotePatterns: [
+      { protocol: "https", hostname: "silveejewels.com", pathname: "/wp-content/uploads/**" },
+    ],
+    formats: ["image/avif", "image/webp"],
+  },
+
   poweredByHeader: false,
 };
 
