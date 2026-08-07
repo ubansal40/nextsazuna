@@ -95,17 +95,25 @@ export interface ProductListing {
   totalPages: number;
 }
 
-export type SortKey = "popularity" | "price-asc" | "price-desc" | "newest";
+export type SortKey =
+  | "popularity"
+  | "price-asc"
+  | "price-desc"
+  | "newest"
+  | "bestselling";
 
 export interface ListingQuery {
+  /** The taxonomy the page itself represents — always applied. */
   categorySlug?: string;
   tagSlugs?: string[];
   collectionIds?: number[];
   search?: string;
-  minPrice?: number;
-  maxPrice?: number;
+  /** Sidebar selections. Multiple values within a group are OR'd. */
+  categorySlugs?: string[];
+  collectionSlugs?: string[];
+  material?: string[];
   purity?: string[];
-  stoneType?: string[];
+  priceBrackets?: { min: number; max: number | null }[];
   sort?: SortKey;
   page?: number;
   pageSize?: number;

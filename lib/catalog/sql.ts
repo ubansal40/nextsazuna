@@ -37,10 +37,18 @@ export const PRODUCT_COLUMNS = `
   p.price, p.sale_price, p.stock, p.always_available, p.is_active
 `.trim();
 
-/** Sort expressions. Keys are validated against this map, never interpolated raw. */
+/**
+ * Sort expressions. Keys are validated against this map, never interpolated raw.
+ *
+ * `bestselling` counts actual order lines. With only 27 order rows in the
+ * catalog today it degrades to near-arbitrary, so it falls back to id order for
+ * everything unsold rather than returning a random-looking list.
+ */
 export const SORT_SQL = {
   popularity: "p.id DESC",
   "price-asc": `${EFFECTIVE_PRICE} ASC`,
   "price-desc": `${EFFECTIVE_PRICE} DESC`,
   newest: "COALESCE(p.publish_date, p.created_at) DESC, p.id DESC",
+  bestselling:
+    "(SELECT COUNT(*) FROM order_items oi WHERE oi.product_id = p.id) DESC, p.id DESC",
 } as const;

@@ -1,47 +1,40 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getProductBySlug, listProducts, resolveSlug, slugFromSegment } from "@/lib/catalog";
+import { bracketById, getFacets } from "@/lib/catalog/facets";
+import { readFilters, type RawParams } from "@/lib/catalog/filter-params";
 import { ProductDetailView } from "./_components/product-detail";
 import { ProductListingView } from "./_components/product-listing";
+import { SORT_VALUES } from "./_components/sort-links";
+import type { SortKey } from "@/lib/catalog";
 
 /**
  * The canonical storefront URL: /jewellery/{slug}.html
  *
  * One dispatcher serves categories, tags, collections and products, exactly as
  * the Express app did (ADR 0007). The `.html` suffix is preserved because these
- * URLs are indexed; the route segment simply arrives as "solitaire-ring.html"
- * and the suffix is stripped here.
- *
- * Rendered dynamically rather than statically: with ~3,100 products, prebuilding
- * every page would make each deploy long and stale-prone on shared hosting.
- * Next's route cache handles repeat traffic.
+ * URLs are indexed; the route segment arrives as "solitaire-ring.html" and the
+ * suffix is stripped here.
  */
 
 interface PageProps {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
+  searchParams: Promise<RawParams>;
 }
 
-/** Read a single value from a query param that may legitimately repeat. */
+/**
+ * Products shown initially, and added per "Load more".
+ *
+ * The spec's own logic uses 9, but that is sized to its 24-item demo catalog.
+ * Real categories run to several hundred, where 9 would mean dozens of clicks.
+ * 24 keeps the spec's load-more pattern while staying a multiple of both the
+ * 2- and 3-column grids.
+ */
+const STEP = 24;
+
 function one(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
-
-function csv(value: string | string[] | undefined): string[] | undefined {
-  const raw = one(value);
-  if (!raw) return undefined;
-  const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
-  return parts.length ? parts : undefined;
-}
-
-function positiveInt(value: string | string[] | undefined): number | undefined {
-  const raw = one(value);
-  if (!raw) return undefined;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : undefined;
-}
-
-const SORTS = new Set(["popularity", "price-asc", "price-desc", "newest"]);
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const slug = slugFromSegment((await params).slug);
@@ -84,8 +77,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function JewelleryPage({ params, searchParams }: PageProps) {
-  const segment = (await params).slug;
-  const slug = slugFromSegment(segment);
+  const slug = slugFromSegment((await params).slug);
   if (!slug) notFound();
 
   const resolved = await resolveSlug(slug);
@@ -98,19 +90,37 @@ export default async function JewelleryPage({ params, searchParams }: PageProps)
   }
 
   const q = await searchParams;
-  const sortRaw = one(q.sort);
+  const filters = readFilters(q);
 
-  const listing = await listProducts({
-    categorySlug: resolved.kind === "category" ? resolved.category.slug : undefined,
-    tagSlugs: resolved.kind === "tag" ? [resolved.tag.slug] : csv(q.tags),
-    collectionIds: resolved.kind === "collection" ? [resolved.collection.id] : undefined,
-    minPrice: positiveInt(q.min),
-    maxPrice: positiveInt(q.max),
-    purity: csv(q.purity),
-    stoneType: csv(q.stone),
-    sort: sortRaw && SORTS.has(sortRaw) ? (sortRaw as "popularity") : undefined,
-    page: positiveInt(q.page) ?? 1,
-  });
+  const sortRaw = one(q.sort);
+  const sort = sortRaw && SORT_VALUES.has(sortRaw as "popularity") ? sortRaw : undefined;
+
+  // "Load more" accumulates by raising `show`, so the expanded list stays a
+  // real, shareable URL rather than client-only state.
+  const showRaw = Number(one(q.show));
+  const shown =
+    Number.isFinite(showRaw) && showRaw > 0 ? Math.min(240, Math.ceil(showRaw / STEP) * STEP) : STEP;
+
+  const categorySlug = resolved.kind === "category" ? resolved.category.slug : undefined;
+
+  const [listing, facets] = await Promise.all([
+    listProducts({
+      categorySlug,
+      tagSlugs: resolved.kind === "tag" ? [resolved.tag.slug] : undefined,
+      collectionIds: resolved.kind === "collection" ? [resolved.collection.id] : undefined,
+      categorySlugs: filters.cat.length ? filters.cat : undefined,
+      collectionSlugs: filters.collection.length ? filters.collection : undefined,
+      material: filters.material.length ? filters.material : undefined,
+      purity: filters.purity.length ? filters.purity : undefined,
+      priceBrackets: filters.price.length
+        ? filters.price.map(bracketById).filter((b) => b !== null)
+        : undefined,
+      sort: sort as SortKey | undefined,
+      page: 1,
+      pageSize: shown,
+    }),
+    getFacets({ categorySlug }),
+  ]);
 
   const heading =
     resolved.kind === "category"
@@ -125,6 +135,11 @@ export default async function JewelleryPage({ params, searchParams }: PageProps)
       kind={resolved.kind}
       basePath={`/jewellery/${slug}.html`}
       listing={listing}
+      facets={facets}
+      state={filters}
+      sort={sort}
+      shown={shown}
+      step={STEP}
     />
   );
 }

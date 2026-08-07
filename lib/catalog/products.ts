@@ -99,18 +99,45 @@ function buildFilters(input: ListingQuery): { where: string; params: SqlParam[];
     params.push(like, like);
   }
 
-  if (input.minPrice !== undefined) {
-    clauses.push(`${EFFECTIVE_PRICE} >= ?`);
-    params.push(input.minPrice);
+  // Sidebar category selections, independent of the page's own category.
+  if (input.categorySlugs?.length) {
+    const placeholders = input.categorySlugs.map(() => "?").join(", ");
+    clauses.push(
+      `p.id IN (SELECT pc3.product_id FROM product_categories pc3
+                  JOIN categories c3 ON c3.id = pc3.category_id
+                 WHERE c3.slug IN (${placeholders}))`,
+    );
+    params.push(...input.categorySlugs);
   }
-  if (input.maxPrice !== undefined) {
-    clauses.push(`${EFFECTIVE_PRICE} <= ?`);
-    params.push(input.maxPrice);
+
+  if (input.collectionSlugs?.length) {
+    const placeholders = input.collectionSlugs.map(() => "?").join(", ");
+    clauses.push(
+      `p.id IN (SELECT pc4.product_id FROM product_categories pc4
+                  JOIN collection_categories cc2 ON cc2.category_id = pc4.category_id
+                  JOIN collections co2 ON co2.id = cc2.collection_id
+                 WHERE co2.slug IN (${placeholders}) AND co2.is_active = 1)`,
+    );
+    params.push(...input.collectionSlugs);
+  }
+
+  /**
+   * Price brackets are OR'd: selecting two bands means "either". Each bracket
+   * is bound, and the open-ended top band simply omits its upper bound.
+   */
+  if (input.priceBrackets?.length) {
+    const ranges = input.priceBrackets.map((bracket) => {
+      params.push(bracket.min);
+      if (bracket.max === null) return `${EFFECTIVE_PRICE} >= ?`;
+      params.push(bracket.max);
+      return `(${EFFECTIVE_PRICE} >= ? AND ${EFFECTIVE_PRICE} <= ?)`;
+    });
+    clauses.push(`(${ranges.join(" OR ")})`);
   }
 
   for (const [column, values] of [
+    ["p.material", input.material],
     ["p.purity", input.purity],
-    ["p.stone_type", input.stoneType],
   ] as const) {
     if (values?.length) {
       clauses.push(`${column} IN (${values.map(() => "?").join(", ")})`);

@@ -122,6 +122,13 @@
   --sz-radius-btn-lg: 9px;
   --sz-radius-xl: 16px;             /* modal panel */
 
+  /* Listing page. The spec sets a 42px page title, between 2xl and 3xl, and a
+   * 256px filter rail offset below the 77px sticky header. */
+  --sz-text-page-title: 42px;
+  --sz-text-page-title-sm: 30px;
+  --sz-plp-sidebar: 256px;
+  --sz-header-h: 77px;
+
   --sz-control-h: 44px;             /* icon button, tap target */
   --sz-stepper-h: 42px;
   --sz-toggle-w: 46px;
