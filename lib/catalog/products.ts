@@ -2,6 +2,7 @@ import "server-only";
 
 import { query, queryOne, type SqlParam } from "@/lib/db";
 import { formatPrice } from "@/lib/format";
+import { jewelleryUrl } from "@/lib/navigation";
 import { EFFECTIVE_PRICE, IN_STOCK, IS_VISIBLE, PRODUCT_COLUMNS, SORT_SQL } from "./sql";
 import type {
   CountRow,
@@ -17,10 +18,13 @@ import type {
 const DEFAULT_PAGE_SIZE = 24;
 const MAX_PAGE_SIZE = 96;
 
-/** Canonical storefront URL. Preserved exactly from the Express app — see ADR 0007. */
-export function jewelleryHref(slug: string): string {
-  return `/jewellery/${encodeURIComponent(slug)}.html`;
-}
+/**
+ * Canonical storefront URL. Preserved exactly from the Express app — see ADR 0007.
+ *
+ * Re-exported from `lib/navigation`, which is client-safe, so the header and
+ * the catalog cannot drift into two different URL shapes.
+ */
+export const jewelleryHref = jewelleryUrl;
 
 /**
  * Map a row to the shape the UI consumes.

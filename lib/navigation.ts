@@ -1,77 +1,93 @@
 /**
  * Storefront navigation — the single source for header nav, mega-menu and
- * footer links. Hardcoded for now to match the spec; a later phase swaps the
- * export for a `site_identity`-backed read without touching any consumer.
+ * footer links.
+ *
+ * The labels and ordering are the spec's (SazunaHeader.dc.html:68-78). The
+ * slugs are the catalog's: every storefront URL is `/jewellery/{slug}.html` and
+ * `slugFromSegment` rejects anything without the suffix, so a link built
+ * without it is a 404, not a redirect.
  */
 
-export interface MegaMenuColumn {
+/**
+ * Canonical catalog URL. Every internal catalog link goes through this.
+ *
+ * Lives here rather than in `lib/catalog` because that module is `server-only`
+ * and the header is a Client Component — one builder, reachable from both.
+ */
+export function jewelleryUrl(slug: string, params?: Record<string, string>): string {
+  const path = `/jewellery/${encodeURIComponent(slug)}.html`;
+  if (!params) return path;
+  const query = new URLSearchParams(params).toString();
+  return query ? `${path}?${query}` : path;
+}
+
+export interface NavCategory {
+  /** As shown in the nav bar. */
+  label: string;
+  /** Real category slug, without the `.html` suffix. */
+  slug: string;
+  /**
+   * The noun the mega-menu templates its copy on — "Shop Bangles", "All
+   * Bangles". Splits from `label` where the nav shows a pair.
+   */
+  megaName: string;
+  /**
+   * Whether `{slug}-for-women` / `{slug}-for-men` exist. Only rings and
+   * earrings are split that way, and the spec's "for Women" / "for Men" rows
+   * would 404 on the rest.
+   */
+  gendered?: boolean;
+}
+
+export const NAV_CATEGORIES: NavCategory[] = [
+  { label: "Rings", slug: "diamond-rings", megaName: "Rings", gendered: true },
+  { label: "Earrings", slug: "diamond-earrings", megaName: "Earrings", gendered: true },
+  { label: "Mangalsutra", slug: "diamond-mangalsutra", megaName: "Mangalsutra" },
+  { label: "Necklaces", slug: "diamond-necklace", megaName: "Necklaces" },
+  { label: "Pendants", slug: "diamond-pendant", megaName: "Pendants" },
+  { label: "Nose Pins", slug: "diamond-nose-pin", megaName: "Nose Pins" },
+  { label: "Bangles & Bracelets", slug: "diamond-bangles", megaName: "Bangles" },
+];
+
+/** Rendered after the divider, in oxblood with the gold diamond marker. */
+export const NAV_FEATURED = {
+  label: "Bridal Necklace",
+  slug: "diamond-wedding-necklace",
+};
+
+/**
+ * Mega-menu price bands.
+ *
+ * Labels are the spec's; `bracket` is the id `lib/catalog/facets.ts` filters
+ * on, so the link lands on a real filtered listing rather than an invented
+ * min/max query the page ignores.
+ */
+export const MEGA_PRICE_BANDS = [
+  { label: "रु 40k – 75k", bracket: "b1" },
+  { label: "रु 75k – 1.5L", bracket: "b2" },
+  { label: "रु 1.5L – 5L", bracket: "b3" },
+  { label: "रु 5L – 10L", bracket: "b4" },
+  { label: "रु 10L +", bracket: "b5" },
+];
+
+export const MEGA_PURITIES = ["9KT", "14KT"];
+
+export const MEGA_NOTE = "Every piece is a certified diamond, set in your choice of gold.";
+
+export interface NavSection {
   title: string;
   links: { label: string; href: string }[];
 }
 
-export interface NavCategory {
-  label: string;
-  href: string;
-  columns?: MegaMenuColumn[];
-  /** Merchandising panel on the right of the mega-menu. */
-  feature?: { eyebrow: string; title: string; href: string };
-}
-
-export const NAV_CATEGORIES: NavCategory[] = [
-  {
-    label: "Rings",
-    href: "/jewellery/rings",
-    columns: [
-      {
-        title: "Popular",
-        links: [
-          { label: "Solitaire rings", href: "/jewellery/solitaire-rings" },
-          { label: "Engagement rings", href: "/jewellery/engagement-rings" },
-          { label: "Cocktail rings", href: "/jewellery/cocktail-rings" },
-          { label: "Bands", href: "/jewellery/bands" },
-        ],
-      },
-      {
-        title: "Shop by price",
-        links: [
-          { label: "Under रु 50,000", href: "/jewellery/rings?max=50000" },
-          { label: "रु 50,000 – 1,00,000", href: "/jewellery/rings?min=50000&max=100000" },
-          { label: "Above रु 1,00,000", href: "/jewellery/rings?min=100000" },
-        ],
-      },
-      {
-        title: "Purity",
-        links: [
-          { label: "18KT", href: "/jewellery/rings?purity=18kt" },
-          { label: "22KT", href: "/jewellery/rings?purity=22kt" },
-        ],
-      },
-    ],
-    feature: { eyebrow: "Featured collection", title: "Bridal sets", href: "/jewellery/bridal-sets" },
-  },
-  { label: "Earrings", href: "/jewellery/earrings" },
-  { label: "Mangalsutra", href: "/jewellery/mangalsutra" },
-  { label: "Necklaces", href: "/jewellery/necklaces" },
-  { label: "Pendants", href: "/jewellery/pendants" },
-  { label: "Nose Pins", href: "/jewellery/nose-pins" },
-  { label: "Bangles & Bracelets", href: "/jewellery/bangles-bracelets" },
-];
-
-/** Rendered after the divider, in oxblood with the gold diamond marker. */
-export const NAV_FEATURED: NavCategory = {
-  label: "Bridal Necklace",
-  href: "/jewellery/bridal-necklace",
-};
-
-export const FOOTER_SECTIONS: MegaMenuColumn[] = [
+export const FOOTER_SECTIONS: NavSection[] = [
   {
     title: "Shop",
     links: [
-      { label: "Rings", href: "/jewellery/rings" },
-      { label: "Earrings", href: "/jewellery/earrings" },
-      { label: "Mangalsutra", href: "/jewellery/mangalsutra" },
-      { label: "Necklaces", href: "/jewellery/necklaces" },
-      { label: "Bridal sets", href: "/jewellery/bridal-sets" },
+      { label: "Rings", href: jewelleryUrl("diamond-rings") },
+      { label: "Earrings", href: jewelleryUrl("diamond-earrings") },
+      { label: "Mangalsutra", href: jewelleryUrl("diamond-mangalsutra") },
+      { label: "Necklaces", href: jewelleryUrl("diamond-necklace") },
+      { label: "Bridal Necklace", href: jewelleryUrl("diamond-wedding-necklace") },
     ],
   },
   {

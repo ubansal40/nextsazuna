@@ -1,22 +1,23 @@
 import { Icon } from "@/components/ui";
 
 /**
- * Floating WhatsApp affordance — spec §Global shell. Rendered once by the root
- * layout, never per page.
+ * Floating WhatsApp pill — spec §Floating WhatsApp (SazunaHeader.dc.html:189-192).
+ *
+ * Mounted once by the root layout, never per page. Green is WhatsApp's own
+ * brand colour and deliberately sits outside the Ceremony palette — the point
+ * of the affordance is that it is recognisably WhatsApp.
  */
-export function WhatsAppButton({ phone = "9779800000000" }: { phone?: string }) {
+export function WhatsAppButton({ href }: { href: string }) {
   return (
     <a
-      href={`https://wa.me/${phone}`}
+      href={href}
       target="_blank"
-      rel="noreferrer noopener"
-      aria-label="Ask on WhatsApp"
-      className="fixed bottom-6 left-6 z-50 inline-flex items-center gap-2.5 rounded-[var(--sz-radius-pill)] border border-line bg-raised py-2.5 pl-3 pr-4 text-sm font-semibold text-body no-underline shadow-md transition-[transform,box-shadow] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] hover:-translate-y-0.5 hover:shadow-lg hover:no-underline"
+      rel="noopener noreferrer"
+      aria-label="Chat on WhatsApp"
+      className="fixed bottom-6 right-6 z-[75] inline-flex items-center gap-2.5 rounded-pill bg-whatsapp py-3 pl-[14px] pr-[18px] text-sm font-semibold text-white no-underline shadow-whatsapp transition-colors duration-[var(--sz-dur-fast)] hover:bg-whatsapp-hover hover:text-white hover:no-underline"
     >
-      <span className="inline-flex size-7 items-center justify-center rounded-[var(--sz-radius-pill)] bg-success text-white">
-        <Icon name="whatsapp" size={16} />
-      </span>
-      <span className="hidden sm:inline">Ask on WhatsApp</span>
+      <Icon name="whatsapp-chat" size={22} />
+      WhatsApp
     </a>
   );
 }

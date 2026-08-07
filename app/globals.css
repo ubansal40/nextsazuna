@@ -148,6 +148,102 @@
 }
 
 /* ----------------------------------------------------------------------------
+ * GLOBAL SHELL TOKENS — SazunaHeader.dc.html
+ * The shell measures and shadows things the core scale does not name. Every
+ * value below is read off the spec's own markup, not invented.
+ * ------------------------------------------------------------------------- */
+:root {
+  /* Header chrome. The bar is translucent over the page and blurs what scrolls
+   * beneath it, so the canvas token is consumed through its -rgb twin. */
+  --sz-header-bg: rgb(var(--sz-canvas-rgb) / .92);
+  --sz-header-blur: 12px;
+  --sz-header-pad-y: 17px;
+  --sz-header-pad-y-condensed: 9px;
+  --sz-logo-h: 30px;
+  --sz-logo-h-condensed: 22px;
+  --sz-logo-h-drawer: 20px;
+  /* The spec is authored at desktop and gives the header one 40px gutter at
+   * every width. At 375px that overflows by 12px, so below the nav breakpoint
+   * the gutter and the logo both step down. */
+  --sz-logo-h-mobile: 24px;
+  --sz-gutter: 40px;
+  --sz-gutter-mobile: 24px;
+  /* Scroll distance before the header condenses. */
+  --sz-header-condense-at: 44px;
+
+  /* Announcement bar. Its copy sits on oxblood-900, so it needs a warm off-white
+   * that none of the canvas neutrals provide at that contrast. */
+  --sz-ann-h: 42px;
+  --sz-ann-text: #EAD9C6;
+  --sz-ann-dismiss: #9C7F72;
+  --sz-ann-dot-w: 14px;
+  --sz-ann-dot-w-idle: 5px;
+  --sz-ann-dot-h: 3px;
+
+  /* Muted glyphs and footnotes. Shares a value with --sz-price-struck but not a
+   * role — price styling is fixed by the design rules and must not be reused. */
+  --sz-muted-soft: #9C9384;
+
+  /* Overlay scrims. --sz-overlay (.55) is the modal weight; the shell's drawers
+   * and search panel sit lighter. */
+  --sz-scrim: rgb(var(--sz-heading-rgb) / .5);
+  --sz-scrim-soft: rgb(var(--sz-heading-rgb) / .45);
+
+  /* WhatsApp is a third-party brand colour and deliberately outside the palette. */
+  --sz-whatsapp: #25D366;
+  --sz-whatsapp-hover: #1EBE5A;
+  --sz-shadow-whatsapp: 0 12px 28px -8px rgb(37 211 102 / .5);
+
+  /* Shell elevation. Deeper and warmer than the core ramp because these panels
+   * float over content rather than sitting on it. */
+  --sz-shadow-dropdown: 0 20px 48px -12px rgb(var(--sz-body-rgb) / .28);
+  --sz-shadow-mega: 0 24px 40px -20px rgb(var(--sz-body-rgb) / .22);
+  --sz-shadow-search: 0 24px 48px -16px rgb(var(--sz-body-rgb) / .3);
+  --sz-shadow-drawer: -20px 0 48px -12px rgb(var(--sz-body-rgb) / .3);
+  --sz-ring-search: 0 0 0 3px rgb(var(--sz-primary-700-rgb) / .12);
+
+  /* Shell measures */
+  --sz-container-search: 820px;
+  --sz-cart-w: 400px;
+  --sz-nav-drawer-w: 360px;
+  --sz-dropdown-w: 320px;
+  --sz-mega-feature-h: 190px;
+  --sz-radius-card: 12px;
+  --sz-radius-stepper: 7px;
+  --sz-otp-h: 46px;
+  --sz-action-btn: 42px;
+  --sz-cart-thumb-w: 68px;
+  --sz-cart-thumb-h: 84px;
+
+  /* Shell type steps between the named scale */
+  --sz-text-badge: 9px;
+  --sz-text-eyebrow: 10px;
+  --sz-text-mega-note: 12.5px;
+  --sz-text-avatar: 17px;
+  --sz-text-search-input: 17px;
+  --sz-text-otp: 18px;
+  --sz-text-dropdown-title: 19px;
+  --sz-text-cart-empty-title: 21px;
+  --sz-tracking-eyebrow: .14em;
+  --sz-tracking-esc: .1em;
+
+  /* Shell motion */
+  --sz-dur-ann: 340ms;
+  --sz-dur-ann-fade: 280ms;
+  --sz-dur-condense: 250ms;
+  --sz-dur-dropdown: 180ms;
+  --sz-dur-search: 220ms;
+  --sz-dur-nav-drawer: 300ms;
+  --sz-dur-cart-drawer: 320ms;
+}
+
+/* The desktop nav collapses to the burger at 900px — narrower than Tailwind's
+ * `lg`, because the seven category links plus the featured link only stop
+ * fitting there. Declared once so no component carries the literal. */
+@custom-variant nav-collapsed (@media (width < 900px));
+@custom-variant nav-expanded (@media (width >= 900px));
+
+/* ----------------------------------------------------------------------------
  * TAILWIND THEME BRIDGE
  * `inline` emits utilities that reference the custom properties above rather
  * than copying their values — so a utility can never drift from the token.
@@ -186,6 +282,12 @@
   --color-info: var(--sz-info);
   --color-info-soft: var(--sz-info-soft);
 
+  --color-ann-text: var(--sz-ann-text);
+  --color-ann-dismiss: var(--sz-ann-dismiss);
+  --color-muted-soft: var(--sz-muted-soft);
+  --color-whatsapp: var(--sz-whatsapp);
+  --color-whatsapp-hover: var(--sz-whatsapp-hover);
+
   --color-control-track: var(--sz-control-track);
   --color-control-border: var(--sz-control-border);
   --color-control-ring: var(--sz-control-ring);
@@ -210,6 +312,15 @@
   --text-3xl: var(--sz-text-3xl);
   --text-4xl: var(--sz-text-4xl);
 
+  --text-badge: var(--sz-text-badge);
+  --text-eyebrow: var(--sz-text-eyebrow);
+  --text-mega-note: var(--sz-text-mega-note);
+  --text-avatar: var(--sz-text-avatar);
+  --text-search-input: var(--sz-text-search-input);
+  --text-otp: var(--sz-text-otp);
+  --text-dropdown-title: var(--sz-text-dropdown-title);
+  --text-cart-empty-title: var(--sz-text-cart-empty-title);
+
   --leading-tight: var(--sz-leading-tight);
   --leading-snug: var(--sz-leading-snug);
   --leading-normal: var(--sz-leading-normal);
@@ -219,6 +330,8 @@
   --tracking-normal: var(--sz-tracking-normal);
   --tracking-wide: var(--sz-tracking-wide);
   --tracking-caps: var(--sz-tracking-caps);
+  --tracking-eyebrow: var(--sz-tracking-eyebrow);
+  --tracking-esc: var(--sz-tracking-esc);
 
   --radius-xs: var(--sz-radius-xs);
   --radius-sm: var(--sz-radius-sm);
@@ -230,6 +343,11 @@
   --shadow-sm: var(--sz-shadow-sm);
   --shadow-md: var(--sz-shadow-md);
   --shadow-lg: var(--sz-shadow-lg);
+  --shadow-dropdown: var(--sz-shadow-dropdown);
+  --shadow-mega: var(--sz-shadow-mega);
+  --shadow-search: var(--sz-shadow-search);
+  --shadow-drawer: var(--sz-shadow-drawer);
+  --shadow-whatsapp: var(--sz-shadow-whatsapp);
 
   --ease-out: var(--sz-ease-out);
   --ease-in-out: var(--sz-ease-in-out);
@@ -247,6 +365,13 @@
   --animate-toast-in: sz-toast-in var(--sz-dur) var(--sz-ease-out);
   --animate-shimmer: sz-shimmer 1.4s infinite;
   --animate-lift: sz-lift 3s ease-in-out infinite;
+
+  /* Shell panels. Separate from the generic slide-in animations because the
+   * spec gives the nav drawer and the mini-cart their own durations. */
+  --animate-fade-down: sz-fade-down var(--sz-dur-dropdown) ease;
+  --animate-search-in: sz-fade-down var(--sz-dur-search) var(--sz-ease-out);
+  --animate-nav-in: sz-slide-left var(--sz-dur-nav-drawer) var(--sz-ease-out);
+  --animate-cart-in: sz-slide-right var(--sz-dur-cart-drawer) var(--sz-ease-out);
 }
 
 /* ----------------------------------------------------------------------------
@@ -256,6 +381,10 @@
 @keyframes sz-fade { from { opacity: 0 } to { opacity: 1 } }
 @keyframes sz-scale-in {
   from { opacity: 0; transform: translateY(10px) scale(.985) }
+  to { opacity: 1; transform: none }
+}
+@keyframes sz-fade-down {
+  from { opacity: 0; transform: translateY(-8px) }
   to { opacity: 1; transform: none }
 }
 @keyframes sz-slide-right { from { transform: translateX(102%) } to { transform: none } }

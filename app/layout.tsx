@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { fontVariables } from "@/lib/fonts";
+import { getAnnouncementBar, getWhatsAppHref } from "@/lib/content";
 import { SiteFooter, SiteHeader, WhatsAppButton } from "@/components/shell";
 import { ToastProvider } from "@/components/ui";
 import "./globals.css";
@@ -17,7 +18,14 @@ export const metadata: Metadata = {
  * Root layout. The shared shell is mounted here exactly once — per the project
  * design rules, no page may render its own header, footer or WhatsApp button.
  */
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Both are admin-editable content blocks. Fetched in parallel because the
+  // layout blocks every page render until they resolve.
+  const [announcement, whatsappHref] = await Promise.all([
+    getAnnouncementBar(),
+    getWhatsAppHref(),
+  ]);
+
   return (
     <html lang="en" className={fontVariables}>
       <body>
@@ -28,10 +36,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           >
             Skip to content
           </a>
-          <SiteHeader />
+          <SiteHeader announcement={announcement} whatsappHref={whatsappHref} />
           <main id="main">{children}</main>
           <SiteFooter />
-          <WhatsAppButton />
+          {whatsappHref && <WhatsAppButton href={whatsappHref} />}
         </ToastProvider>
       </body>
     </html>

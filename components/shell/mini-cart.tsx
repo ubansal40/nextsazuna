@@ -1,13 +1,17 @@
 "use client";
 
-import { Button, Drawer, Icon } from "@/components/ui";
+import Image from "next/image";
+import Link from "next/link";
+import { Icon, useDialog } from "@/components/ui";
 
 export interface MiniCartLine {
   id: string;
-  title: string;
-  variant?: string;
+  name: string;
+  /** Formatted, already localised. Money never round-trips through a float. */
   price: string;
   quantity: number;
+  href?: string;
+  imageUrl?: string | null;
 }
 
 export interface MiniCartProps {
@@ -15,74 +19,196 @@ export interface MiniCartProps {
   onClose: () => void;
   lines?: MiniCartLine[];
   subtotal?: string;
+  /** True once the order qualifies for free insured shipping. */
+  freeShipping?: boolean;
+  onQuantityChange?: (id: string, quantity: number) => void;
+  onRemove?: (id: string) => void;
 }
 
+const primaryButtonClass =
+  "block w-full cursor-pointer rounded-[var(--sz-radius-control)] bg-primary-700 py-[13px] text-center text-control font-semibold text-white no-underline transition-colors duration-[var(--sz-dur-fast)] hover:bg-primary-800 hover:no-underline";
+
 /**
- * Mini-cart drawer — spec §Global shell. Renders from props today; the cart
- * phase swaps the props for real cart state without changing this markup.
+ * Mini-cart drawer — spec §Mini-cart (SazunaHeader.dc.html:264-306).
+ *
+ * Rendered from props: there is no cart state yet, so the cart phase supplies
+ * `lines` without this markup changing. Built on a native <dialog> so focus
+ * trapping, Escape and the inert background come from the platform.
  */
-export function MiniCart({ open, onClose, lines = [], subtotal }: MiniCartProps) {
+export function MiniCart({
+  open,
+  onClose,
+  lines = [],
+  subtotal,
+  freeShipping = false,
+  onQuantityChange,
+  onRemove,
+}: MiniCartProps) {
+  const { ref, onBackdropClick } = useDialog(open, onClose);
   const empty = lines.length === 0;
 
   return (
-    <Drawer
-      open={open}
-      onClose={onClose}
-      title="Your bag"
-      footer={
-        !empty && (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-baseline justify-between">
-              <span className="text-sm text-muted">Subtotal</span>
-              <span className="font-mono text-md font-medium tabular-nums text-heading tracking-[var(--sz-tracking-tight)]">
-                {subtotal}
-              </span>
-            </div>
-            <p className="text-xs text-muted">Shipping and taxes calculated at checkout.</p>
-            <Button size="lg" className="w-full">
-              Checkout
-            </Button>
-            <Button variant="ghost" onClick={onClose} className="w-full">
-              Continue shopping
-            </Button>
-          </div>
-        )
-      }
+    <dialog
+      ref={ref}
+      onClick={onBackdropClick}
+      aria-labelledby="sz-cart-title"
+      className="m-0 ml-auto h-dvh max-h-dvh w-[var(--sz-cart-w)] max-w-[92vw] bg-canvas p-0 text-body shadow-drawer backdrop:bg-[var(--sz-scrim)] backdrop:animate-fade open:animate-cart-in"
     >
-      {empty ? (
-        <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
-          <span className="inline-flex size-14 items-center justify-center rounded-[var(--sz-radius-pill)] bg-surface text-muted">
-            <Icon name="bag" size={24} />
-          </span>
-          <p className="text-sm text-muted">Your bag is empty.</p>
-          <Button variant="secondary" onClick={onClose}>
-            Browse bestsellers
-          </Button>
+      <div className="flex h-full flex-col">
+        <div className="flex items-center justify-between border-b border-line px-[22px] py-5">
+          <h2
+            id="sz-cart-title"
+            className="font-[family-name:var(--sz-font-display)] text-dropdown-title font-medium text-heading"
+          >
+            Your Bag{" "}
+            <span className="font-mono text-control-sm text-muted">({lines.length})</span>
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close bag"
+            className="inline-flex cursor-pointer p-1 text-muted transition-colors duration-[var(--sz-dur-fast)] hover:text-heading"
+          >
+            <Icon name="close" size={20} />
+          </button>
         </div>
-      ) : (
-        <ul className="flex flex-col gap-5 list-none p-0 m-0">
-          {lines.map((line) => (
-            <li key={line.id} className="flex gap-4">
-              <span
-                aria-hidden="true"
-                className="size-16 shrink-0 rounded-[var(--sz-radius-md)] border border-line"
-                style={{
-                  background:
-                    "radial-gradient(120% 120% at 32% 22%, var(--sz-media-from), var(--sz-media-to))",
-                }}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm text-body">{line.title}</p>
-                {line.variant && <p className="mt-0.5 text-xs text-muted">{line.variant}</p>}
-                <p className="mt-1 font-mono text-sm tabular-nums text-heading">
-                  {line.price}
-                  <span className="text-muted"> × {line.quantity}</span>
-                </p>
+
+        {empty ? (
+          <div className="flex flex-1 flex-col items-center justify-center px-8 py-10 text-center">
+            <div className="flex size-16 items-center justify-center rounded-pill bg-surface text-accent-strong">
+              <Icon name="bag" size={28} strokeWidth={1.5} />
+            </div>
+            <p className="m-0 mt-[18px] font-[family-name:var(--sz-font-display)] text-cart-empty-title text-heading">
+              Your bag is empty
+            </p>
+            <p className="mb-5 mt-2 max-w-[32ch] text-sm text-muted">
+              Certified diamonds, set in gold — find the one that&rsquo;s yours.
+            </p>
+            <Link
+              href="/jewellery/best-seller.html"
+              onClick={onClose}
+              className="cursor-pointer rounded-[var(--sz-radius-control)] bg-primary-700 px-[22px] py-3 text-sm font-semibold text-white no-underline transition-colors duration-[var(--sz-dur-fast)] hover:bg-primary-800 hover:no-underline"
+            >
+              Browse bestsellers
+            </Link>
+            <button
+              type="button"
+              onClick={onClose}
+              className="mt-2.5 cursor-pointer text-control-sm font-semibold text-primary-700 underline"
+            >
+              Continue shopping
+            </button>
+          </div>
+        ) : (
+          <>
+            {freeShipping && (
+              <p className="m-0 flex items-center gap-2 bg-success-soft px-[22px] py-[9px] text-xs font-semibold text-success">
+                <Icon name="truck" size={15} strokeWidth={1.7} />
+                Free insured shipping unlocked
+              </p>
+            )}
+
+            <ul className="m-0 flex flex-1 list-none flex-col gap-4 overflow-y-auto overscroll-contain p-0 px-[22px] py-4">
+              {lines.map((line) => (
+                <li key={line.id} className="flex gap-[13px]">
+                  <span className="relative flex h-[var(--sz-cart-thumb-h)] w-[var(--sz-cart-thumb-w)] shrink-0 items-center justify-center overflow-hidden rounded-[var(--sz-radius-control)] bg-[repeating-linear-gradient(135deg,var(--sz-line-soft)_0_9px,var(--sz-surface)_9px_18px)]">
+                    {line.imageUrl ? (
+                      <Image
+                        src={line.imageUrl}
+                        alt=""
+                        fill
+                        sizes="68px"
+                        className="object-cover"
+                      />
+                    ) : (
+                      <span className="size-5 rotate-45 bg-accent opacity-55" />
+                    )}
+                  </span>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex justify-between gap-2">
+                      <span className="min-w-0">
+                        {line.href ? (
+                          <Link
+                            href={line.href}
+                            onClick={onClose}
+                            className="font-[family-name:var(--sz-font-display)] text-control leading-[1.25] text-heading no-underline hover:underline"
+                          >
+                            {line.name}
+                          </Link>
+                        ) : (
+                          <span className="font-[family-name:var(--sz-font-display)] text-control leading-[1.25] text-heading">
+                            {line.name}
+                          </span>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onRemove?.(line.id)}
+                        aria-label={`Remove ${line.name}`}
+                        className="shrink-0 cursor-pointer p-0 text-muted-soft transition-colors duration-[var(--sz-dur-fast)] hover:text-error"
+                      >
+                        <Icon name="close" size={16} />
+                      </button>
+                    </div>
+
+                    <div className="mt-[9px] flex items-center justify-between">
+                      <span className="inline-flex items-center rounded-[var(--sz-radius-stepper)] border border-line">
+                        <button
+                          type="button"
+                          onClick={() => onQuantityChange?.(line.id, line.quantity - 1)}
+                          disabled={line.quantity <= 1}
+                          aria-label={`Decrease quantity of ${line.name}`}
+                          className="inline-flex size-7 cursor-pointer items-center justify-center text-primary-700 disabled:cursor-not-allowed disabled:opacity-[var(--sz-disabled-opacity)]"
+                        >
+                          <Icon name="minus" size={14} strokeWidth={1.8} />
+                        </button>
+                        <span className="w-[30px] border-x border-line text-center font-mono text-control-sm leading-7 text-heading">
+                          {line.quantity}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onQuantityChange?.(line.id, line.quantity + 1)}
+                          aria-label={`Increase quantity of ${line.name}`}
+                          className="inline-flex size-7 cursor-pointer items-center justify-center text-primary-700"
+                        >
+                          <Icon name="plus" size={14} strokeWidth={1.8} />
+                        </button>
+                      </span>
+
+                      <span className="font-mono text-sm font-semibold tracking-tight text-primary-700">
+                        {line.price}
+                      </span>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            <div className="border-t border-line px-[22px] py-[18px]">
+              <div className="mb-3.5 flex items-baseline justify-between">
+                <span className="text-sm text-muted">Subtotal</span>
+                <span className="font-mono text-md font-semibold tracking-tight text-primary-700">
+                  {subtotal}
+                </span>
               </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Drawer>
+              <Link href="/checkout" onClick={onClose} className={primaryButtonClass}>
+                Checkout
+              </Link>
+              <Link
+                href="/cart"
+                onClick={onClose}
+                className="mt-[9px] block w-full cursor-pointer rounded-[var(--sz-radius-control)] border border-line bg-transparent py-[11px] text-center text-sm font-semibold text-primary-700 no-underline transition-colors duration-[var(--sz-dur-fast)] hover:border-primary-700 hover:no-underline"
+              >
+                View bag
+              </Link>
+              <p className="m-0 mt-3 text-center text-xs text-muted">
+                Cash on delivery available nationwide
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+    </dialog>
   );
 }

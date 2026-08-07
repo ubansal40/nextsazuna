@@ -8,6 +8,8 @@ export interface LoadMoreInput {
   categorySlug?: string;
   tagSlug?: string;
   collectionId?: number;
+  /** Free-text term, set only by /search. */
+  search?: string;
   filters: FilterState;
   sort?: string;
   page: number;
@@ -33,6 +35,7 @@ export async function loadMoreProducts(input: LoadMoreInput): Promise<ProductSum
     categorySlug: input.categorySlug,
     tagSlugs: input.tagSlug ? [input.tagSlug] : undefined,
     collectionIds: input.collectionId ? [input.collectionId] : undefined,
+    search: input.search?.trim() || undefined,
     categorySlugs: input.filters.cat?.length ? input.filters.cat : undefined,
     collectionSlugs: input.filters.collection?.length ? input.filters.collection : undefined,
     material: input.filters.material?.length ? input.filters.material : undefined,

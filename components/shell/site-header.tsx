@@ -4,42 +4,68 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
-import { NAV_CATEGORIES, NAV_FEATURED } from "@/lib/navigation";
-import { buttonVariants, Drawer, Icon } from "@/components/ui";
+import { Icon } from "@/components/ui";
+import { jewelleryUrl, NAV_CATEGORIES, NAV_FEATURED, type NavCategory } from "@/lib/navigation";
+import { AccountMenu, type ShellCustomer } from "./account-menu";
 import { AnnouncementBar } from "./announcement-bar";
 import { MegaMenu } from "./mega-menu";
-import { MiniCart } from "./mini-cart";
+import { MiniCart, type MiniCartLine } from "./mini-cart";
+import { MobileNav } from "./mobile-nav";
+import { SearchOverlay } from "./search-overlay";
 
 export interface SiteHeaderProps {
-  /** Item count on the bag badge. */
-  cartCount?: number;
-  /** Signed-in customer's first name; absent renders the signed-out menu. */
-  customerName?: string;
+  /** Copy from the `announcement_bar` content block; absent renders no strip. */
+  announcement?: {
+    messages: string[];
+    autoSlide: boolean;
+    interval: number;
+  } | null;
+  /** Deep link from `site_identity`. Absent hides the search dead-end's escape hatch. */
+  whatsappHref?: string | null;
+  /** Signed-in customer. Absent renders the one-time-code panel. */
+  customer?: ShellCustomer;
+  /** Cart contents. Empty until the cart phase lands. */
+  cartLines?: MiniCartLine[];
+  cartSubtotal?: string;
+  freeShipping?: boolean;
 }
 
+const navLinkClass =
+  "whitespace-nowrap rounded-sm px-[11px] py-2 text-sm text-body no-underline transition-colors duration-[var(--sz-dur-fast)] hover:bg-primary-50 hover:text-primary-700 hover:no-underline";
+
+const actionButtonClass =
+  "inline-flex size-[var(--sz-action-btn)] cursor-pointer items-center justify-center rounded-[var(--sz-radius-control)] text-body no-underline transition-colors duration-[var(--sz-dur-fast)] hover:bg-surface hover:text-primary-700 hover:no-underline";
+
 /**
- * Global storefront header — spec §Global shell.
+ * Global storefront header — spec SazunaHeader.dc.html:60-186.
  *
  * MANDATORY SHARED COMPONENT. Pages must render this, never rebuild a header,
- * announcement bar, mega-menu or mini-cart of their own. Change it once, here.
+ * announcement bar, mega-menu, search overlay or mini-cart of their own.
  */
-export function SiteHeader({ cartCount = 0, customerName }: SiteHeaderProps) {
+export function SiteHeader({
+  announcement,
+  whatsappHref,
+  customer,
+  cartLines = [],
+  cartSubtotal,
+  freeShipping,
+}: SiteHeaderProps) {
   const [scrolled, setScrolled] = useState(false);
-  const [openMega, setOpenMega] = useState<string | null>(null);
+  const [mega, setMega] = useState<NavCategory | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
-  const accountRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
+  const accountRef = useRef<HTMLDivElement>(null);
 
   /**
    * Publish the header's real height as `--sz-header-h`.
    *
    * Anything sticking below the header — the listing toolbar, the filter rail —
-   * has to offset by it. A hardcoded value is wrong the moment the announcement
-   * bar collapses on scroll and the header shrinks, which shows up as a gap
-   * under the sticky toolbar. A ResizeObserver keeps it honest across the
-   * collapse, the logo resize, and any viewport change.
+   * offsets by it. A hardcoded value is wrong the moment the header condenses on
+   * scroll, which shows up as a gap under the sticky toolbar. A ResizeObserver
+   * keeps it honest across the condense, the logo resize and any viewport change.
    */
   useEffect(() => {
     const node = headerRef.current;
@@ -56,16 +82,16 @@ export function SiteHeader({ cartCount = 0, customerName }: SiteHeaderProps) {
     return () => observer.disconnect();
   }, []);
 
-  // One scroll listener for the whole shell: collapses the announcement bar and
-  // shrinks the logo. Passive because it never calls preventDefault.
+  // One scroll listener for the whole shell. Passive: it never preventDefaults.
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8);
+    const onScroll = () => setScrolled(window.scrollY > 44);
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Dismiss the account dropdown on outside click or Escape.
+  // Dismiss the account panel on outside click or Escape. The panel holds a
+  // half-finished sign-in, so it should not sit open behind other work.
   useEffect(() => {
     if (!accountOpen) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -82,198 +108,191 @@ export function SiteHeader({ cartCount = 0, customerName }: SiteHeaderProps) {
     };
   }, [accountOpen]);
 
-  const activeCategory = NAV_CATEGORIES.find((category) => category.label === openMega);
+  const cartCount = cartLines.reduce((total, line) => total + line.quantity, 0);
+
+  function openMega(category: NavCategory) {
+    setMega(category);
+    setAccountOpen(false);
+  }
 
   return (
     <>
-      <AnnouncementBar collapsed={scrolled} />
+      {announcement && (
+        <AnnouncementBar
+          messages={announcement.messages}
+          autoSlide={announcement.autoSlide}
+          interval={announcement.interval}
+        />
+      )}
 
-      <header
-        ref={headerRef}
-        className="sticky top-0 z-[60] border-b border-line bg-canvas"
-        onMouseLeave={() => setOpenMega(null)}
-      >
-        <div className="mx-auto flex max-w-[var(--sz-container)] items-center gap-3 px-6 md:px-10">
-          <button
-            type="button"
-            aria-label="Menu"
-            aria-expanded={mobileNav}
-            onClick={() => setMobileNav(true)}
-            className="inline-flex size-10 shrink-0 cursor-pointer items-center justify-center text-body lg:hidden"
+      <div className="sticky top-0 z-[60]" onMouseLeave={() => setMega(null)}>
+        <header
+          ref={headerRef}
+          className="border-b border-line bg-[var(--sz-header-bg)] backdrop-blur-[var(--sz-header-blur)]"
+        >
+          <div
+            className={cn(
+              "mx-auto flex max-w-[var(--sz-container)] items-center gap-4",
+              "px-[var(--sz-gutter-mobile)] nav-expanded:px-[var(--sz-gutter)]",
+              "transition-[padding] duration-[var(--sz-dur-condense)] ease-[ease]",
+              scrolled
+                ? "py-[var(--sz-header-pad-y-condensed)]"
+                : "py-[var(--sz-header-pad-y)]",
+            )}
           >
-            <Icon name="menu" size={22} />
-          </button>
+            <button
+              type="button"
+              aria-label="Menu"
+              aria-expanded={mobileNav}
+              onClick={() => setMobileNav(true)}
+              className="hidden size-10 shrink-0 cursor-pointer items-center justify-center text-body nav-collapsed:inline-flex"
+            >
+              <Icon name="menu" size={22} strokeWidth={1.6} />
+            </button>
 
-          <Link
-            href="/"
-            className="inline-flex shrink-0 items-center py-3"
-            aria-label="Sazuna Jewellers — home"
-          >
-            <Image
-              src="/sazuna-logo.webp"
-              alt="Sazuna Jewellers"
-              width={1130}
-              height={240}
-              priority
-              className={cn(
-                "w-auto transition-[height] duration-[250ms] ease-[var(--sz-ease-out)]",
-                scrolled ? "h-6" : "h-8",
-              )}
-            />
-          </Link>
-
-          <nav
-            aria-label="Categories"
-            className="hidden min-w-0 flex-1 items-center justify-center gap-px overflow-x-auto lg:flex"
-          >
-            {NAV_CATEGORIES.map((category) => (
-              <Link
-                key={category.label}
-                href={category.href}
-                onMouseEnter={() => setOpenMega(category.columns ? category.label : null)}
-                onFocus={() => setOpenMega(category.columns ? category.label : null)}
-                aria-expanded={category.columns ? openMega === category.label : undefined}
+            <Link
+              href="/"
+              className="inline-flex shrink-0 items-center"
+              aria-label="Sazuna Jewellers — home"
+            >
+              <Image
+                src="/sazuna-logo.webp"
+                alt="Sazuna Jewellers"
+                width={1130}
+                height={240}
+                priority
                 className={cn(
-                  "whitespace-nowrap rounded-[var(--sz-radius-sm)] px-[11px] py-2 text-sm no-underline",
-                  "transition-colors duration-[var(--sz-dur-fast)]",
-                  openMega === category.label
-                    ? "bg-primary-50 text-primary-700"
-                    : "text-body hover:bg-primary-50 hover:text-primary-700",
-                  "hover:no-underline",
+                  "block w-auto transition-[height] duration-[var(--sz-dur-condense)] ease-[ease]",
+                  scrolled
+                    ? "h-[var(--sz-logo-h-condensed)]"
+                    : "h-[var(--sz-logo-h-mobile)] nav-expanded:h-[var(--sz-logo-h)]",
                 )}
+              />
+            </Link>
+
+            <nav
+              aria-label="Categories"
+              className="hidden min-w-0 flex-1 items-center justify-center gap-px overflow-x-auto nav-expanded:flex"
+            >
+              {NAV_CATEGORIES.map((category) => (
+                <Link
+                  key={category.slug}
+                  href={jewelleryUrl(category.slug)}
+                  onMouseEnter={() => openMega(category)}
+                  onFocus={() => openMega(category)}
+                  aria-expanded={mega?.slug === category.slug}
+                  className={cn(
+                    navLinkClass,
+                    mega?.slug === category.slug && "bg-primary-50 text-primary-700",
+                  )}
+                >
+                  {category.label}
+                </Link>
+              ))}
+
+              <span aria-hidden="true" className="mx-1.5 h-4 w-px bg-line" />
+
+              <Link
+                href={jewelleryUrl(NAV_FEATURED.slug)}
+                onMouseEnter={() => setMega(null)}
+                onFocus={() => setMega(null)}
+                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-sm px-[11px] py-2 text-sm font-semibold text-primary-700 no-underline transition-colors duration-[var(--sz-dur-fast)] hover:bg-primary-50 hover:no-underline"
               >
-                {category.label}
+                <span aria-hidden="true" className="size-1.5 rotate-45 bg-accent" />
+                {NAV_FEATURED.label}
               </Link>
-            ))}
+            </nav>
 
-            <span aria-hidden="true" className="mx-1.5 h-4 w-px bg-line" />
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                aria-label="Search"
+                onClick={() => {
+                  setSearchOpen(true);
+                  setMega(null);
+                  setAccountOpen(false);
+                }}
+                className={actionButtonClass}
+              >
+                <Icon name="search" size={21} strokeWidth={1.6} />
+              </button>
 
-            <Link
-              href={NAV_FEATURED.href}
-              onMouseEnter={() => setOpenMega(null)}
-              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-[var(--sz-radius-sm)] px-[11px] py-2 text-sm font-semibold text-primary-700 no-underline hover:bg-primary-50 hover:no-underline"
-            >
-              <span aria-hidden="true" className="size-1.5 rotate-45 bg-accent" />
-              {NAV_FEATURED.label}
-            </Link>
-          </nav>
-
-          <div className="ml-auto flex shrink-0 items-center gap-0.5">
-            <Link
-              href="/search"
-              aria-label="Search"
-              className="inline-flex size-[42px] items-center justify-center rounded-[var(--sz-radius-control)] text-body no-underline transition-colors duration-[var(--sz-dur-fast)] hover:bg-primary-50 hover:text-primary-700"
-            >
-              <Icon name="search" size={20} />
-            </Link>
-
-            <div ref={accountRef} className="relative">
               <button
                 type="button"
                 aria-label="Account"
                 aria-expanded={accountOpen}
                 aria-haspopup="menu"
-                onClick={() => setAccountOpen((open) => !open)}
-                className="inline-flex size-[42px] cursor-pointer items-center justify-center rounded-[var(--sz-radius-control)] text-body transition-colors duration-[var(--sz-dur-fast)] hover:bg-primary-50 hover:text-primary-700"
+                onClick={() => {
+                  setAccountOpen((open) => !open);
+                  setMega(null);
+                }}
+                className={actionButtonClass}
               >
-                <Icon name="account" size={20} />
+                <Icon name="account" size={21} strokeWidth={1.6} />
               </button>
 
-              {accountOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 top-full z-[70] mt-2 w-[320px] rounded-[var(--sz-radius-lg)] border border-line bg-canvas p-2 shadow-lg animate-scale-in"
-                >
-                  {customerName ? (
-                    <>
-                      <p className="px-3 py-2 text-sm text-muted">
-                        Namaste, <span className="font-semibold text-heading">{customerName}</span>
-                      </p>
-                      <span className="my-1.5 mx-1 block h-px bg-line-soft" />
-                      {[
-                        { label: "Profile", href: "/account" },
-                        { label: "Orders", href: "/account/orders" },
-                        { label: "Loyalty", href: "/account/loyalty" },
-                      ].map((item) => (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          role="menuitem"
-                          className="block rounded-[var(--sz-radius-sm)] px-3 py-2 text-sm text-body no-underline hover:bg-primary-50 hover:text-primary-700 hover:no-underline"
-                        >
-                          {item.label}
-                        </Link>
-                      ))}
-                      <span className="my-1.5 mx-1 block h-px bg-line-soft" />
-                      <Link
-                        href="/account/logout"
-                        role="menuitem"
-                        className="block rounded-[var(--sz-radius-sm)] px-3 py-2 text-sm text-muted no-underline hover:bg-primary-50 hover:no-underline"
-                      >
-                        Log out
-                      </Link>
-                    </>
-                  ) : (
-                    <div className="p-2">
-                      <p className="text-sm font-semibold text-heading">Sign in</p>
-                      <p className="mt-1 text-xs text-muted">
-                        Track orders and collect loyalty points.
-                      </p>
-                      <Link
-                        href="/account/login"
-                        role="menuitem"
-                        className={cn(
-                          buttonVariants({ size: "sm" }),
-                          "mt-3 w-full no-underline hover:no-underline",
-                        )}
-                      >
-                        Sign in
-                      </Link>
-                    </div>
-                  )}
-                </div>
-              )}
+              <button
+                type="button"
+                aria-label={`Bag, ${cartCount} item${cartCount === 1 ? "" : "s"}`}
+                onClick={() => {
+                  setCartOpen(true);
+                  setMega(null);
+                  setAccountOpen(false);
+                }}
+                className={cn(actionButtonClass, "relative")}
+              >
+                <Icon name="bag" size={21} strokeWidth={1.6} />
+                {cartCount > 0 && (
+                  <span className="absolute right-[5px] top-[5px] inline-flex h-[17px] min-w-[17px] items-center justify-center rounded-pill border-[1.5px] border-canvas bg-primary-700 px-1 font-mono text-badge text-white">
+                    {cartCount}
+                  </span>
+                )}
+              </button>
             </div>
-
-            <button
-              type="button"
-              aria-label={`Bag, ${cartCount} item${cartCount === 1 ? "" : "s"}`}
-              onClick={() => setCartOpen(true)}
-              className="relative inline-flex size-[42px] cursor-pointer items-center justify-center rounded-[var(--sz-radius-control)] text-body transition-colors duration-[var(--sz-dur-fast)] hover:bg-primary-50 hover:text-primary-700"
-            >
-              <Icon name="bag" size={20} />
-              {cartCount > 0 && (
-                <span className="absolute right-1 top-1 inline-flex min-w-[17px] items-center justify-center rounded-[var(--sz-radius-pill)] bg-primary-700 px-1 font-mono text-[length:var(--sz-text-micro)] leading-[17px] text-white">
-                  {cartCount}
-                </span>
-              )}
-            </button>
           </div>
-        </div>
+        </header>
 
-        {activeCategory && <MegaMenu category={activeCategory} />}
-      </header>
+        {/*
+          The panel hangs below the header, aligned to the container's right
+          edge rather than the viewport's — the spec's fixed 40px offset only
+          coincides with the account button at its own 1280px authoring width.
+        */}
+        {accountOpen && (
+          <div className="absolute inset-x-0 top-full z-[70]">
+            <div
+              ref={accountRef}
+              className="mx-auto flex max-w-[var(--sz-container)] justify-end px-[var(--sz-gutter-mobile)] nav-expanded:px-[var(--sz-gutter)]"
+            >
+              <AccountMenu customer={customer} />
+            </div>
+          </div>
+        )}
 
-      <Drawer open={mobileNav} onClose={() => setMobileNav(false)} title="Categories" side="left">
-        <nav aria-label="Categories">
-          <ul className="flex flex-col gap-1 list-none p-0 m-0">
-            {[...NAV_CATEGORIES, NAV_FEATURED].map((category) => (
-              <li key={category.label}>
-                <Link
-                  href={category.href}
-                  onClick={() => setMobileNav(false)}
-                  className="flex items-center justify-between rounded-[var(--sz-radius-sm)] px-3 py-3 text-sm text-body no-underline hover:bg-primary-50 hover:text-primary-700 hover:no-underline"
-                >
-                  {category.label}
-                  <Icon name="chevron-right" size={16} className="text-muted" />
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      </Drawer>
+        {mega && <MegaMenu category={mega} />}
+      </div>
 
-      <MiniCart open={cartOpen} onClose={() => setCartOpen(false)} />
+      <MobileNav
+        open={mobileNav}
+        onClose={() => setMobileNav(false)}
+        onSignIn={() => setAccountOpen(true)}
+        signedIn={Boolean(customer)}
+      />
+
+      {/* Mounted only while open: it reads recent searches from storage once,
+          on the client, and should forget them between visits. */}
+      {searchOpen && (
+        <SearchOverlay onClose={() => setSearchOpen(false)} whatsappHref={whatsappHref} />
+      )}
+
+
+
+      <MiniCart
+        open={cartOpen}
+        onClose={() => setCartOpen(false)}
+        lines={cartLines}
+        subtotal={cartSubtotal}
+        freeShipping={freeShipping}
+      />
     </>
   );
 }
