@@ -25,6 +25,9 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `/design` — component gallery rendering every component and variant.
 - **Data layer** — `server-only` `mysql2` pool with transaction helper, Zod-validated
   environment, and a versioned migration runner (`npm run migrate`).
+- **Initial schema migration** — 26 tables ported from the Express application,
+  with its destructive `DROP TABLE` bootstrap statements and MariaDB-only
+  `IF NOT EXISTS` guards removed. Verified against MySQL 8.4.
 - **CI** — token parity, typecheck, lint and build on every push and pull request;
   commit message linting on pull requests.
 - Architecture decision records in `docs/adr`.
