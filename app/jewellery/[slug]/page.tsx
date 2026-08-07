@@ -9,6 +9,7 @@ import {
 } from "@/lib/catalog";
 import { bracketById, getFacets } from "@/lib/catalog/facets";
 import { readFilters, type RawParams } from "@/lib/catalog/filter-params";
+import { getCategoryIntro } from "@/lib/content";
 import { ProductDetailView } from "./_components/product-detail";
 import { ProductListingView } from "./_components/product-listing";
 import { SORT_VALUES } from "./_components/toolbar";
@@ -103,7 +104,7 @@ export default async function JewelleryPage({ params, searchParams }: PageProps)
   const tagSlug = resolved.kind === "tag" ? resolved.tag.slug : undefined;
   const collectionId = resolved.kind === "collection" ? resolved.collection.id : undefined;
 
-  const [listing, facets] = await Promise.all([
+  const [listing, facets, intro] = await Promise.all([
     listProducts({
       categorySlug,
       tagSlugs: tagSlug ? [tagSlug] : undefined,
@@ -120,6 +121,7 @@ export default async function JewelleryPage({ params, searchParams }: PageProps)
       pageSize: STEP,
     }),
     getFacets({ categorySlug }),
+    categorySlug ? getCategoryIntro(categorySlug) : Promise.resolve(null),
   ]);
 
   const heading =
@@ -132,6 +134,7 @@ export default async function JewelleryPage({ params, searchParams }: PageProps)
   return (
     <ProductListingView
       heading={heading}
+      subheading={intro}
       basePath={`/jewellery/${slug}.html`}
       listing={listing}
       facets={facets}
