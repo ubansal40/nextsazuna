@@ -1,12 +1,17 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getProductBySlug, listProducts, resolveSlug, slugFromSegment } from "@/lib/catalog";
+import {
+  getProductBySlug,
+  listProducts,
+  resolveSlug,
+  slugFromSegment,
+  type SortKey,
+} from "@/lib/catalog";
 import { bracketById, getFacets } from "@/lib/catalog/facets";
 import { readFilters, type RawParams } from "@/lib/catalog/filter-params";
 import { ProductDetailView } from "./_components/product-detail";
 import { ProductListingView } from "./_components/product-listing";
-import { SORT_VALUES } from "./_components/sort-links";
-import type { SortKey } from "@/lib/catalog";
+import { SORT_VALUES } from "./_components/toolbar";
 
 /**
  * The canonical storefront URL: /jewellery/{slug}.html
@@ -23,12 +28,11 @@ interface PageProps {
 }
 
 /**
- * Products shown initially, and added per "Load more".
+ * Batch size for the first render and each infinite-scroll page.
  *
- * The spec's own logic uses 9, but that is sized to its 24-item demo catalog.
- * Real categories run to several hundred, where 9 would mean dozens of clicks.
- * 24 keeps the spec's load-more pattern while staying a multiple of both the
- * 2- and 3-column grids.
+ * The spec's logic uses 9, sized to its 24-item demo catalog. Real categories
+ * run to several hundred, and 24 divides evenly into both the 2- and 3-column
+ * grids so a batch never leaves a ragged final row.
  */
 const STEP = 24;
 
@@ -93,21 +97,17 @@ export default async function JewelleryPage({ params, searchParams }: PageProps)
   const filters = readFilters(q);
 
   const sortRaw = one(q.sort);
-  const sort = sortRaw && SORT_VALUES.has(sortRaw as "popularity") ? sortRaw : undefined;
-
-  // "Load more" accumulates by raising `show`, so the expanded list stays a
-  // real, shareable URL rather than client-only state.
-  const showRaw = Number(one(q.show));
-  const shown =
-    Number.isFinite(showRaw) && showRaw > 0 ? Math.min(240, Math.ceil(showRaw / STEP) * STEP) : STEP;
+  const sort = sortRaw && SORT_VALUES.has(sortRaw as "popularity") ? sortRaw : "popularity";
 
   const categorySlug = resolved.kind === "category" ? resolved.category.slug : undefined;
+  const tagSlug = resolved.kind === "tag" ? resolved.tag.slug : undefined;
+  const collectionId = resolved.kind === "collection" ? resolved.collection.id : undefined;
 
   const [listing, facets] = await Promise.all([
     listProducts({
       categorySlug,
-      tagSlugs: resolved.kind === "tag" ? [resolved.tag.slug] : undefined,
-      collectionIds: resolved.kind === "collection" ? [resolved.collection.id] : undefined,
+      tagSlugs: tagSlug ? [tagSlug] : undefined,
+      collectionIds: collectionId ? [collectionId] : undefined,
       categorySlugs: filters.cat.length ? filters.cat : undefined,
       collectionSlugs: filters.collection.length ? filters.collection : undefined,
       material: filters.material.length ? filters.material : undefined,
@@ -115,9 +115,9 @@ export default async function JewelleryPage({ params, searchParams }: PageProps)
       priceBrackets: filters.price.length
         ? filters.price.map(bracketById).filter((b) => b !== null)
         : undefined,
-      sort: sort as SortKey | undefined,
+      sort: sort as SortKey,
       page: 1,
-      pageSize: shown,
+      pageSize: STEP,
     }),
     getFacets({ categorySlug }),
   ]);
@@ -132,14 +132,13 @@ export default async function JewelleryPage({ params, searchParams }: PageProps)
   return (
     <ProductListingView
       heading={heading}
-      kind={resolved.kind}
       basePath={`/jewellery/${slug}.html`}
       listing={listing}
       facets={facets}
       state={filters}
       sort={sort}
-      shown={shown}
-      step={STEP}
+      pageSize={STEP}
+      request={{ categorySlug, tagSlug, collectionId, filters, sort }}
     />
   );
 }

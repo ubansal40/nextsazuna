@@ -51,7 +51,7 @@ export function ProductCard({
     >
       <div
         className={cn(
-          "relative aspect-square flex items-center justify-center",
+          "relative aspect-square overflow-hidden",
           outOfStock && "saturate-[.4]",
         )}
         style={{
@@ -60,20 +60,23 @@ export function ProductCard({
             : "radial-gradient(120% 120% at 32% 22%, var(--sz-media-from), var(--sz-media-to))",
         }}
       >
-        {image ? (
-          <Image
-            src={image.src}
-            alt={image.alt}
-            fill
-            sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
-            className="object-cover"
-          />
-        ) : (
-          <span
-            aria-hidden="true"
-            className="size-[46px] rotate-45 bg-accent opacity-50 shadow-[inset_0_0_0_1px_rgb(255_255_255/.55)]"
-          />
-        )}
+        {/* The media layer zooms on hover; the badges above must not. */}
+        <div className="absolute inset-0 flex items-center justify-center transition-transform duration-[550ms] ease-[var(--sz-ease-out)] group-hover:scale-105">
+          {image ? (
+            <Image
+              src={image.src}
+              alt={image.alt}
+              fill
+              sizes="(max-width: 640px) 50vw, (max-width: 1100px) 50vw, 33vw"
+              className="object-cover"
+            />
+          ) : (
+            <span
+              aria-hidden="true"
+              className="w-[24%] aspect-square rotate-45 bg-accent opacity-50 shadow-[inset_0_0_0_1px_rgb(255_255_255/.55)]"
+            />
+          )}
+        </div>
 
         {offerLabel && !outOfStock && (
           <span className="absolute top-[11px] left-[11px] bg-primary-700 text-white font-mono text-[length:var(--sz-text-micro)] tracking-[var(--sz-tracking-caps)] uppercase rounded-[var(--sz-radius-pill)] px-[11px] py-[5px]">

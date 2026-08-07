@@ -1,0 +1,172 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import Link from "next/link";
+import { Drawer, Icon } from "@/components/ui";
+import { cn } from "@/lib/cn";
+import type { Facets } from "@/lib/catalog/facets";
+import { clearAllUrl, sortUrl, toggleUrl, type FilterState } from "@/lib/catalog/filter-params";
+import { buildGroups, FilterOption } from "./filter-sidebar";
+
+/** Popularity and Best Selling mean the same thing here, so only one is offered. */
+export const SORT_OPTIONS = [
+  { value: "popularity", label: "Popularity" },
+  { value: "price-asc", label: "Price: Low → High" },
+  { value: "price-desc", label: "Price: High → Low" },
+  { value: "newest", label: "Newest" },
+] as const;
+
+export const SORT_VALUES = new Set(SORT_OPTIONS.map((o) => o.value));
+
+interface Props {
+  countLabel: string;
+  basePath: string;
+  state: FilterState;
+  sort: string;
+  facets: Facets;
+}
+
+/**
+ * Sticky toolbar — spec §Toolbar, §Filter sheet, §Sort sheet.
+ *
+ * Desktop shows the result count and a native select. Below 900px it becomes
+ * two buttons opening bottom sheets. Native select is deliberate: it gives the
+ * platform picker on mobile and full keyboard behaviour for free.
+ */
+export function Toolbar({ countLabel, basePath, state, sort, facets }: Props) {
+  const router = useRouter();
+  const [sheet, setSheet] = useState<"filter" | "sort" | null>(null);
+  const groups = buildGroups(facets);
+  const extra = sort !== "popularity" ? { sort } : {};
+  const activeCount = Object.values(state).reduce((n, values) => n + values.length, 0);
+
+  const sheetButton = cn(
+    "inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2",
+    "rounded-[10px] border border-line bg-raised text-sm font-semibold text-heading",
+    "transition-colors duration-[var(--sz-dur-fast)] hover:border-primary-700",
+  );
+
+  return (
+    <>
+      <div className="sticky top-[calc(var(--sz-header-h)-1px)] z-40 mt-[26px] border-b border-line-soft bg-[rgb(var(--sz-canvas-rgb)/.94)] backdrop-blur-[8px]">
+        <div className="mx-auto max-w-[var(--sz-container)] px-5 md:px-10">
+          {/* Desktop */}
+          <div className="hidden items-center justify-between gap-[18px] py-[13px] lg:flex">
+            <p aria-live="polite" className="font-mono text-[12.5px] text-muted">
+              {countLabel}
+            </p>
+            <label className="inline-flex items-center gap-2.5 text-[13px] text-muted">
+              Sort by
+              <span className="relative inline-flex items-center">
+                <select
+                  aria-label="Sort products"
+                  value={sort}
+                  onChange={(event) => router.push(sortUrl(basePath, state, event.target.value))}
+                  className={cn(
+                    "min-h-[44px] cursor-pointer appearance-none rounded-[9px] border border-line bg-raised",
+                    "py-2.5 pl-3.5 pr-[38px] text-sm text-heading outline-none",
+                  )}
+                >
+                  {SORT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <Icon
+                  name="chevron-down"
+                  size={14}
+                  strokeWidth={2}
+                  className="pointer-events-none absolute right-[13px] text-muted"
+                />
+              </span>
+            </label>
+          </div>
+
+          {/* Mobile */}
+          <div className="grid grid-cols-2 gap-2.5 py-2.5 lg:hidden">
+            <button type="button" onClick={() => setSheet("filter")} className={sheetButton}>
+              <Icon name="filter" size={15} strokeWidth={1.8} />
+              Filter
+              {activeCount > 0 && (
+                <span className="inline-flex min-w-[18px] items-center justify-center rounded-[var(--sz-radius-pill)] bg-primary-700 px-1.5 font-mono text-[length:var(--sz-text-micro)] leading-[18px] text-white">
+                  {activeCount}
+                </span>
+              )}
+            </button>
+            <button type="button" onClick={() => setSheet("sort")} className={sheetButton}>
+              <Icon name="sort" size={15} strokeWidth={1.8} />
+              Sort
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <Drawer open={sheet === "filter"} onClose={() => setSheet(null)} title="Filters" side="left">
+        {activeCount > 0 && (
+          <Link
+            href={clearAllUrl(basePath, extra)}
+            onClick={() => setSheet(null)}
+            className="mb-2 inline-block text-[12.5px] font-semibold text-muted underline"
+          >
+            Clear all
+          </Link>
+        )}
+        {groups.map((group) => (
+          <details
+            key={group.key}
+            open={group.defaultOpen || state[group.key].length > 0}
+            className="group border-b border-line-soft py-1.5"
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between py-3 text-sm font-semibold text-heading marker:hidden [&::-webkit-details-marker]:hidden">
+              {group.title}
+              <Icon
+                name="chevron-down"
+                size={15}
+                strokeWidth={2}
+                className="text-muted transition-transform duration-[250ms] group-open:rotate-180"
+              />
+            </summary>
+            <div className="flex flex-col gap-0.5 pb-3.5 pt-0.5">
+              {group.options.map((option) => (
+                <FilterOption
+                  key={option.value}
+                  href={toggleUrl(basePath, state, group.key, option.value, extra)}
+                  checked={state[group.key].includes(option.value)}
+                  label={option.label}
+                  mono={group.mono}
+                  onSelect={() => setSheet(null)}
+                />
+              ))}
+            </div>
+          </details>
+        ))}
+      </Drawer>
+
+      <Drawer open={sheet === "sort"} onClose={() => setSheet(null)} title="Sort by" side="left">
+        <ul className="flex flex-col gap-1 list-none p-0 m-0">
+          {SORT_OPTIONS.map((option) => (
+            <li key={option.value}>
+              <Link
+                href={sortUrl(basePath, state, option.value)}
+                onClick={() => setSheet(null)}
+                aria-current={option.value === sort ? "true" : undefined}
+                className={cn(
+                  "flex min-h-[44px] items-center justify-between rounded-[var(--sz-radius-sm)] px-3 py-3 text-sm no-underline",
+                  option.value === sort
+                    ? "bg-primary-50 font-semibold text-primary-700"
+                    : "text-body hover:bg-primary-50",
+                  "hover:no-underline",
+                )}
+              >
+                {option.label}
+                {option.value === sort && <Icon name="check" size={16} />}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </Drawer>
+    </>
+  );
+}
