@@ -15,6 +15,7 @@ export { Icon, iconNames, type IconName, type IconProps } from "./icon";
 export { Input, type InputProps } from "./input";
 export { Modal, type ModalProps } from "./modal";
 export { ProductCard, type ProductCardProps } from "./product-card";
+export { Prose, ProseTable, type ProseProps, type ProseTableProps } from "./prose";
 export { QuantityStepper, type QuantityStepperProps } from "./quantity-stepper";
 export { RadioGroup, METAL_OPTIONS, type RadioGroupProps, type RadioOption } from "./radio-group";
 export { Select, type SelectProps } from "./select";

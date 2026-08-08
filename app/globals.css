@@ -401,6 +401,83 @@
 @custom-variant nav-expanded (@media (width >= 900px));
 
 /* ----------------------------------------------------------------------------
+ * CONTENT PAGE TOKENS — Sazuna Policy.dc.html / Sazuna Story.dc.html
+ *
+ * The eleven long-form pages are the first surfaces in the system with real
+ * running prose, and the core scale names none of it: no measure, no paragraph
+ * rhythm, no list indent. Everything below is read off the two spec
+ * stylesheets. Both specs narrow the page from the 1280px shell container —
+ * policy to 1120, story to 1180 — because a 760px column centred in 1280 leaves
+ * the table of contents stranded.
+ *
+ * Colours are deliberately absent: every value the two specs use is already a
+ * palette token (surface, line, line-soft, primary-700/800, accent, muted), so
+ * the components consume those rather than restating them here.
+ * ------------------------------------------------------------------------- */
+:root {
+  --sz-policy-container: 1120px;
+  --sz-story-container: 1180px;
+
+  /* Table of contents rail. The spec pins it at a flat `top:100px` and offsets
+   * anchors by 96px, but the header measures itself into --sz-header-h and
+   * condenses on scroll — a literal leaves headings under the bar in the tall
+   * state. Both are re-expressed as the spec's clearance above the real header. */
+  --sz-toc-w: 230px;
+  --sz-toc-gap: 52px;
+  --sz-toc-top: calc(var(--sz-header-h) + 23px);
+  --sz-anchor-offset: calc(var(--sz-header-h) + 19px);
+
+  /* Measure. Policy sets its column at 760px; story runs narrower at 720, which
+   * --sz-container-narrow already names. */
+  --sz-prose-max: 760px;
+
+  /* Paragraph rhythm. Running prose is set looser than the 1.55 body default
+   * and leads by more than a UI stack, so both are named rather than inlined. */
+  --sz-leading-prose: 1.72;
+  --sz-prose-gap: 14px;             /* paragraph to paragraph */
+  --sz-prose-gap-tight: 7px;        /* list item to list item */
+  --sz-prose-indent: 22px;          /* ul padding-inline-start */
+  --sz-prose-section-gap: 38px;     /* h2 to the section above it */
+
+  --sz-text-content-h1: 38px;
+  --sz-text-content-h1-sm: 29px;
+  --sz-text-content-h2: 24px;       /* policy section heading */
+  --sz-text-content-lead: 19px;     /* story intro paragraph */
+  --sz-text-toc: 13px;
+
+  /* The story intro sits a step darker than body copy so it reads as a lead. */
+  --sz-content-lead: #3E3229;
+  /* The FAQ empty state is the one dashed border in the system, and it sits
+   * between --sz-line and --sz-control-track. */
+  --sz-content-dashed: #E0D4BE;
+
+  /* Story blocks. The spec spaces its bands at 80px and the stat row at 64. */
+  --sz-story-gap: 80px;
+  --sz-story-gap-tight: 64px;
+  --sz-story-pair-gap: 52px;        /* image + text columns */
+  --sz-story-card-gap: 22px;        /* feature grid */
+  --sz-story-stat-gap: 20px;
+  --sz-text-story-h1: 52px;
+  --sz-text-story-h1-sm: 34px;
+  --sz-text-story-h2: 32px;
+  --sz-text-story-h2-sm: 26px;
+  --sz-text-story-quote: 30px;
+  --sz-text-story-stat: 40px;
+  --sz-text-story-card-title: 19px;
+  --sz-story-icon: 46px;
+  --sz-radius-story-icon: 13px;
+}
+
+/* Policy pages: the ToC becomes a disclosure and the grid collapses to one
+ * column at 860 — where 230 + 52 + 760 stops fitting inside the gutter. Story
+ * pages stack their image/text pairs at 900, and drop the 4-up stat row and
+ * 3-up feature grid to two columns at 600. */
+@custom-variant policy-stacked (@media (width < 860px));
+@custom-variant policy-split (@media (width >= 860px));
+@custom-variant story-stacked (@media (width < 900px));
+@custom-variant story-narrow (@media (width < 600px));
+
+/* ----------------------------------------------------------------------------
  * TAILWIND THEME BRIDGE
  * `inline` emits utilities that reference the custom properties above rather
  * than copying their values — so a utility can never drift from the token.
@@ -465,6 +542,8 @@
   --color-control-border: var(--sz-control-border);
   --color-control-ring: var(--sz-control-ring);
   --color-price-struck: var(--sz-price-struck);
+  --color-content-lead: var(--sz-content-lead);
+  --color-content-dashed: var(--sz-content-dashed);
   --color-danger-hover: var(--sz-danger-hover);
   --color-metal-yellow: var(--sz-metal-yellow);
   --color-metal-white: var(--sz-metal-white);
@@ -511,6 +590,26 @@
   --text-related-price: var(--sz-text-related-price);
   --text-footer-link: var(--sz-text-footer-link);
 
+  /* Declared with the listing tokens but never bridged, so the PLP reaches for
+   * `text-[length:var(--sz-text-page-title)]`. Eleven content pages need a page
+   * title too; bridging it once retires the arbitrary value. */
+  --text-page-title: var(--sz-text-page-title);
+  --text-page-title-sm: var(--sz-text-page-title-sm);
+
+  --text-content-h1: var(--sz-text-content-h1);
+  --text-content-h1-sm: var(--sz-text-content-h1-sm);
+  --text-content-h2: var(--sz-text-content-h2);
+  --text-content-lead: var(--sz-text-content-lead);
+  --text-toc: var(--sz-text-toc);
+
+  --text-story-h1: var(--sz-text-story-h1);
+  --text-story-h1-sm: var(--sz-text-story-h1-sm);
+  --text-story-h2: var(--sz-text-story-h2);
+  --text-story-h2-sm: var(--sz-text-story-h2-sm);
+  --text-story-quote: var(--sz-text-story-quote);
+  --text-story-stat: var(--sz-text-story-stat);
+  --text-story-card-title: var(--sz-text-story-card-title);
+
   --text-cart-h1: var(--sz-text-cart-h1);
   --text-line-name: var(--sz-text-line-name);
   --text-summary-total: var(--sz-text-summary-total);
@@ -530,6 +629,7 @@
   --leading-snug: var(--sz-leading-snug);
   --leading-normal: var(--sz-leading-normal);
   --leading-relaxed: var(--sz-leading-relaxed);
+  --leading-prose: var(--sz-leading-prose);
 
   --tracking-tight: var(--sz-tracking-tight);
   --tracking-normal: var(--sz-tracking-normal);

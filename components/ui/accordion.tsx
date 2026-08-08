@@ -13,6 +13,15 @@ export interface AccordionProps {
   /** Only one panel open at a time. Native single-select via a shared name. */
   exclusive?: boolean;
   /**
+   * The name that binds an exclusive group together.
+   *
+   * Browsers scope `<details name>` to the document, not to the parent element,
+   * so two exclusive accordions on one page interlock unless they are named
+   * apart — opening a question under "Shipping" would close one under "Care".
+   * The FAQ page renders five groups, so it passes a name per topic.
+   */
+  group?: string;
+  /**
    * `compact` is the FAQ treatment. `section` is the PDP's: a display-face
    * heading on a taller row, for panels that carry a page section rather than a
    * question.
@@ -32,6 +41,7 @@ export interface AccordionProps {
 export function Accordion({
   items,
   exclusive = false,
+  group = "sz-accordion",
   variant = "compact",
   defaultOpen = [],
   className,
@@ -43,7 +53,7 @@ export function Accordion({
       {items.map((item) => (
         <details
           key={item.id}
-          name={exclusive ? "sz-accordion" : undefined}
+          name={exclusive ? group : undefined}
           open={defaultOpen.includes(item.id)}
           className="group"
         >
