@@ -238,6 +238,53 @@
 }
 
 /* ----------------------------------------------------------------------------
+ * HOMEPAGE TOKENS — Sazuna Homepage.dc.html
+ * ------------------------------------------------------------------------- */
+:root {
+  --sz-section-gap: 68px;
+  --sz-section-gap-sm: 46px;
+
+  /* Hero. Its scrim is a deeper oxblood than primary-900 — the copy sits over
+   * photography and needs the extra weight. */
+  --sz-hero-from: #EBE3D3;
+  --sz-hero-to: #F1EADC;
+  --sz-hero-scrim-rgb: 46 15 17;
+  --sz-hero-body: #F1E7DA;
+  --sz-banner-from: #E4DBC9;
+  --sz-banner-to: #EDE4D3;
+  --sz-collection-from: #E7DFCF;
+  --sz-collection-to: #EFE7D8;
+  --sz-quote-mark: #EBDCC2;
+
+  --sz-text-hero: 60px;
+  --sz-text-hero-sm: 38px;
+  --sz-text-h2: 34px;
+  --sz-text-h2-sm: 26px;
+  --sz-text-banner: 46px;
+  --sz-text-banner-sm: 30px;
+  --sz-text-collection-title: 26px;
+  --sz-text-card-title-lg: 20px;
+  --sz-text-hero-body: 17px;
+  --sz-text-banner-body: 16.5px;
+  --sz-tracking-hero: .18em;
+
+  --sz-radius-hero: 18px;
+  --sz-radius-review: 20px;
+  --sz-radius-feature: 16px;
+  --sz-radius-icon-tile: 13px;
+  --sz-icon-tile: 46px;
+}
+
+/* The homepage's own breakpoints, from its spec stylesheet: the product grid
+ * drops a column at 1000, the category rail becomes a snap carousel at 900,
+ * the page gutter and type step down at 760, and the product grid becomes a
+ * carousel at 640. */
+@custom-variant home-wide (@media (width < 1000px));
+@custom-variant home-rail (@media (width < 900px));
+@custom-variant home-narrow (@media (width < 760px));
+@custom-variant home-carousel (@media (width < 640px));
+
+/* ----------------------------------------------------------------------------
  * FOOTER TOKENS — SazunaFooter.dc.html
  *
  * The footer is the one dark surface in the system. Its neutrals are a warm
@@ -358,6 +405,9 @@
   --color-whatsapp: var(--sz-whatsapp);
   --color-whatsapp-hover: var(--sz-whatsapp-hover);
 
+  --color-hero-body: var(--sz-hero-body);
+  --color-quote-mark: var(--sz-quote-mark);
+
   --color-footer-bg: var(--sz-footer-bg);
   --color-footer-text: var(--sz-footer-text);
   --color-footer-muted: var(--sz-footer-muted);
@@ -418,6 +468,18 @@
   --text-offer: var(--sz-text-offer);
   --text-related-price: var(--sz-text-related-price);
   --text-footer-link: var(--sz-text-footer-link);
+
+  --text-hero: var(--sz-text-hero);
+  --text-hero-sm: var(--sz-text-hero-sm);
+  --text-h2: var(--sz-text-h2);
+  --text-h2-sm: var(--sz-text-h2-sm);
+  --text-banner: var(--sz-text-banner);
+  --text-banner-sm: var(--sz-text-banner-sm);
+  --text-collection-title: var(--sz-text-collection-title);
+  --text-card-title-lg: var(--sz-text-card-title-lg);
+  --text-hero-body: var(--sz-text-hero-body);
+  --text-banner-body: var(--sz-text-banner-body);
+  --tracking-hero: var(--sz-tracking-hero);
 
   --leading-tight: var(--sz-leading-tight);
   --leading-snug: var(--sz-leading-snug);
