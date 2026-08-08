@@ -23,6 +23,7 @@ import {
   OTP_MAX_ATTEMPTS,
   codeMatches,
   consumeAttemptSql,
+  devCodeAllowed,
   generateCode,
   hashCode,
   normaliseCode,
@@ -91,6 +92,31 @@ const checks: [string, boolean][] = [
   ["publicCustomer keeps the fields the portal renders", projected.name === "Ananya Sharma"],
   ["publicCustomer coerces missing values to empty strings", projected.state === ""],
 ];
+
+// --- the dev-code gate ------------------------------------------------------
+//
+// Handing the code back instead of sending it is what makes sign-in testable
+// without SMS credit. It must be impossible in production, and impossible
+// whenever a gateway is actually configured.
+
+// `NODE_ENV` is typed readonly, so drive it through the record rather than the
+// property. Restored below — nothing after this should see a doctored value.
+const env = process.env as Record<string, string | undefined>;
+const realNodeEnv = env.NODE_ENV;
+
+function devGate(nodeEnv: string, smsConfigured: boolean): boolean {
+  env.NODE_ENV = nodeEnv;
+  return devCodeAllowed(smsConfigured);
+}
+
+checks.push(
+  ["dev code is off in production", !devGate("production", false)],
+  ["dev code is off in production with a gateway too", !devGate("production", true)],
+  ["dev code is off whenever a gateway is configured", !devGate("development", true)],
+  ["dev code is on locally with no gateway", devGate("development", false)],
+);
+
+env.NODE_ENV = realNodeEnv;
 
 // --- the concurrency check, against the real database -----------------------
 //

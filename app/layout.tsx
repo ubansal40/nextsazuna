@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { fontVariables } from "@/lib/fonts";
+import { currentCustomer } from "@/lib/auth/session";
 import { getAnnouncementBar, getWhatsAppHref } from "@/lib/content";
 import { SiteFooter, SiteHeader, WhatsAppButton } from "@/components/shell";
 import { SiteSchema } from "@/components/shell/site-schema";
@@ -27,12 +28,32 @@ export const metadata: Metadata = {
  * design rules, no page may render its own header, footer or WhatsApp button.
  */
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  // Both are admin-editable content blocks. Fetched in parallel because the
-  // layout blocks every page render until they resolve.
-  const [announcement, whatsappHref] = await Promise.all([
+  /**
+   * The shell's own data. Fetched in parallel because the layout blocks every
+   * page render until it resolves.
+   *
+   * The session read is what makes the header know who it is talking to. It is
+   * a cookie lookup joined to one row, and it is deliberately here rather than
+   * per page: a customer signed in on the PDP is signed in in the header too.
+   */
+  const [announcement, whatsappHref, signedIn] = await Promise.all([
     getAnnouncementBar(),
     getWhatsAppHref(),
+    currentCustomer(),
   ]);
+
+  /**
+   * Only what the header draws. `ShellCustomer` is name and points; nothing
+   * else about the customer belongs in a client component's props, and
+   * `notes` in particular must never leave the server.
+   *
+   * Loyalty points are withheld while the scheme is off — `loyalty_config` is
+   * seeded disabled and the ledger is only written when an admin bills an
+   * order, so a number here would be a promise the shop is not yet keeping.
+   */
+  const customer = signedIn
+    ? { name: signedIn.name?.trim() || "there" }
+    : undefined;
 
   return (
     <html lang="en" className={fontVariables}>
@@ -44,7 +65,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           >
             Skip to content
           </a>
-          <SiteHeader announcement={announcement} whatsappHref={whatsappHref} />
+          <SiteHeader
+            announcement={announcement}
+            whatsappHref={whatsappHref}
+            customer={customer}
+          />
           <main id="main">{children}</main>
           {/* Site-wide, because /about and /stores reference these nodes by @id. */}
           <SiteSchema origin={staticOrigin()} />

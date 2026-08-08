@@ -5,7 +5,7 @@ import { execute, queryOne } from "../db";
 import { findCustomerByPhone } from "../customers";
 import type { CustomerRow } from "../customer-projection";
 import { normalisePhone } from "../order-lookup";
-import { sendOtpSms } from "../sms";
+import { isSmsConfigured, sendOtpSms } from "../sms";
 import {
   OTP_MAX_ATTEMPTS,
   OTP_MAX_SENDS_PER_HOUR,
@@ -13,6 +13,7 @@ import {
   OTP_TTL_SECONDS,
   codeMatches,
   consumeAttemptSql,
+  devCodeAllowed,
   generateCode,
   hashCode,
   isLockedOut,
@@ -56,9 +57,24 @@ interface OtpRow extends RowDataPacket {
  */
 export type RequestCodeOutcome = "sent" | "throttled" | "undeliverable";
 
-export async function requestCode(rawPhone: string): Promise<RequestCodeOutcome> {
+export interface RequestCodeResult {
+  outcome: RequestCodeOutcome;
+  /**
+   * The code itself, and **only** on a developer's machine with no SMS gateway
+   * configured.
+   *
+   * Without this there is no way to sign in locally without buying SMS credit,
+   * which means the flow never gets exercised until it is in front of a
+   * customer. `devCodeAllowed` is the whole gate and is asserted by
+   * scripts/check-auth.mts; the reference app gates its equivalent the same way
+   * — it is that app's *SMS logger* that prints codes ungated, not this.
+   */
+  devCode?: string;
+}
+
+export async function requestCode(rawPhone: string): Promise<RequestCodeResult> {
   const phone = normalisePhone(rawPhone);
-  if (phone.length !== 10) return "undeliverable";
+  if (phone.length !== 10) return { outcome: "undeliverable" };
 
   const customer = await findCustomerByPhone(phone);
 
@@ -67,7 +83,7 @@ export async function requestCode(rawPhone: string): Promise<RequestCodeOutcome>
    * work skipped is invisible from outside, and timing is not a useful signal
    * when the alternative path is dominated by an SMS round trip anyway.
    */
-  if (!customer) return "sent";
+  if (!customer) return { outcome: "sent" };
 
   const code = generateCode();
 
@@ -84,7 +100,7 @@ export async function requestCode(rawPhone: string): Promise<RequestCodeOutcome>
 
   // Nothing inserted: inside the cooldown or over the hourly cap. The previous
   // code is still live, so the customer can carry on and type it.
-  if (!issued.affectedRows) return "throttled";
+  if (!issued.affectedRows) return { outcome: "throttled" };
 
   const otpId = issued.insertId;
 
@@ -95,6 +111,10 @@ export async function requestCode(rawPhone: string): Promise<RequestCodeOutcome>
     "UPDATE customer_otp SET consumed_at = NOW() WHERE phone = ? AND consumed_at IS NULL AND id <> ?",
     [phone, otpId],
   );
+
+  // Local development with no gateway: hand the code back instead of sending
+  // it. See devCodeAllowed — this cannot fire in production.
+  if (devCodeAllowed(isSmsConfigured())) return { outcome: "sent", devCode: code };
 
   /**
    * Awaited, unlike the reference's fire-and-forget send.
@@ -108,10 +128,10 @@ export async function requestCode(rawPhone: string): Promise<RequestCodeOutcome>
   const sent = await sendOtpSms(phone, code);
   if (!sent.ok) {
     await execute("UPDATE customer_otp SET consumed_at = NOW() WHERE id = ?", [otpId]);
-    return "undeliverable";
+    return { outcome: "undeliverable" };
   }
 
-  return "sent";
+  return { outcome: "sent" };
 }
 
 export interface VerifyResult {

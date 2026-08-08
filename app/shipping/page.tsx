@@ -6,8 +6,13 @@ import { shipping } from "@/lib/content-pages/policy/shipping";
  * Shipping & Delivery — Sazuna Policy.dc.html.
  *
  * The copy is compiled in rather than read from `content_blocks`, so the page
- * prerenders as static: the production build runs without database credentials,
- * and a shopper checking delivery times should not be waiting on a query.
+ * itself makes no query and the production build needs no database.
+ *
+ * It is still rendered per request, because the shared shell reads the
+ * announcement bar, the WhatsApp number and the session. Prerendering it froze
+ * those reads at build time — where there are deliberately no credentials — and
+ * baked in a page with no floating WhatsApp button and an empty footer contact
+ * column. A fast page wearing a broken shell is not a saving.
  */
 
 export const metadata: Metadata = {

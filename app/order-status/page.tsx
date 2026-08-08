@@ -9,8 +9,8 @@ import { LookupForm } from "./_components/lookup-form";
  * a second view bolted onto the receipt page, which meant the tracker inherited
  * that page's `Disallow` in robots.txt. This is its own route, and is indexable.
  *
- * The shell is static; the lookup itself is a fetch to /api/orders/lookup, so
- * nothing here reads the database and the page still prerenders.
+ * The lookup is a fetch to /api/orders/lookup, so this page reads nothing
+ * itself — the form and its copy are all that render on the server.
  */
 
 export const metadata: Metadata = {

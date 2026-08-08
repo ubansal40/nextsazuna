@@ -14,16 +14,31 @@ export interface ShellCustomer {
 export interface AccountMenuProps {
   customer?: ShellCustomer;
   /**
-   * Seams for the auth API, which does not exist yet.
+   * The auth seams.
    *
-   * `onRequestCode` should send the one-time code and resolve when it is on its
-   * way; `onSubmitCode` should verify it. Absent, the panel still walks its own
-   * stages so the design is reviewable, but it never claims a session it has
-   * not been given — the signed-in view renders from `customer`, nothing else.
+   * `onRequestCode` sends the one-time code; `onSubmitCode` verifies it. Both
+   * return a message on failure and nothing on success.
+   *
+   * **They must resolve, never reject.** The panel advances to the code step as
+   * soon as `onRequestCode` settles, and a thrown error would leave the reader
+   * on a screen with no explanation and an unhandled rejection in the console.
+   * Failure is a value here.
+   *
+   * Absent, the panel still walks its own stages so the design stays
+   * reviewable, but it never claims a session it has not been given — the
+   * signed-in view renders from `customer`, nothing else.
    */
-  onRequestCode?: (identity: string) => Promise<void> | void;
-  onSubmitCode?: (identity: string, code: string) => Promise<void> | void;
+  onRequestCode?: (identity: string) => Promise<string | void> | string | void;
+  onSubmitCode?: (identity: string, code: string) => Promise<string | void> | string | void;
   onLogOut?: () => void;
+  /** Hidden while the loyalty scheme is switched off. */
+  showLoyalty?: boolean;
+  /**
+   * The code, shown in the panel, on a developer's machine with no SMS gateway.
+   * Server-gated — see `devCodeAllowed` in lib/auth/otp.ts. Without it there is
+   * no way to sign in locally without buying SMS credit.
+   */
+  devCode?: string;
 }
 
 const OTP_LENGTH = 6;
@@ -57,12 +72,15 @@ export function AccountMenu({
   onRequestCode,
   onSubmitCode,
   onLogOut,
+  showLoyalty = false,
+  devCode,
 }: AccountMenuProps) {
   const [stage, setStage] = useState<"identity" | "code">("identity");
   const [identity, setIdentity] = useState("");
   const [digits, setDigits] = useState<string[]>(() => Array(OTP_LENGTH).fill(""));
   const [secondsLeft, setSecondsLeft] = useState(RESEND_SECONDS);
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
   const boxes = useRef<(HTMLInputElement | null)[]>([]);
 
   // Resend countdown. Restarts whenever a fresh code is requested.
@@ -77,8 +95,15 @@ export function AccountMenu({
   async function requestCode() {
     if (!identity.trim() || pending) return;
     setPending(true);
+    setError("");
     try {
-      await onRequestCode?.(identity.trim());
+      const message = await onRequestCode?.(identity.trim());
+      // Stay put on failure. Advancing anyway would ask for a code that was
+      // never sent, and the reader would have no idea why nothing arrives.
+      if (typeof message === "string" && message) {
+        setError(message);
+        return;
+      }
       setStage("code");
       setSecondsLeft(RESEND_SECONDS);
       setDigits(Array(OTP_LENGTH).fill(""));
@@ -93,8 +118,18 @@ export function AccountMenu({
   async function submitCode() {
     if (code.length < OTP_LENGTH || pending) return;
     setPending(true);
+    setError("");
     try {
-      await onSubmitCode?.(identity.trim(), code);
+      const message = await onSubmitCode?.(identity.trim(), code);
+      if (typeof message === "string" && message) {
+        setError(message);
+        // Clear the boxes and go back to the first, so a retry is one action
+        // rather than six backspaces.
+        setDigits(Array(OTP_LENGTH).fill(""));
+        requestAnimationFrame(() => boxes.current[0]?.focus());
+      }
+      // Success needs nothing here: the session is set server-side and the
+      // signed-in view renders from `customer` once the shell re-renders.
     } finally {
       setPending(false);
     }
@@ -149,10 +184,14 @@ export function AccountMenu({
             <Icon name="bag" size={18} strokeWidth={1.6} className="text-primary-700" />
             Orders
           </Link>
-          <Link href="/account/loyalty" role="menuitem" className={menuItemClass}>
-            <Icon name="star" size={18} strokeWidth={1.6} className="text-primary-700" />
-            Loyalty
-          </Link>
+          {/* Hidden until the loyalty scheme is switched on — a menu entry to a
+              page that says nothing is worse than no entry. */}
+          {showLoyalty && (
+            <Link href="/account/loyalty" role="menuitem" className={menuItemClass}>
+              <Icon name="star" size={18} strokeWidth={1.6} className="text-primary-700" />
+              Loyalty
+            </Link>
+          )}
           <Link href="/account" role="menuitem" className={menuItemClass}>
             <Icon name="account" size={18} strokeWidth={1.6} className="text-primary-700" />
             Profile
@@ -208,13 +247,15 @@ export function AccountMenu({
               className="w-full rounded-[var(--sz-radius-control)] border border-line bg-raised px-[13px] py-[11px] text-control text-body outline-none transition-[border-color,box-shadow] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-primary-700 focus-visible:shadow-[var(--sz-ring-focus-soft)]"
             />
 
+            <SignInError message={error} />
+
             <button
               type="button"
               onClick={requestCode}
               disabled={!identity.trim() || pending}
               className={cn(primaryButtonClass, "mt-3.5")}
             >
-              Send code
+              {pending ? "Sending…" : "Send code"}
             </button>
 
             <p className="m-0 mt-3 text-center text-2xs text-muted-soft">
@@ -268,13 +309,22 @@ export function AccountMenu({
               ))}
             </div>
 
+            {devCode && (
+              <p className="m-0 mt-3 rounded-[var(--sz-radius-control)] bg-warning-soft px-3 py-2 text-2xs text-body">
+                No SMS gateway configured — your code is{" "}
+                <strong className="font-mono">{devCode}</strong>
+              </p>
+            )}
+
+            <SignInError message={error} />
+
             <button
               type="button"
               onClick={submitCode}
               disabled={code.length < OTP_LENGTH || pending}
               className={cn(primaryButtonClass, "mt-3.5")}
             >
-              Verify &amp; continue
+              {pending ? "Verifying…" : "Verify & continue"}
             </button>
 
             <p className="m-0 mt-3 text-center text-xs text-muted">
@@ -301,3 +351,23 @@ export function AccountMenu({
 // narrow phone, where it hangs off the same right edge as on desktop.
 const panelClass =
   "w-[var(--sz-dropdown-w)] max-w-[calc(100vw-2*var(--sz-gutter-mobile))] overflow-hidden rounded-[var(--sz-radius-lg)] border border-line bg-canvas shadow-dropdown animate-fade-down";
+
+/**
+ * The panel's only error surface.
+ *
+ * `role="alert"` so a screen reader announces a wrong code without the reader
+ * having to go looking for it — the six boxes clear on failure, and silence
+ * plus an empty form reads as the app having lost the input.
+ */
+function SignInError({ message }: { message: string }) {
+  if (!message) return null;
+  return (
+    <p
+      role="alert"
+      className="m-0 mt-3 flex items-start gap-1.5 text-2xs leading-relaxed text-error"
+    >
+      <Icon name="alert" size={13} strokeWidth={2} className="mt-px shrink-0" />
+      {message}
+    </p>
+  );
+}

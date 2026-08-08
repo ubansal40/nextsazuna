@@ -111,6 +111,21 @@ export const consumeAttemptSql = `
          attempts = attempts + 1
    WHERE id = ? AND consumed_at IS NULL`;
 
+/**
+ * May the code be handed back to the caller instead of sent?
+ *
+ * Without this there is no way to sign in on a developer's machine without
+ * buying SMS credit, which means the flow goes untested until a customer meets
+ * it. Both conditions are load-bearing: production never reveals a code however
+ * it is configured, and a machine with a working gateway always sends for real.
+ *
+ * The gateway state is passed in rather than read here so this module stays
+ * pure and scripts/check-auth.mts can drive both halves of the gate.
+ */
+export function devCodeAllowed(smsConfigured: boolean): boolean {
+  return process.env.NODE_ENV !== "production" && !smsConfigured;
+}
+
 /** Whether that increment was the one that exhausted the allowance. */
 export function isLockedOut(attemptsAfter: number, maxAttempts: number): boolean {
   return attemptsAfter >= maxAttempts;

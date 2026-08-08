@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { ADD_TO_BAG_EVENT, type AddToBagDetail } from "@/lib/cart-events";
@@ -10,6 +10,7 @@ import { addToCart, onCartChanged, readCart, removeFromCart, setQuantity } from 
 import { priceBag } from "@/app/cart/_actions";
 import { Icon } from "@/components/ui";
 import { jewelleryUrl, NAV_CATEGORIES, NAV_FEATURED, type NavCategory } from "@/lib/navigation";
+import { requestSignInCode, signOut, submitSignInCode } from "@/app/account/_actions";
 import { AccountMenu, type ShellCustomer } from "./account-menu";
 import { AnnouncementBar } from "./announcement-bar";
 import { MegaMenu } from "./mega-menu";
@@ -59,9 +60,61 @@ export function SiteHeader({
   const [searchOpen, setSearchOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [devCode, setDevCode] = useState("");
   const headerRef = useRef<HTMLElement>(null);
   const accountRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
   const checkout = usePathname()?.startsWith("/checkout") ?? false;
+
+  /**
+   * Sign-in wiring.
+   *
+   * The actions live under `app/account/` because that is where "use server"
+   * modules belong; importing them into a client component is the documented
+   * way round. What stays here is the copy, because it is UI text — the actions
+   * return a reason, never a sentence.
+   *
+   * Every handler returns a string on failure and nothing on success. Throwing
+   * would strand the reader: AccountMenu advances as soon as the promise
+   * settles and has nowhere to put an exception.
+   */
+  async function onRequestCode(identity: string): Promise<string | void> {
+    const result = await requestSignInCode(identity);
+    if (result.ok) {
+      // Only ever present on a dev machine with no SMS gateway.
+      setDevCode(result.devCode ?? "");
+      return;
+    }
+    return {
+      invalid: "Enter a 10-digit Nepali mobile number.",
+      throttled: "You've asked for a few codes already — please wait a minute.",
+      undeliverable: "We couldn't send a code to that number. Try WhatsApp instead.",
+      failed: "Something went wrong. Please try again.",
+    }[result.error];
+  }
+
+  async function onSubmitCode(identity: string, code: string): Promise<string | void> {
+    const result = await submitSignInCode(identity, code);
+    if (result.ok) {
+      // The session is a cookie the server just set; the header renders from
+      // it, so the tree has to be re-fetched before the panel can flip.
+      setAccountOpen(false);
+      router.refresh();
+      return;
+    }
+    return {
+      invalid: "Enter the six-digit code we sent you.",
+      "wrong-code": "That code didn't match. Check it and try again.",
+      "locked-out": "Too many attempts. Ask for a new code.",
+      failed: "Something went wrong. Please try again.",
+    }[result.error];
+  }
+
+  async function onLogOut() {
+    await signOut();
+    setAccountOpen(false);
+    router.refresh();
+  }
 
   /**
    * Publish the header's real height as `--sz-header-h`.
@@ -368,7 +421,13 @@ export function SiteHeader({
               ref={accountRef}
               className="mx-auto flex max-w-[var(--sz-container)] justify-end px-[var(--sz-gutter-mobile)] nav-expanded:px-[var(--sz-gutter)]"
             >
-              <AccountMenu customer={customer} />
+              <AccountMenu
+                customer={customer}
+                onRequestCode={onRequestCode}
+                onSubmitCode={onSubmitCode}
+                onLogOut={onLogOut}
+                devCode={devCode}
+              />
             </div>
           </div>
         )}

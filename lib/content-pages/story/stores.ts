@@ -12,7 +12,7 @@ import type { StoryPage } from "../types";
  * on. Nothing here restores that claim.
  *
  * The address is duplicated from `site_identity`, which the footer reads live.
- * That is deliberate: this page prerenders, and the production build has no
+ * That is deliberate: the page's own copy is compiled in so the build needs no
  * database. If the shop moves, both need changing.
  */
 export const stores = {
