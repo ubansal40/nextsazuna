@@ -12,14 +12,15 @@
     "migrate": "node scripts/migrate.mjs",
     "migrate:status": "node scripts/migrate.mjs status",
     "admin:create": "tsx scripts/create-admin.mts",
-    "verify": "npm run check:tokens && npm run check:payments && npm run check:emails && npm run check:orders && npm run check:auth && npm run check:admin-auth && npm run check:blog && npm run check:images && npm run typecheck && npm run lint && npm run build",
+    "verify": "npm run check:tokens && npm run check:payments && npm run check:emails && npm run check:orders && npm run check:auth && npm run check:admin-auth && npm run check:blog && npm run check:images && npm run check:pricing && npm run typecheck && npm run lint && npm run build",
     "check:payments": "node scripts/check-payment-signatures.mjs",
     "check:emails": "tsx scripts/check-order-emails.mts",
     "check:orders": "tsx scripts/check-order-lookup.mts",
     "check:auth": "tsx scripts/check-auth.mts",
     "check:admin-auth": "tsx scripts/check-admin-auth.mts",
     "check:blog": "tsx scripts/check-blog-render.mts",
-    "check:images": "tsx scripts/check-image-pipeline.mts"
+    "check:images": "tsx scripts/check-image-pipeline.mts",
+    "check:pricing": "tsx scripts/check-pricing.mts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

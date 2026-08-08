@@ -69,6 +69,11 @@ jobs:
       - name: Product image pipeline checks
         run: npm run check:images
 
+      # The pricing formula is author-supplied and evaluated — the sandbox is a
+      # security boundary, so it is fuzzed against injection here.
+      - name: Pricing formula checks
+        run: npm run check:pricing
+
       - name: Typecheck
         run: npm run typecheck
 
