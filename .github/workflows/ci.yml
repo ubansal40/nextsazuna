@@ -51,6 +51,13 @@ jobs:
       - name: Sign-in checks
         run: npm run check:auth
 
+      # The admin authorization boundary. Its lockout race needs a database and
+      # skips itself without credentials; the pure rules — deny-by-default
+      # gating, the fail-closed grant parser, the buffer-safe projection, the
+      # unknown-email/wrong-password decision table — still run.
+      - name: Admin auth checks
+        run: npm run check:admin-auth
+
       # The only place author-supplied text becomes HTML, and it carries no
       # sanitiser by design — escaping precedes every formatting rule.
       - name: Journal renderer checks
