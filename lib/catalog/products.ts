@@ -263,6 +263,26 @@ export async function getProductBySlug(slug: string): Promise<ProductDetail | nu
   };
 }
 
+/**
+ * Products by id, for the bag.
+ *
+ * The browser stores ids; this is what turns them back into names and prices.
+ * Invisible or deleted ids simply do not come back, which is how a line for a
+ * withdrawn product drops out of the cart on its own.
+ */
+export async function getProductsByIds(ids: number[]): Promise<ProductSummary[]> {
+  const clean = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0);
+  if (!clean.length) return [];
+
+  const rows = await query<ProductRow>(
+    `SELECT ${PRODUCT_COLUMNS}
+       FROM products p
+      WHERE ${IS_VISIBLE} AND p.id IN (${clean.map(() => "?").join(", ")})`,
+    clean,
+  );
+  return rows.map(toSummary);
+}
+
 /** Products sharing a category with the given one, excluding it. */
 export async function getRelatedProducts(productId: number, limit = 4): Promise<ProductSummary[]> {
   const rows = await query<ProductRow>(

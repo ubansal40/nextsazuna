@@ -238,6 +238,27 @@
 }
 
 /* ----------------------------------------------------------------------------
+ * CART TOKENS — Sazuna Cart.dc.html
+ * ------------------------------------------------------------------------- */
+:root {
+  --sz-cart-summary: 380px;
+  --sz-cart-line-thumb-w: 84px;
+  --sz-cart-line-thumb-h: 104px;
+  --sz-text-cart-h1: 32px;
+  --sz-text-line-name: 17px;
+  --sz-text-summary-total: 17px;
+  --sz-success-border: #BFD9B8;
+  --sz-radius-snackbar: 12px;
+  /* The summary sticks under the header. Measured at runtime rather than the
+   * spec's fixed 92px, because the header condenses on scroll. */
+  --sz-sticky-offset: calc(var(--sz-header-h) + var(--sz-space-16));
+}
+
+@custom-variant cart-stacked (@media (width < 900px));
+@custom-variant cart-split (@media (width >= 900px));
+@custom-variant cart-narrow (@media (width < 600px));
+
+/* ----------------------------------------------------------------------------
  * HOMEPAGE TOKENS — Sazuna Homepage.dc.html
  * ------------------------------------------------------------------------- */
 :root {
@@ -405,6 +426,7 @@
   --color-whatsapp: var(--sz-whatsapp);
   --color-whatsapp-hover: var(--sz-whatsapp-hover);
 
+  --color-success-border: var(--sz-success-border);
   --color-hero-body: var(--sz-hero-body);
   --color-quote-mark: var(--sz-quote-mark);
 
@@ -469,6 +491,9 @@
   --text-related-price: var(--sz-text-related-price);
   --text-footer-link: var(--sz-text-footer-link);
 
+  --text-cart-h1: var(--sz-text-cart-h1);
+  --text-line-name: var(--sz-text-line-name);
+  --text-summary-total: var(--sz-text-summary-total);
   --text-hero: var(--sz-text-hero);
   --text-hero-sm: var(--sz-text-hero-sm);
   --text-h2: var(--sz-text-h2);

@@ -1,5 +1,6 @@
 export {
   getProductBySlug,
+  getProductsByIds,
   getRelatedProducts,
   jewelleryHref,
   listProducts,

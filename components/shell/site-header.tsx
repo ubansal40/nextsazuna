@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { ADD_TO_BAG_EVENT, type AddToBagDetail } from "@/lib/cart-events";
+import { addToCart, onCartChanged, readCart, removeFromCart, setQuantity } from "@/lib/cart-storage";
+import { priceBag } from "@/app/cart/_actions";
 import { Icon } from "@/components/ui";
 import { jewelleryUrl, NAV_CATEGORIES, NAV_FEATURED, type NavCategory } from "@/lib/navigation";
 import { AccountMenu, type ShellCustomer } from "./account-menu";
@@ -25,9 +27,7 @@ export interface SiteHeaderProps {
   whatsappHref?: string | null;
   /** Signed-in customer. Absent renders the one-time-code panel. */
   customer?: ShellCustomer;
-  /** Seed cart contents. Empty until the cart phase lands a persisted store. */
-  cartLines?: MiniCartLine[];
-  cartSubtotal?: string;
+  /** True once the order qualifies for free insured shipping. */
   freeShipping?: boolean;
 }
 
@@ -47,11 +47,11 @@ export function SiteHeader({
   announcement,
   whatsappHref,
   customer,
-  cartLines: seedLines = [],
-  cartSubtotal,
   freeShipping,
 }: SiteHeaderProps) {
-  const [lines, setLines] = useState<MiniCartLine[]>(seedLines);
+  // Mirrors localStorage, priced by the server. Seeded empty so the server and
+  // the first client render agree; the sync below fills it in.
+  const [lines, setLines] = useState<MiniCartLine[]>([]);
   const [scrolled, setScrolled] = useState(false);
   const [mega, setMega] = useState<NavCategory | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
@@ -111,23 +111,68 @@ export function SiteHeader({
   }, [accountOpen]);
 
   /**
-   * "Add to Bag" from a product page. Adding an item the bag already holds
-   * bumps its quantity rather than repeating the line, and always opens the
-   * drawer so the reader sees what just happened.
+   * Keep the bag badge and drawer in step with what the browser holds.
+   *
+   * The contents live in localStorage as ids and quantities; the server prices
+   * them. That means the badge is correct after a reload and across tabs, and
+   * no price ever comes from storage.
    */
+  useEffect(() => {
+    let active = true;
+    let ticket = 0;
+
+    const sync = () => {
+      const entries = readCart();
+      const mine = ++ticket;
+
+      // An empty bag needs no server round trip, and most visitors have one.
+      if (!entries.length) {
+        if (active) setLines((current) => (current.length ? [] : current));
+        return;
+      }
+
+      priceBag(entries)
+        .then((priced) => {
+          // A stale reply must not resurrect a line just removed.
+          if (!active || mine !== ticket) return;
+          setLines(
+            priced.lines.map((line) => ({
+              id: String(line.productId),
+              name: line.name,
+              price: line.price,
+              priceMinor: line.priceMinor,
+              quantity: line.quantity,
+              href: line.href,
+              imageUrl: line.imageUrl,
+            })),
+          );
+        })
+        .catch(() => {
+          // Leave the last known contents rather than blanking the badge
+          // because one request failed.
+        });
+    };
+
+    // Deferred so the effect body itself never sets state.
+    void Promise.resolve().then(() => {
+      if (active) sync();
+    });
+
+    const unsubscribe = onCartChanged(sync);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  // "Add to Bag" from a product page. Storage is the source of truth, so this
+  // writes there and lets the sync above redraw; the drawer opens either way.
   useEffect(() => {
     const onAdd = (event: Event) => {
       const { detail } = event as CustomEvent<AddToBagDetail>;
-      if (!detail?.id) return;
-      setLines((current) => {
-        const existing = current.find((line) => line.id === detail.id);
-        if (existing) {
-          return current.map((line) =>
-            line.id === detail.id ? { ...line, quantity: line.quantity + 1 } : line,
-          );
-        }
-        return [...current, { ...detail, quantity: 1 }];
-      });
+      const productId = Number(detail?.id);
+      if (!Number.isInteger(productId) || productId <= 0) return;
+      addToCart(productId);
       setCartOpen(true);
       setMega(null);
       setAccountOpen(false);
@@ -318,16 +363,9 @@ export function SiteHeader({
         open={cartOpen}
         onClose={() => setCartOpen(false)}
         lines={lines}
-        subtotal={cartSubtotal}
         freeShipping={freeShipping}
-        onRemove={(id) => setLines((current) => current.filter((line) => line.id !== id))}
-        onQuantityChange={(id, quantity) =>
-          setLines((current) =>
-            quantity < 1
-              ? current.filter((line) => line.id !== id)
-              : current.map((line) => (line.id === id ? { ...line, quantity } : line)),
-          )
-        }
+        onRemove={(id) => removeFromCart(Number(id))}
+        onQuantityChange={(id, quantity) => setQuantity(Number(id), quantity)}
       />
     </>
   );

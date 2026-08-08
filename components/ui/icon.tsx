@@ -35,6 +35,8 @@ const PATHS = {
   gem: <><path d="M6 3h12l4 6-10 12L2 9z" /><path d="M2 9h20" /><path d="M9 3 6 9l6 12 6-12-3-6" /></>,
   storefront: <><path d="M3 21h18" /><path d="M5 21V11M19 21V11" /><path d="M4 11l1.5-6h13L20 11z" /><path d="M9 21v-6h6v6" /></>,
   "arrow-right": <><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></>,
+  "arrow-left": <><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></>,
+  gift: <><polyline points="20 12 20 22 4 22 4 12" /><rect x="2" y="7" width="20" height="5" /><line x1="12" y1="22" x2="12" y2="7" /><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" /></>,
   refresh: <><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-7.6-4.2" /><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 7.6 4.2" /><polyline points="21 3 19.6 7.2 15.4 7.2" /><polyline points="3 21 4.4 16.8 8.6 16.8" /></>,
   filter: <polygon points="22 3 2 3 10 12.5 10 19 14 21 14 12.5" />,
   sort: <><line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="12" x2="15" y2="12" /><line x1="4" y1="17" x2="10" y2="17" /></>,
