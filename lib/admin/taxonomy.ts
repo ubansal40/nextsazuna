@@ -571,3 +571,144 @@ export async function reorderCollections(admin: AdminContext, orderedIds: number
     await recordAdminAction(conn, admin, { action: "collections.reorder", resourceType: "collections", metadata: { count: ids.length } });
   });
 }
+
+/* --- tags & tag groups ----------------------------------------------------- */
+
+export interface TagRow {
+  id: number;
+  name: string;
+  slug: string;
+  groupId: number | null;
+  isVisible: boolean;
+  productCount: number;
+}
+
+export interface TagGroupRow {
+  id: number;
+  name: string;
+  isVisible: boolean;
+  sortOrder: number;
+}
+
+export interface TagsData {
+  groups: TagGroupRow[];
+  tags: TagRow[];
+}
+
+/** Every tag with its group and live product count, plus the groups. The UI
+ *  buckets the tags under their group (and an "Ungrouped" section). */
+export async function listTags(): Promise<TagsData> {
+  const [groupRows, tagRows] = await Promise.all([
+    query<RowDataPacket & { id: number; name: string; is_visible: number; sort_order: number }>(
+      "SELECT id, name, is_visible, sort_order FROM tag_groups ORDER BY sort_order, name",
+    ),
+    query<RowDataPacket & { id: number; name: string; slug: string; group_id: number | null; is_visible: number; product_count: number }>(
+      `SELECT t.id, t.name, t.slug, t.group_id, t.is_visible,
+              (SELECT COUNT(*) FROM product_tags pt WHERE pt.tag_id = t.id) AS product_count
+         FROM tags t ORDER BY t.sort_order, t.name`,
+    ),
+  ]);
+  return {
+    groups: groupRows.map((g) => ({ id: g.id, name: g.name, isVisible: g.is_visible === 1, sortOrder: g.sort_order })),
+    tags: tagRows.map((t) => ({ id: t.id, name: t.name, slug: t.slug, groupId: t.group_id, isVisible: t.is_visible === 1, productCount: Number(t.product_count) })),
+  };
+}
+
+export async function createTag(admin: AdminContext, name: string, groupId: number | null): Promise<void> {
+  const clean = name.trim().slice(0, 120);
+  if (!clean) throw new Error("A name is required.");
+  await transaction(async (conn) => {
+    const [result] = await conn.execute<ResultSetHeader>(
+      "INSERT INTO tags (name, slug, group_id) VALUES (?, ?, ?)",
+      [clean, `${slugify(clean)}-${Date.now().toString(36).slice(-4)}`, groupId],
+    );
+    await recordAdminAction(conn, admin, { action: "tags.create", resourceType: "tags", resourceId: result.insertId, metadata: { name: clean, groupId } });
+  });
+}
+
+export async function renameTag(admin: AdminContext, id: number, name: string): Promise<void> {
+  const clean = name.trim().slice(0, 120);
+  if (!clean) throw new Error("A name is required.");
+  await transaction(async (conn) => {
+    await conn.execute("UPDATE tags SET name = ? WHERE id = ?", [clean, id]);
+    await recordAdminAction(conn, admin, { action: "tags.rename", resourceType: "tags", resourceId: id, metadata: { name: clean } });
+  });
+}
+
+/** Delete a tag. Its `product_tags` rows cascade (FK), so products simply lose
+ *  the tag — nothing else changes. */
+export async function deleteTag(admin: AdminContext, id: number): Promise<void> {
+  await transaction(async (conn) => {
+    await conn.execute("DELETE FROM tags WHERE id = ?", [id]);
+    await recordAdminAction(conn, admin, { action: "tags.delete", resourceType: "tags", resourceId: id });
+  });
+}
+
+export async function setTagVisibility(admin: AdminContext, id: number, visible: boolean): Promise<void> {
+  await transaction(async (conn) => {
+    await conn.execute("UPDATE tags SET is_visible = ? WHERE id = ?", [visible ? 1 : 0, id]);
+    await recordAdminAction(conn, admin, { action: "tags.visibility", resourceType: "tags", resourceId: id, metadata: { visible } });
+  });
+}
+
+export async function assignTagGroup(admin: AdminContext, id: number, groupId: number | null): Promise<void> {
+  await transaction(async (conn) => {
+    await conn.execute("UPDATE tags SET group_id = ? WHERE id = ?", [groupId, id]);
+    await recordAdminAction(conn, admin, { action: "tags.group", resourceType: "tags", resourceId: id, metadata: { groupId } });
+  });
+}
+
+/**
+ * Merge one tag into another: every product tagged with the source gains the
+ * destination (INSERT IGNORE, so a product already carrying both does not clash),
+ * the source's product links are removed, and the source tag is deleted — all in
+ * one transaction. This is destructive and irreversible, so the caller confirms
+ * first and the audit records exactly what merged into what.
+ */
+export async function mergeTag(admin: AdminContext, sourceId: number, destId: number): Promise<void> {
+  if (sourceId === destId) throw new Error("Choose a different tag to merge into.");
+  await transaction(async (conn) => {
+    await conn.execute(
+      "INSERT IGNORE INTO product_tags (product_id, tag_id) SELECT product_id, ? FROM product_tags WHERE tag_id = ?",
+      [destId, sourceId],
+    );
+    await conn.execute("DELETE FROM product_tags WHERE tag_id = ?", [sourceId]);
+    await conn.execute("DELETE FROM tags WHERE id = ?", [sourceId]);
+    await recordAdminAction(conn, admin, { action: "tags.merge", resourceType: "tags", resourceId: sourceId, metadata: { into: destId } });
+  });
+}
+
+export async function createTagGroup(admin: AdminContext, name: string): Promise<void> {
+  const clean = name.trim().slice(0, 120);
+  if (!clean) throw new Error("A name is required.");
+  await transaction(async (conn) => {
+    const [[maxRow]] = await conn.execute<(RowDataPacket & { next: number })[]>("SELECT COALESCE(MAX(sort_order),0)+1 AS next FROM tag_groups");
+    const [result] = await conn.execute<ResultSetHeader>("INSERT INTO tag_groups (name, sort_order) VALUES (?, ?)", [clean, maxRow.next]);
+    await recordAdminAction(conn, admin, { action: "tag_groups.create", resourceType: "tag_groups", resourceId: result.insertId, metadata: { name: clean } });
+  });
+}
+
+export async function renameTagGroup(admin: AdminContext, id: number, name: string): Promise<void> {
+  const clean = name.trim().slice(0, 120);
+  if (!clean) throw new Error("A name is required.");
+  await transaction(async (conn) => {
+    await conn.execute("UPDATE tag_groups SET name = ? WHERE id = ?", [clean, id]);
+    await recordAdminAction(conn, admin, { action: "tag_groups.rename", resourceType: "tag_groups", resourceId: id, metadata: { name: clean } });
+  });
+}
+
+export async function setTagGroupVisibility(admin: AdminContext, id: number, visible: boolean): Promise<void> {
+  await transaction(async (conn) => {
+    await conn.execute("UPDATE tag_groups SET is_visible = ? WHERE id = ?", [visible ? 1 : 0, id]);
+    await recordAdminAction(conn, admin, { action: "tag_groups.visibility", resourceType: "tag_groups", resourceId: id, metadata: { visible } });
+  });
+}
+
+/** Delete a group. Its tags' `group_id` is set null by the FK, so they become
+ *  ungrouped rather than being deleted. */
+export async function deleteTagGroup(admin: AdminContext, id: number): Promise<void> {
+  await transaction(async (conn) => {
+    await conn.execute("DELETE FROM tag_groups WHERE id = ?", [id]);
+    await recordAdminAction(conn, admin, { action: "tag_groups.delete", resourceType: "tag_groups", resourceId: id });
+  });
+}
