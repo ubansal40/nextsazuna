@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { loadOrderForReceipt, markOrderFailed, markOrderPaid } from "@/lib/orders";
+import { notifyOrderPlaced } from "@/lib/order-notifications";
 import { verifyEsewaPayment } from "@/lib/payments/esewa";
 import { siteOrigin } from "@/lib/site-url";
 
@@ -66,9 +67,8 @@ export async function GET(request: Request) {
 
   const justPromoted = await markOrderPaid(order.orderNumber, { transactionId: refId });
   if (justPromoted) {
-    // TODO(stage-1): fire the confirmation and admin alert emails here, once
-    // the email service is ported. Guarded by `justPromoted` so a retried
-    // callback cannot send them twice.
+    // Guarded by the transition, so a retried callback cannot send twice.
+    await notifyOrderPlaced(order.orderNumber);
   }
 
   return NextResponse.redirect(

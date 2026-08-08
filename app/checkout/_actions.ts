@@ -1,6 +1,7 @@
 "use server";
 
 import { priceCart } from "@/lib/cart";
+import { notifyOrderPlaced } from "@/lib/order-notifications";
 import { orderLookupToken } from "@/lib/order-tokens";
 import { siteOrigin } from "@/lib/site-url";
 import { MAX_QUANTITY, type CartEntry } from "@/lib/cart-storage";
@@ -216,6 +217,8 @@ export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResu
     const token = orderLookupToken(orderNumber);
 
     if (methodCode === "cod") {
+      // Cash orders are real the moment they are written, so notify now.
+      await notifyOrderPlaced(orderNumber);
       return { ok: true, kind: "placed", orderNumber, token };
     }
 

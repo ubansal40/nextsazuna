@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { markOrderFailed, markOrderPaid } from "@/lib/orders";
+import { notifyOrderPlaced } from "@/lib/order-notifications";
 import { orderLookupToken } from "@/lib/order-tokens";
 import { verifyCardReturn } from "@/lib/payments/cybersource";
 
@@ -43,8 +44,8 @@ export async function POST(request: Request) {
     transactionId: result.transactionId,
   });
   if (justPromoted) {
-    // TODO(stage-1): confirmation and admin alert emails, once ported. Guarded
-    // so a replayed callback cannot send them twice.
+    // Guarded by the transition, so a retried callback cannot send twice.
+    await notifyOrderPlaced(result.referenceNumber);
   }
 
   // The reference number came back inside a signed payload, so minting the

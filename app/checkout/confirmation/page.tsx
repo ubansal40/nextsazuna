@@ -31,27 +31,35 @@ export default async function ConfirmationPage({
   const order = await loadOrderForReceipt(orderNumber, params.token?.trim());
   if (!order) notFound();
 
-  const paid = order.paymentStatus === "paid";
+  /**
+   * Confirmed is about the order, not the money.
+   *
+   * A cash order is `placed` with `payment_status = 'pending'` — the cash has
+   * genuinely not been collected yet — so keying off payment status told every
+   * COD customer their payment was pending. Only an order still waiting on a
+   * gateway is unconfirmed.
+   */
+  const confirmed = order.status === "placed";
 
   return (
     <div className="mx-auto max-w-[var(--sz-container)] px-10 pb-24 checkout-narrow:px-[18px]">
       <div className="mt-7 rounded-[var(--sz-radius-modal)] border border-line-soft bg-raised px-6 py-20 text-center animate-sheet-up">
         <span
           className={
-            paid
+            confirmed
               ? "inline-flex size-[60px] items-center justify-center rounded-pill bg-success-soft text-success"
               : "inline-flex size-[60px] items-center justify-center rounded-pill bg-warning-soft text-warning"
           }
         >
-          <Icon name={paid ? "check" : "info"} size={30} strokeWidth={paid ? 2.2 : 1.8} />
+          <Icon name={confirmed ? "check" : "info"} size={30} strokeWidth={confirmed ? 2.2 : 1.8} />
         </span>
 
         <h1 className="m-0 mt-[22px] font-[family-name:var(--sz-font-display)] text-h2 font-normal tracking-tight text-heading checkout-stacked:text-h2-sm">
-          {paid ? "Order placed" : "Payment pending"}
+          {confirmed ? "Order placed" : "Payment pending"}
         </h1>
 
         <p className="mx-auto mt-2.5 max-w-[44ch] text-control leading-[1.6] text-muted">
-          {paid ? (
+          {confirmed ? (
             <>
               Thank you. Your order{" "}
               <strong className="font-mono text-body">{order.orderNumber}</strong> is confirmed —
@@ -77,7 +85,7 @@ export default async function ConfirmationPage({
       </div>
 
       {/* The order exists server-side now, so the browser's copy is spent. */}
-      {paid && <ClearBagOnMount />}
+      {confirmed && <ClearBagOnMount />}
     </div>
   );
 }

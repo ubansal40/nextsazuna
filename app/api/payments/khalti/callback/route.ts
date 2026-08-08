@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { loadOrderForReceipt, markOrderFailed, markOrderPaid } from "@/lib/orders";
+import { notifyOrderPlaced } from "@/lib/order-notifications";
 import { lookupKhaltiPayment } from "@/lib/payments/khalti";
 import { siteOrigin } from "@/lib/site-url";
 
@@ -52,7 +53,8 @@ export async function GET(request: Request) {
     gatewayRef: pidx,
   });
   if (justPromoted) {
-    // TODO(stage-1): confirmation and admin alert emails, once ported.
+    // Guarded by the transition, so a retried callback cannot send twice.
+    await notifyOrderPlaced(order.orderNumber);
   }
 
   return NextResponse.redirect(
