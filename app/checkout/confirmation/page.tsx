@@ -1,16 +1,15 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { loadOrderForReceipt } from "@/lib/orders";
-import { Icon } from "@/components/ui";
+import { OrderView } from "@/components/orders/order-view";
+import { loadOrderReceipt } from "@/lib/orders";
 import { ClearBagOnMount } from "./clear-bag";
 
 /**
- * Order confirmation — where the gateways land after a payment.
+ * Order confirmation — Sazuna Order Status.dc.html §order success.
  *
- * Server-rendered from the order row rather than from anything the gateway put
- * in the URL, so the page cannot be made to claim a payment that did not
- * settle.
+ * Where the gateways land after a payment. Server-rendered from the order row
+ * rather than from anything the gateway put in the URL, so the page cannot be
+ * made to claim a payment that did not settle.
  */
 
 export const metadata: Metadata = {
@@ -27,65 +26,26 @@ export default async function ConfirmationPage({
   const orderNumber = params.order?.trim() ?? "";
 
   // The token is required. Without it the order number alone would read out a
-  // customer's name and total to anyone who tried it.
-  const order = await loadOrderForReceipt(orderNumber, params.token?.trim());
+  // customer's name, address and items to anyone who tried it.
+  const order = await loadOrderReceipt(orderNumber, params.token?.trim());
   if (!order) notFound();
 
   /**
-   * Confirmed is about the order, not the money.
+   * Placed is about the order, not the money.
    *
    * A cash order is `placed` with `payment_status = 'pending'` — the cash has
    * genuinely not been collected yet — so keying off payment status told every
-   * COD customer their payment was pending. Only an order still waiting on a
-   * gateway is unconfirmed.
+   * COD customer their payment had failed. Only an order still waiting on a
+   * gateway, or one it rejected, is unplaced.
    */
-  const confirmed = order.status === "placed";
+  const placed = order.status === "placed";
 
   return (
     <div className="mx-auto max-w-[var(--sz-container)] px-10 pb-24 checkout-narrow:px-[18px]">
-      <div className="mt-7 rounded-[var(--sz-radius-modal)] border border-line-soft bg-raised px-6 py-20 text-center animate-sheet-up">
-        <span
-          className={
-            confirmed
-              ? "inline-flex size-[60px] items-center justify-center rounded-pill bg-success-soft text-success"
-              : "inline-flex size-[60px] items-center justify-center rounded-pill bg-warning-soft text-warning"
-          }
-        >
-          <Icon name={confirmed ? "check" : "info"} size={30} strokeWidth={confirmed ? 2.2 : 1.8} />
-        </span>
-
-        <h1 className="m-0 mt-[22px] font-[family-name:var(--sz-font-display)] text-h2 font-normal tracking-tight text-heading checkout-stacked:text-h2-sm">
-          {confirmed ? "Order placed" : "Payment pending"}
-        </h1>
-
-        <p className="mx-auto mt-2.5 max-w-[44ch] text-control leading-[1.6] text-muted">
-          {confirmed ? (
-            <>
-              Thank you. Your order{" "}
-              <strong className="font-mono text-body">{order.orderNumber}</strong> is confirmed —
-              we&rsquo;ll be in touch shortly to arrange delivery.
-            </>
-          ) : (
-            <>
-              We haven&rsquo;t had confirmation from your payment provider for order{" "}
-              <strong className="font-mono text-body">{order.orderNumber}</strong> yet. If money
-              left your account, it will settle shortly and we will be in touch.
-            </>
-          )}
-        </p>
-
-        <div className="mt-[26px] flex flex-wrap justify-center gap-3">
-          <Link
-            href="/jewellery"
-            className="inline-flex items-center justify-center rounded-[var(--sz-radius-thumb)] bg-primary-700 px-6 text-sm font-semibold text-white no-underline min-h-12 hover:bg-primary-800 hover:text-white hover:no-underline"
-          >
-            Continue shopping
-          </Link>
-        </div>
-      </div>
+      <OrderView order={order} variant="confirmation" onTrackHref="/order-status" />
 
       {/* The order exists server-side now, so the browser's copy is spent. */}
-      {confirmed && <ClearBagOnMount />}
+      {placed && <ClearBagOnMount />}
     </div>
   );
 }

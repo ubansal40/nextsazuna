@@ -210,10 +210,25 @@ export interface OrderView {
   placedAt: string | null;
 }
 
+/**
+ * The address, as lines to print.
+ *
+ * Drops anything with no alphanumeric content, not just empty strings. Orders
+ * migrated from the old admin carry "-" in `city` and `postal_code` where the
+ * field was skipped, and a delivery block reading "- -" looks like a rendering
+ * fault rather than a missing value.
+ */
 function lines(order: OrderRowLike): string[] {
-  return [order.address_line1, [order.city, order.postal_code].filter(Boolean).join(" ")]
-    .map((line) => String(line ?? "").trim())
-    .filter(Boolean);
+  // Anything with no letter or digit is not a value. Orders migrated from the
+  // old admin carry "-" where a field was skipped.
+  const clean = (value: unknown) => {
+    const text = String(value ?? "").trim();
+    return /[\p{L}\p{N}]/u.test(text) ? text : "";
+  };
+
+  const street = clean(order.address_line1);
+  const locality = [clean(order.city), clean(order.postal_code)].filter(Boolean).join(" ");
+  return [street, locality].filter(Boolean);
 }
 
 function money(value: string): string {

@@ -478,6 +478,10 @@
 @custom-variant story-stacked (@media (width < 900px));
 @custom-variant story-narrow (@media (width < 600px));
 
+/* The order pages put the status timeline beside the items; below 820 the two
+ * cards stop fitting side by side — Sazuna Order Status.dc.html. */
+@custom-variant order-stacked (@media (width < 820px));
+
 /* ----------------------------------------------------------------------------
  * TAILWIND THEME BRIDGE
  * `inline` emits utilities that reference the custom properties above rather
