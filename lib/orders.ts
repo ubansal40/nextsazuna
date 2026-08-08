@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import { linkCustomerToOrder } from "./customers";
 import { execute, query, queryOne, transaction } from "./db";
 import { formatPrice } from "./format";
 import {
@@ -117,16 +118,35 @@ export async function createOrder(input: {
   const pending = input.paymentMethod !== "cod";
 
   return transaction(async (connection) => {
+    /**
+     * Link the order to a customer record, creating one if this is their first.
+     *
+     * Neither this app nor the Express one used to do this — `customer_id` was
+     * only ever filled in when an admin billed the order. The result was that a
+     * paying customer had no account to sign in to, and once an admin created
+     * one, their history began from that order rather than their first.
+     *
+     * Inside the transaction, so an order and its customer are never half
+     * written. Null when the phone cannot be canonicalised — the order still
+     * goes through; it simply is not attached to an account.
+     */
+    const customerId = await linkCustomerToOrder(connection, {
+      phone: input.customer.phone,
+      name: input.customer.name,
+      email: input.customer.email,
+    });
+
     const [result] = await connection.execute<ResultSetHeader>(
       `INSERT INTO orders (
-         order_number, source, customer_name, email, phone,
+         order_number, source, customer_id, customer_name, email, phone,
          address_line1, city, state, postal_code, country, note,
          coupon_code, discount_amount,
          payment_method, payment_status, status,
          subtotal, tax_amount, shipping_amount, total_amount, currency
-       ) VALUES (?, 'web', ?, ?, ?, ?, ?, '', '', 'Nepal', ?, ?, ?, ?, 'pending', ?, ?, 0.00, ?, ?, 'NPR')`,
+       ) VALUES (?, 'web', ?, ?, ?, ?, ?, ?, '', '', 'Nepal', ?, ?, ?, ?, 'pending', ?, ?, 0.00, ?, ?, 'NPR')`,
       [
         input.orderNumber,
+        customerId,
         input.customer.name,
         input.customer.email,
         input.customer.phone,
