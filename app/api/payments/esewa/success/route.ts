@@ -1,43 +1,77 @@
 import { NextResponse } from "next/server";
-import { settleOrder } from "@/lib/orders";
-import { fetchStatus, verifyReturn } from "@/lib/payments/esewa";
+import { loadOrderForReceipt, markOrderFailed, markOrderPaid } from "@/lib/orders";
+import { verifyEsewaPayment } from "@/lib/payments/esewa";
+import { siteOrigin } from "@/lib/site-url";
 
 /**
  * eSewa return — success leg.
  *
- * A browser can navigate here directly, so nothing is believed without eSewa's
- * signature over the payload. If the signature does not verify, or the status
- * is not COMPLETE, the order is left pending and the customer sees the failure
- * panel: a free order is a worse outcome than a wrongly-failed one, which a
- * human can fix.
+ * eSewa sends `?oid=<our order number>&amt=<total>&refId=<their reference>`,
+ * and our own `?order=&token=` rides along so the order cannot be looked up by
+ * number alone.
+ *
+ * This URL is a plain GET that anyone can type, so arriving here proves
+ * nothing. The chain, ported from the Express app, is: authorise the lookup,
+ * check eSewa echoed back the order and amount we sent, then ask eSewa's own
+ * server whether the money moved. Only the last step settles the order.
  */
 export async function GET(request: Request) {
-  const encoded = new URL(request.url).searchParams.get("data");
-  const site = process.env.SAZUNA_SITE_URL ?? new URL(request.url).origin;
+  const url = new URL(request.url);
+  const site = await siteOrigin(url);
 
-  const fail = (order?: string) =>
+  const orderNumber = url.searchParams.get("order")?.trim() ?? "";
+  const token = url.searchParams.get("token")?.trim();
+
+  const fail = (reason: string) =>
     NextResponse.redirect(
-      `${site}/checkout?payment=failed${order ? `&order=${encodeURIComponent(order)}` : ""}`,
+      `${site}/checkout?payment=failed&reason=${encodeURIComponent(reason)}`,
     );
 
-  if (!encoded) return fail();
+  const order = await loadOrderForReceipt(orderNumber, token);
+  if (!order) return fail("missing_order");
 
-  const result = await verifyReturn(encoded);
-  if (!result?.transactionUuid) return fail();
+  const oid = url.searchParams.get("oid")?.trim() ?? "";
+  const amt = url.searchParams.get("amt")?.trim() ?? "";
+  const refId = url.searchParams.get("refId")?.trim() ?? "";
 
-  // Trust the gateway's own record over the redirect, which is replayable.
-  const confirmed =
-    result.status === "COMPLETE"
-      ? "COMPLETE"
-      : await fetchStatus(result.transactionUuid, result.totalMinor);
-
-  if (confirmed !== "COMPLETE") {
-    await settleOrder(result.transactionUuid, "failed");
-    return fail(result.transactionUuid);
+  if (!oid || !amt || !refId) {
+    await markOrderFailed(order.orderNumber, "eSewa redirect missing oid/amt/refId");
+    return fail("esewa_invalid_response");
   }
 
-  await settleOrder(result.transactionUuid, "paid");
+  if (oid !== order.orderNumber) {
+    await markOrderFailed(order.orderNumber, "eSewa oid mismatch");
+    return fail("esewa_order_mismatch");
+  }
+
+  // Compared in paisa with a one-paisa tolerance, because the amount comes
+  // back as a formatted decimal string.
+  const echoedMinor = Math.round(Number(amt.replace(/[^0-9.]/g, "")) * 100);
+  if (!Number.isFinite(echoedMinor) || Math.abs(echoedMinor - order.totalMinor) > 1) {
+    await markOrderFailed(order.orderNumber, "eSewa amount mismatch");
+    return fail("esewa_total_mismatch");
+  }
+
+  const verification = await verifyEsewaPayment({
+    orderNumber: order.orderNumber,
+    totalMinor: order.totalMinor,
+    referenceId: refId,
+  });
+
+  if (!verification.ok) {
+    // "Pending" is a bank hold, not a payment. Treated as unpaid on purpose.
+    await markOrderFailed(order.orderNumber, `eSewa verify status: ${verification.status ?? "unknown"}`);
+    return fail(`esewa_${(verification.status ?? "failed").toLowerCase().replace(/[^a-z0-9]+/g, "_")}`);
+  }
+
+  const justPromoted = await markOrderPaid(order.orderNumber, { transactionId: refId });
+  if (justPromoted) {
+    // TODO(stage-1): fire the confirmation and admin alert emails here, once
+    // the email service is ported. Guarded by `justPromoted` so a retried
+    // callback cannot send them twice.
+  }
+
   return NextResponse.redirect(
-    `${site}/checkout/confirmation?order=${encodeURIComponent(result.transactionUuid)}`,
+    `${site}/checkout/confirmation?order=${encodeURIComponent(order.orderNumber)}&token=${encodeURIComponent(token ?? "")}`,
   );
 }

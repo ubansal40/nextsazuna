@@ -1,175 +1,135 @@
 import "server-only";
 
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { getGatewayCredentials } from "./config";
 
 /**
- * eSewa ePay v2.
+ * eSewa legacy ePay.
  *
- * The customer is redirected by a self-submitting form post; eSewa returns to
- * `success_url` with a base64 payload that carries its own signature. The
- * signature is what makes the return trustworthy — a browser can navigate to
- * the success URL directly, so an unverified return is an open door to free
- * orders. `verifyReturn` is therefore not optional.
+ * Ported from the Express app's `server/services/payment-esewa.js`. This is
+ * the merchant-code-only API the WooCommerce plugins use, and the one Sazuna
+ * is actually onboarded against: the only credential is the service code
+ * (ES-…). There is no secret key and no signature.
  *
- * Signature: base64(HMAC-SHA256(secret, "total_amount=…,transaction_uuid=…,product_code=…"))
- * over exactly the fields named in `signed_field_names`, in that order.
+ * An earlier version of this file implemented ePay **v2**, which signs with an
+ * HMAC secret. That secret does not exist for this merchant, so the v2 flow
+ * could never have completed a live payment.
+ *
+ * Two steps:
+ *   1. The browser auto-posts a form to /epay/main and the buyer authorises.
+ *   2. eSewa redirects to our success URL with ?oid&amt&refId. Because that
+ *      URL is just a GET anyone can type, the redirect proves nothing on its
+ *      own — we POST the reference to /epay/transrec and only a
+ *      <response_code>Success</response_code> means the money moved.
  */
 
 const FORM_URL = {
-  test: "https://rc-epay.esewa.com.np/api/epay/main/v2/form",
-  live: "https://epay.esewa.com.np/api/epay/main/v2/form",
+  test: "https://uat.esewa.com.np/epay/main",
+  live: "https://esewa.com.np/epay/main",
 } as const;
 
-const STATUS_URL = {
-  test: "https://rc.esewa.com.np/api/epay/transaction/status/",
-  live: "https://epay.esewa.com.np/api/epay/transaction/status/",
+const VERIFY_URL = {
+  test: "https://uat.esewa.com.np/epay/transrec",
+  live: "https://esewa.com.np/epay/transrec",
 } as const;
-
-/** eSewa's published sandbox credentials. Used only when mode is "test". */
-const TEST_MERCHANT = "EPAYTEST";
-const TEST_SECRET = "8gBm/:&EnhH.1/q";
-
-const SIGNED_FIELDS = "total_amount,transaction_uuid,product_code";
 
 export interface EsewaForm {
   action: string;
   fields: Record<string, string>;
 }
 
-function sign(message: string, secret: string): string {
-  return createHmac("sha256", secret).update(message).digest("base64");
-}
-
-/** Rupees, to two decimals — eSewa rejects amounts with more precision. */
-function rupees(minor: number): string {
-  return (minor / 100).toFixed(2);
-}
-
 async function settings() {
   const config = await getGatewayCredentials("esewa");
   const mode = config?.mode ?? "test";
-  const live = mode === "live";
   return {
     mode,
-    merchant: live ? (config?.credentials.merchant_code ?? "") : TEST_MERCHANT,
-    secret: live ? (config?.credentials.secret_key ?? "") : TEST_SECRET,
+    merchant: config?.credentials.merchant_code ?? "",
     formUrl: FORM_URL[mode],
-    statusUrl: STATUS_URL[mode],
+    verifyUrl: VERIFY_URL[mode],
   };
 }
 
 /**
- * Build the form the browser posts to eSewa.
+ * The form the browser posts to eSewa.
  *
- * `transactionUuid` is our order number: eSewa echoes it back, and it is how
- * the return is matched to an order.
+ * `pid` is our order number: eSewa echoes it back as `oid`, which is how the
+ * return is matched to an order.
  */
 export async function buildEsewaForm(input: {
-  transactionUuid: string;
+  orderNumber: string;
   totalMinor: number;
   successUrl: string;
   failureUrl: string;
 }): Promise<EsewaForm> {
-  const { merchant, secret, formUrl } = await settings();
-  if (!merchant || !secret) throw new Error("eSewa is not configured");
+  const { merchant, formUrl } = await settings();
+  if (!merchant) throw new Error("eSewa is not configured: merchant_code is missing");
 
-  const total = rupees(input.totalMinor);
-  const fields: Record<string, string> = {
-    amount: total,
-    tax_amount: "0",
-    total_amount: total,
-    transaction_uuid: input.transactionUuid,
-    product_code: merchant,
-    product_service_charge: "0",
-    product_delivery_charge: "0",
-    success_url: input.successUrl,
-    failure_url: input.failureUrl,
-    signed_field_names: SIGNED_FIELDS,
-  };
+  const amount = input.totalMinor / 100;
 
-  const message = SIGNED_FIELDS.split(",")
-    .map((field) => `${field}=${fields[field]}`)
-    .join(",");
-  fields.signature = sign(message, secret);
-
-  return { action: formUrl, fields };
-}
-
-export interface EsewaReturn {
-  transactionUuid: string;
-  totalMinor: number;
-  status: string;
-  transactionCode: string | null;
-}
-
-/**
- * Verify and decode eSewa's `data` query parameter.
- *
- * Returns null when the payload is malformed or the signature does not match —
- * both mean "do not mark this order paid".
- */
-export async function verifyReturn(encoded: string): Promise<EsewaReturn | null> {
-  const { secret } = await settings();
-  if (!secret) return null;
-
-  let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
-  } catch {
-    return null;
-  }
-
-  const signedNames = typeof payload.signed_field_names === "string" ? payload.signed_field_names : "";
-  const claimed = typeof payload.signature === "string" ? payload.signature : "";
-  if (!signedNames || !claimed) return null;
-
-  const message = signedNames
-    .split(",")
-    .map((field) => `${field}=${payload[field] ?? ""}`)
-    .join(",");
-  const expected = sign(message, secret);
-
-  // Constant-time: a length-independent comparison leaks nothing about how
-  // close a forged signature was.
-  const a = Buffer.from(expected);
-  const b = Buffer.from(claimed);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
-
-  const total = Number(payload.total_amount ?? 0);
   return {
-    transactionUuid: String(payload.transaction_uuid ?? ""),
-    totalMinor: Math.round(total * 100),
-    status: String(payload.status ?? ""),
-    transactionCode: payload.transaction_code ? String(payload.transaction_code) : null,
+    action: formUrl,
+    fields: {
+      amt: amount.toFixed(2),
+      psc: "0.00",
+      pdc: "0.00",
+      txAmt: "0.00",
+      // Total is the sum of the four; with no charges or tax it equals `amt`.
+      tAmt: amount.toFixed(2),
+      pid: input.orderNumber,
+      scd: merchant,
+      su: input.successUrl,
+      fu: input.failureUrl,
+    },
   };
 }
 
+export interface EsewaVerification {
+  ok: boolean;
+  /** "Success", "Pending", an HTTP/network marker, or null when unparsable. */
+  status: string | null;
+}
+
 /**
- * Ask eSewa directly what happened to a transaction.
+ * Confirm a payment with eSewa directly.
  *
- * The return payload is signed and sufficient on its own, but a server-to-server
- * check is the only thing that survives a customer who closes the tab before
- * being redirected back.
+ * This is the only thing that establishes payment. A "Pending" response is a
+ * bank hold and is deliberately not treated as paid.
  */
-export async function fetchStatus(
-  transactionUuid: string,
-  totalMinor: number,
-): Promise<string | null> {
-  const { merchant, statusUrl } = await settings();
-  if (!merchant) return null;
+export async function verifyEsewaPayment(input: {
+  orderNumber: string;
+  totalMinor: number;
+  referenceId: string;
+}): Promise<EsewaVerification> {
+  const { merchant, verifyUrl } = await settings();
+  if (!merchant) return { ok: false, status: "not_configured" };
 
-  const url = new URL(statusUrl);
-  url.searchParams.set("product_code", merchant);
-  url.searchParams.set("total_amount", rupees(totalMinor));
-  url.searchParams.set("transaction_uuid", transactionUuid);
+  const body = new URLSearchParams({
+    amt: (input.totalMinor / 100).toFixed(2),
+    scd: merchant,
+    pid: input.orderNumber,
+    rid: input.referenceId,
+  });
 
+  let text: string;
   try {
-    const response = await fetch(url, { cache: "no-store" });
-    if (!response.ok) return null;
-    const body: { status?: unknown } = await response.json();
-    return typeof body.status === "string" ? body.status : null;
+    const response = await fetch(verifyUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "text/xml, application/xml, */*",
+      },
+      body: body.toString(),
+      cache: "no-store",
+    });
+    text = await response.text();
+    if (!response.ok) return { ok: false, status: `http_${response.status}` };
   } catch {
-    return null;
+    return { ok: false, status: "network_error" };
   }
+
+  // The response is a few dozen bytes with one tag worth reading; a DOM parser
+  // would cost more than it buys.
+  const match = /<response_code\s*>\s*([^<]+?)\s*<\/response_code\s*>/i.exec(text);
+  const status = match ? match[1].trim() : null;
+
+  return { ok: (status ?? "").toLowerCase() === "success", status };
 }

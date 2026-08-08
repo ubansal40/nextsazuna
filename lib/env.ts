@@ -20,6 +20,17 @@ const schema = z.object({
   DB_NAME: z.string().min(1, "DB_NAME is required"),
   /** Shared hosting caps connections aggressively; keep this small. */
   DB_CONNECTION_LIMIT: z.coerce.number().int().positive().default(5),
+
+  /**
+   * Signs order lookup tokens (see lib/order-tokens.ts).
+   *
+   * Rotating it invalidates every outstanding receipt link. Setting it to the
+   * Express app's `JWT_SECRET` keeps links issued by that app working, since
+   * the token construction is identical.
+   */
+  SAZUNA_TOKEN_SECRET: z
+    .string()
+    .min(32, "SAZUNA_TOKEN_SECRET must be at least 32 characters"),
 });
 
 export type Env = z.infer<typeof schema>;

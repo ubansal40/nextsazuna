@@ -2,9 +2,10 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
-import { clearCart, readCart } from "@/lib/cart-storage";
+import { readCart } from "@/lib/cart-storage";
 import { Icon, type IconName } from "@/components/ui";
 import { placeOrder, quoteCheckout, type CheckoutQuote } from "../_actions";
 
@@ -42,6 +43,7 @@ export function CheckoutView({
   whatsappHref?: string | null;
   failed?: boolean;
 }) {
+  const router = useRouter();
   const [flow, setFlow] = useState<Flow>(failed ? "failure" : "loading");
   const [quote, setQuote] = useState<CheckoutQuote | null>(null);
   const [method, setMethod] = useState("cod");
@@ -156,9 +158,12 @@ export function CheckoutView({
     setOrderNumber(result.orderNumber);
 
     if (result.kind === "placed") {
-      // The order exists server-side now, so the browser's copy is spent.
-      clearCart();
-      setFlow("success");
+      // Cash orders land on the same receipt as a gateway return, so there is
+      // one confirmation surface and the URL is shareable. That page clears
+      // the bag once it has confirmed the order really exists.
+      router.replace(
+        `/checkout/confirmation?order=${encodeURIComponent(result.orderNumber)}&token=${encodeURIComponent(result.token)}`,
+      );
       return;
     }
 

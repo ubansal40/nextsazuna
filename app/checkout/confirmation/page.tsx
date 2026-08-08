@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getOrderByNumber } from "@/lib/orders";
+import { loadOrderForReceipt } from "@/lib/orders";
 import { Icon } from "@/components/ui";
 import { ClearBagOnMount } from "./clear-bag";
 
@@ -21,12 +21,14 @@ export const metadata: Metadata = {
 export default async function ConfirmationPage({
   searchParams,
 }: {
-  searchParams: Promise<{ order?: string }>;
+  searchParams: Promise<{ order?: string; token?: string }>;
 }) {
-  const orderNumber = (await searchParams).order?.trim();
-  if (!orderNumber) notFound();
+  const params = await searchParams;
+  const orderNumber = params.order?.trim() ?? "";
 
-  const order = await getOrderByNumber(orderNumber);
+  // The token is required. Without it the order number alone would read out a
+  // customer's name and total to anyone who tried it.
+  const order = await loadOrderForReceipt(orderNumber, params.token?.trim());
   if (!order) notFound();
 
   const paid = order.paymentStatus === "paid";

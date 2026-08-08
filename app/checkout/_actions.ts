@@ -1,7 +1,8 @@
 "use server";
 
-import { headers } from "next/headers";
 import { priceCart } from "@/lib/cart";
+import { orderLookupToken } from "@/lib/order-tokens";
+import { siteOrigin } from "@/lib/site-url";
 import { MAX_QUANTITY, type CartEntry } from "@/lib/cart-storage";
 import { createOrder, generateOrderNumber } from "@/lib/orders";
 import { listCheckoutMethods, type CheckoutMethod, type MethodCode } from "@/lib/payments/config";
@@ -145,8 +146,15 @@ export interface PlaceOrderInput {
 }
 
 export type PlaceOrderResult =
-  | { ok: true; kind: "placed"; orderNumber: string }
-  | { ok: true; kind: "redirect"; orderNumber: string; action: string; fields: Record<string, string> }
+  | { ok: true; kind: "placed"; orderNumber: string; token: string }
+  | {
+      ok: true;
+      kind: "redirect";
+      orderNumber: string;
+      token: string;
+      action: string;
+      fields: Record<string, string>;
+    }
   | { ok: false; error: "empty" | "invalid" | "unavailable" | "failed" };
 
 /** Enough to reach someone about a delivery, not a format police. */
@@ -154,24 +162,6 @@ function validPhone(phone: string): boolean {
   return phone.replace(/\D/g, "").length >= 7;
 }
 
-/**
- * The absolute origin a gateway should send the customer back to.
- *
- * `SAZUNA_SITE_URL` wins, because behind Cloudflare and LiteSpeed the host we
- * see is not always the one the customer typed. Falling back to the request's
- * own headers matters more than it looks: without it an unset variable sends
- * the return URLs to localhost, and a customer who has paid is redirected
- * nowhere while the order stays unsettled.
- */
-async function siteOrigin(): Promise<string> {
-  const configured = process.env.SAZUNA_SITE_URL?.trim();
-  if (configured) return configured.replace(/\/+$/, "");
-
-  const incoming = await headers();
-  const host = incoming.get("x-forwarded-host") ?? incoming.get("host");
-  const protocol = incoming.get("x-forwarded-proto") ?? "https";
-  return host ? `${protocol}://${host}` : "http://localhost:3200";
-}
 
 export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResult> {
   const name = (input.name ?? "").trim();
@@ -217,20 +207,25 @@ export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResu
       paymentMethod: methodCode,
     });
 
+    // Authorises the receipt and the gateway return without exposing the
+    // order to anyone who can guess a number.
+    const token = orderLookupToken(orderNumber);
+
     if (methodCode === "cod") {
-      return { ok: true, kind: "placed", orderNumber };
+      return { ok: true, kind: "placed", orderNumber, token };
     }
 
     const origin = await siteOrigin();
+    const back = `order=${encodeURIComponent(orderNumber)}&token=${encodeURIComponent(token)}`;
 
     if (methodCode === "esewa") {
       const form = await buildEsewaForm({
-        transactionUuid: orderNumber,
+        orderNumber,
         totalMinor: priced.totalMinor,
-        successUrl: `${origin}/api/payments/esewa/success`,
-        failureUrl: `${origin}/api/payments/esewa/failure?order=${encodeURIComponent(orderNumber)}`,
+        successUrl: `${origin}/api/payments/esewa/success?${back}`,
+        failureUrl: `${origin}/api/payments/esewa/failure?${back}`,
       });
-      return { ok: true, kind: "redirect", orderNumber, ...form };
+      return { ok: true, kind: "redirect", orderNumber, token, ...form };
     }
 
     const form = await buildCardForm({
@@ -240,7 +235,7 @@ export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResu
       email,
       phone,
     });
-    return { ok: true, kind: "redirect", orderNumber, ...form };
+    return { ok: true, kind: "redirect", orderNumber, token, ...form };
   } catch {
     // The order either committed or it did not; either way the customer gets
     // the failure panel rather than a stack trace.

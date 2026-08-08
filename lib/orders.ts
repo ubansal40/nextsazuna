@@ -1,8 +1,9 @@
 import "server-only";
 
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
-import { queryOne, transaction } from "./db";
+import { execute, queryOne, transaction } from "./db";
 import { formatPrice } from "./format";
+import { verifyOrderLookupToken } from "./order-tokens";
 import type { CartLine } from "./cart";
 
 interface OrderRow extends RowDataPacket {
@@ -143,18 +144,28 @@ export interface OrderSummary {
   orderNumber: string;
   customerName: string;
   total: string;
+  /** Exact paisa, for matching what a gateway echoes back. */
+  totalMinor: number;
   paymentStatus: string;
   status: string;
 }
 
 /**
- * One order, by its number.
+ * One order, for a receipt or a gateway return.
  *
- * Deliberately returns nothing identifying beyond the name already typed by
- * whoever placed it — the order number is the only key, and it appears in
- * URLs, so this must not become a lookup for someone else's address.
+ * The lookup token is required, not optional. The order number travels in URLs
+ * and in a gateway's query string; on its own it is a key anyone can try, which
+ * is exactly the IDOR the Express app closed with these tokens.
+ *
+ * Returns null both for a wrong token and for an order that does not exist, so
+ * the response cannot be used to discover which order numbers are real.
  */
-export async function getOrderByNumber(orderNumber: string): Promise<OrderSummary | null> {
+export async function loadOrderForReceipt(
+  orderNumber: string,
+  token: string | undefined,
+): Promise<OrderSummary | null> {
+  if (!orderNumber || !verifyOrderLookupToken(orderNumber, token)) return null;
+
   const row = await queryOne<OrderRow>(
     `SELECT order_number, customer_name, total_amount, payment_status, status
        FROM orders WHERE order_number = ? LIMIT 1`,
@@ -166,22 +177,59 @@ export async function getOrderByNumber(orderNumber: string): Promise<OrderSummar
     orderNumber: row.order_number,
     customerName: row.customer_name,
     total: formatPrice(row.total_amount) ?? "",
+    totalMinor: Math.round(Number(row.total_amount) * 100),
     paymentStatus: row.payment_status,
     status: row.status,
   };
 }
 
-/** Mark a gateway order paid or failed. Idempotent — gateways retry. */
-export async function settleOrder(
+/**
+ * Promote a gateway order to paid.
+ *
+ * Returns true only if this call is what transitioned the row. Gateways retry,
+ * customers press back, and a success URL can be revisited — so the caller
+ * uses the return value to fire the confirmation email and analytics exactly
+ * once. Ported from the Express app's `markOrderPaidAndConfirm`.
+ *
+ * The condition is `payment_status <> 'paid'` rather than `= 'pending'`, so a
+ * row that reached `failed` first can still be corrected by a genuine success.
+ */
+export async function markOrderPaid(
   orderNumber: string,
-  outcome: "paid" | "failed",
-): Promise<void> {
-  await transaction(async (connection) => {
-    await connection.execute(
-      `UPDATE orders
-          SET payment_status = ?, status = ?
-        WHERE order_number = ? AND payment_status = 'pending'`,
-      [outcome, outcome === "paid" ? "placed" : "payment_failed", orderNumber],
-    );
-  });
+  details: { transactionId?: string | null; gatewayRef?: string | null } = {},
+): Promise<boolean> {
+  const trail =
+    [details.gatewayRef && `ref:${details.gatewayRef}`, details.transactionId && `txn:${details.transactionId}`]
+      .filter(Boolean)
+      .join(" ") || "[paid]";
+
+  const result = await execute(
+    `UPDATE orders
+        SET payment_status = 'paid',
+            status = 'placed',
+            note = CASE WHEN note IS NULL OR note = '' THEN ? ELSE CONCAT(note, '\n', ?) END
+      WHERE order_number = ? AND payment_status <> 'paid'`,
+    [trail, trail, orderNumber],
+  );
+
+  return result.affectedRows > 0;
+}
+
+/**
+ * Record a failed payment.
+ *
+ * Never overrides a paid row: a failure callback arriving after a success is
+ * rare but real, and losing the payment would be far worse than keeping a
+ * stale failure notice out of the log.
+ */
+export async function markOrderFailed(orderNumber: string, reason: string): Promise<void> {
+  const line = `[payment failed: ${reason.slice(0, 200)}]`;
+  await execute(
+    `UPDATE orders
+        SET payment_status = 'failed',
+            status = 'payment_failed',
+            note = CASE WHEN note IS NULL OR note = '' THEN ? ELSE CONCAT(note, '\n', ?) END
+      WHERE order_number = ? AND payment_status <> 'paid'`,
+    [line, line, orderNumber],
+  );
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { settleOrder } from "@/lib/orders";
+import { markOrderFailed, markOrderPaid } from "@/lib/orders";
+import { orderLookupToken } from "@/lib/order-tokens";
 import { verifyCardReturn } from "@/lib/payments/cybersource";
 
 /**
@@ -32,13 +33,25 @@ export async function POST(request: Request) {
   // rather than treated as paid — releasing goods on a flagged transaction is
   // exactly the case fraud screening exists to catch.
   if (result.decision !== "ACCEPT") {
-    await settleOrder(result.referenceNumber, "failed");
-    return NextResponse.redirect(`${site}/checkout?payment=failed`, { status: 303 });
+    await markOrderFailed(result.referenceNumber, `CyberSource decision: ${result.decision}`);
+    return NextResponse.redirect(`${site}/checkout?payment=failed&reason=card_declined`, {
+      status: 303,
+    });
   }
 
-  await settleOrder(result.referenceNumber, "paid");
+  const justPromoted = await markOrderPaid(result.referenceNumber, {
+    transactionId: result.transactionId,
+  });
+  if (justPromoted) {
+    // TODO(stage-1): confirmation and admin alert emails, once ported. Guarded
+    // so a replayed callback cannot send them twice.
+  }
+
+  // The reference number came back inside a signed payload, so minting the
+  // receipt token here is safe — it is not something the caller supplied.
+  const token = orderLookupToken(result.referenceNumber);
   return NextResponse.redirect(
-    `${site}/checkout/confirmation?order=${encodeURIComponent(result.referenceNumber)}`,
+    `${site}/checkout/confirmation?order=${encodeURIComponent(result.referenceNumber)}&token=${encodeURIComponent(token)}`,
     // 303 so the browser follows with GET rather than replaying the POST.
     { status: 303 },
   );
