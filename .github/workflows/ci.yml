@@ -45,6 +45,12 @@ jobs:
       - name: Order lookup checks
         run: npm run check:orders
 
+      # The concurrency assertion inside this one needs a database and skips
+      # itself without credentials, which CI does not have. The pure rules —
+      # code generation, hashing, the buyer-safe projection — still run.
+      - name: Sign-in checks
+        run: npm run check:auth
+
       - name: Typecheck
         run: npm run typecheck
 

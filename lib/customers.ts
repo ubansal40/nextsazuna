@@ -1,8 +1,12 @@
 import "server-only";
 
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
+import { publicCustomer, type CustomerRow, type PublicCustomer } from "./customer-projection";
 import { query, queryOne } from "./db";
 import { normalisePhone } from "./order-lookup";
+
+export { publicCustomer };
+export type { CustomerRow, PublicCustomer };
 
 /**
  * Customer records.
@@ -15,27 +19,6 @@ import { normalisePhone } from "./order-lookup";
  * placed an order. That is why linking at checkout (below) matters so much — it
  * is the only thing that creates an account.
  */
-
-export interface CustomerRow extends RowDataPacket {
-  id: number;
-  phone: string;
-  name: string | null;
-  email: string | null;
-  address_line1: string | null;
-  address_line2: string | null;
-  city: string | null;
-  state: string | null;
-  postal_code: string | null;
-  country: string | null;
-  dob: string | null;
-  anniversary: string | null;
-  ring_size: string | null;
-  bangle_size: string | null;
-  loyalty_points: number;
-  /** Staff-internal. Must never reach the browser — see publicCustomer. */
-  notes: string | null;
-  created_at: Date | string;
-}
 
 /**
  * `dob` and `anniversary` are read through DATE_FORMAT rather than as DATE.
@@ -50,55 +33,6 @@ const CUSTOMER_COLUMNS = `id, phone, name, email,
         DATE_FORMAT(dob, '%Y-%m-%d') AS dob,
         DATE_FORMAT(anniversary, '%Y-%m-%d') AS anniversary,
         ring_size, bangle_size, loyalty_points, notes, created_at`;
-
-/** What the browser may see of a customer. */
-export interface PublicCustomer {
-  id: number;
-  phone: string;
-  name: string;
-  email: string;
-  addressLine1: string;
-  addressLine2: string;
-  city: string;
-  state: string;
-  postalCode: string;
-  country: string;
-  dob: string;
-  anniversary: string;
-  ringSize: string;
-  bangleSize: string;
-  loyaltyPoints: number;
-}
-
-/**
- * The buyer-safe projection.
- *
- * An allowlist rather than a delete-list, like `toBuyerSafeView` in
- * lib/order-lookup.ts: a column added to `customers` later cannot leak through
- * this by accident. `notes` is staff-internal CRM commentary — "haggled hard",
- * "prefers WhatsApp" — and is the specific reason this function exists.
- */
-export function publicCustomer(row: CustomerRow): PublicCustomer {
-  const str = (value: unknown) => (typeof value === "string" ? value : "") || "";
-
-  return {
-    id: Number(row.id),
-    phone: str(row.phone),
-    name: str(row.name),
-    email: str(row.email),
-    addressLine1: str(row.address_line1),
-    addressLine2: str(row.address_line2),
-    city: str(row.city),
-    state: str(row.state),
-    postalCode: str(row.postal_code),
-    country: str(row.country),
-    dob: str(row.dob),
-    anniversary: str(row.anniversary),
-    ringSize: str(row.ring_size),
-    bangleSize: str(row.bangle_size),
-    loyaltyPoints: Number(row.loyalty_points) || 0,
-  };
-}
 
 export async function findCustomerByPhone(phone: string): Promise<CustomerRow | null> {
   const normalised = normalisePhone(phone);
