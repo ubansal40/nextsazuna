@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
-import { query, transaction } from "../db";
+import { query, queryOne, transaction } from "../db";
 import { recordAdminAction } from "./audit";
 import type { AdminContext } from "./rbac";
 
@@ -369,5 +369,205 @@ export async function reorderCategories(admin: AdminContext, orderedIds: number[
       await conn.execute("UPDATE categories SET sort_order = ? WHERE id = ?", [i + 1, ids[i]]);
     }
     await recordAdminAction(conn, admin, { action: "categories.reorder", resourceType: "categories", metadata: { count: ids.length } });
+  });
+}
+
+/* --- collections ----------------------------------------------------------- */
+
+/** A collection's rule-based membership as a bound WHERE fragment. Params, in
+ *  order: collectionId, collectionId (the two EXISTS subqueries). */
+const COLLECTION_MATCH = `
+  p.is_active = 1
+  AND (
+    EXISTS (SELECT 1 FROM product_categories pc JOIN collection_categories cc ON cc.category_id = pc.category_id
+             WHERE pc.product_id = p.id AND cc.collection_id = ?)
+    OR EXISTS (SELECT 1 FROM product_tags pt JOIN collection_tags ct ON ct.tag_id = pt.tag_id
+                WHERE pt.product_id = p.id AND ct.collection_id = ?)
+  )`;
+
+export interface CollectionRow {
+  id: number;
+  name: string;
+  slug: string;
+  isVisible: boolean;
+  sortOrder: number;
+  categoryCount: number;
+  tagCount: number;
+  priceBandMin: string | null;
+  priceBandMax: string | null;
+  productCount: number;
+}
+
+interface CollectionDbRow extends RowDataPacket {
+  id: number;
+  name: string;
+  slug: string;
+  is_active: number;
+  sort_order: number;
+  price_band_min: string | null;
+  price_band_max: string | null;
+  category_count: number;
+  tag_count: number;
+  product_count: number;
+}
+
+/** Collections with their rule counts and the live count of products the rules
+ *  match (price band applied to the effective price), in stored order. */
+export async function listCollections(): Promise<CollectionRow[]> {
+  const rows = await query<CollectionDbRow>(
+    `SELECT col.id, col.name, col.slug, col.is_active, col.sort_order,
+            col.price_band_min, col.price_band_max,
+            (SELECT COUNT(*) FROM collection_categories WHERE collection_id = col.id) AS category_count,
+            (SELECT COUNT(*) FROM collection_tags WHERE collection_id = col.id)       AS tag_count,
+            (SELECT COUNT(DISTINCT p.id) FROM products p
+               WHERE ${COLLECTION_MATCH.replace(/\?/g, "col.id")}
+                 AND (col.price_band_min IS NULL OR (CASE WHEN p.sale_price IS NOT NULL THEN p.sale_price ELSE p.price END) >= col.price_band_min)
+                 AND (col.price_band_max IS NULL OR (CASE WHEN p.sale_price IS NOT NULL THEN p.sale_price ELSE p.price END) <= col.price_band_max)
+            ) AS product_count
+       FROM collections col
+      ORDER BY col.sort_order, col.name`,
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    slug: r.slug,
+    isVisible: r.is_active === 1,
+    sortOrder: r.sort_order,
+    categoryCount: Number(r.category_count),
+    tagCount: Number(r.tag_count),
+    priceBandMin: r.price_band_min,
+    priceBandMax: r.price_band_max,
+    productCount: Number(r.product_count),
+  }));
+}
+
+export interface CollectionDetail {
+  id: number;
+  name: string;
+  slug: string;
+  description: string;
+  isVisible: boolean;
+  categoryIds: number[];
+  tagIds: number[];
+  priceBandMin: string;
+  priceBandMax: string;
+}
+
+export async function getCollection(id: number): Promise<CollectionDetail | null> {
+  const row = await queryOne<RowDataPacket & { name: string; slug: string; description: string | null; is_active: number; price_band_min: string | null; price_band_max: string | null }>(
+    "SELECT name, slug, description, is_active, price_band_min, price_band_max FROM collections WHERE id = ? LIMIT 1",
+    [id],
+  );
+  if (!row) return null;
+  const [cats, tags] = await Promise.all([
+    query<RowDataPacket & { category_id: number }>("SELECT category_id FROM collection_categories WHERE collection_id = ?", [id]),
+    query<RowDataPacket & { tag_id: number }>("SELECT tag_id FROM collection_tags WHERE collection_id = ?", [id]),
+  ]);
+  return {
+    id,
+    name: row.name,
+    slug: row.slug,
+    description: row.description ?? "",
+    isVisible: row.is_active === 1,
+    categoryIds: cats.map((c) => c.category_id),
+    tagIds: tags.map((t) => t.tag_id),
+    priceBandMin: row.price_band_min ?? "",
+    priceBandMax: row.price_band_max ?? "",
+  };
+}
+
+export interface CollectionInput {
+  name: string;
+  slug: string;
+  description: string;
+  isVisible: boolean;
+  categoryIds: number[];
+  tagIds: number[];
+  priceBandMin: string;
+  priceBandMax: string;
+}
+
+function priceBand(value: string): string | null {
+  const raw = value.trim();
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n.toFixed(2) : null;
+}
+
+async function writeCollectionRules(conn: import("mysql2/promise").PoolConnection, collectionId: number, input: CollectionInput) {
+  await conn.execute("DELETE FROM collection_categories WHERE collection_id = ?", [collectionId]);
+  for (const id of [...new Set(input.categoryIds)]) {
+    await conn.execute("INSERT INTO collection_categories (collection_id, category_id) VALUES (?, ?)", [collectionId, id]);
+  }
+  await conn.execute("DELETE FROM collection_tags WHERE collection_id = ?", [collectionId]);
+  for (const id of [...new Set(input.tagIds)]) {
+    await conn.execute("INSERT INTO collection_tags (collection_id, tag_id) VALUES (?, ?)", [collectionId, id]);
+  }
+}
+
+async function uniqueCollectionSlug(conn: import("mysql2/promise").PoolConnection, base: string, excludeId: number | null): Promise<string> {
+  for (let n = 0; n < 50; n += 1) {
+    const candidate = n === 0 ? base : `${base}-${n + 1}`;
+    const [rows] = await conn.execute<(RowDataPacket & { id: number })[]>(
+      "SELECT id FROM collections WHERE slug = ? AND id <> ? LIMIT 1",
+      [candidate, excludeId ?? 0],
+    );
+    if (rows.length === 0) return candidate;
+  }
+  return `${base}-${Date.now().toString(36)}`;
+}
+
+export async function saveCollection(admin: AdminContext, id: number | null, input: CollectionInput): Promise<number> {
+  const name = input.name.trim().slice(0, 150);
+  if (!name) throw new Error("A name is required.");
+  const min = priceBand(input.priceBandMin);
+  const max = priceBand(input.priceBandMax);
+  if (min != null && max != null && Number(min) > Number(max)) throw new Error("The price band's minimum is above its maximum.");
+
+  return transaction(async (conn) => {
+    let collectionId: number;
+    if (id) {
+      const slug = await uniqueCollectionSlug(conn, slugify(input.slug || name), id);
+      await conn.execute(
+        `UPDATE collections SET name = ?, slug = ?, description = ?, is_active = ?, price_band_min = ?, price_band_max = ? WHERE id = ?`,
+        [name, slug, input.description.trim() || null, input.isVisible ? 1 : 0, min, max, id],
+      );
+      collectionId = id;
+    } else {
+      const slug = await uniqueCollectionSlug(conn, slugify(input.slug || name), null);
+      const [[maxRow]] = await conn.execute<(RowDataPacket & { next: number })[]>("SELECT COALESCE(MAX(sort_order),0)+1 AS next FROM collections");
+      const [result] = await conn.execute<ResultSetHeader>(
+        `INSERT INTO collections (name, slug, description, is_active, sort_order, price_band_min, price_band_max)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [name, slug, input.description.trim() || null, input.isVisible ? 1 : 0, maxRow.next, min, max],
+      );
+      collectionId = result.insertId;
+    }
+    await writeCollectionRules(conn, collectionId, input);
+    await recordAdminAction(conn, admin, { action: id ? "collections.update" : "collections.create", resourceType: "collections", resourceId: collectionId, metadata: { name } });
+    return collectionId;
+  });
+}
+
+export async function deleteCollection(admin: AdminContext, id: number): Promise<void> {
+  await transaction(async (conn) => {
+    await conn.execute("DELETE FROM collections WHERE id = ?", [id]);
+    await recordAdminAction(conn, admin, { action: "collections.delete", resourceType: "collections", resourceId: id });
+  });
+}
+
+export async function setCollectionVisibility(admin: AdminContext, id: number, visible: boolean): Promise<void> {
+  await transaction(async (conn) => {
+    await conn.execute("UPDATE collections SET is_active = ? WHERE id = ?", [visible ? 1 : 0, id]);
+    await recordAdminAction(conn, admin, { action: "collections.visibility", resourceType: "collections", resourceId: id, metadata: { visible } });
+  });
+}
+
+export async function reorderCollections(admin: AdminContext, orderedIds: number[]): Promise<void> {
+  const ids = orderedIds.filter((n) => Number.isInteger(n) && n > 0);
+  if (ids.length === 0) return;
+  await transaction(async (conn) => {
+    for (let i = 0; i < ids.length; i += 1) await conn.execute("UPDATE collections SET sort_order = ? WHERE id = ?", [i + 1, ids[i]]);
+    await recordAdminAction(conn, admin, { action: "collections.reorder", resourceType: "collections", metadata: { count: ids.length } });
   });
 }
