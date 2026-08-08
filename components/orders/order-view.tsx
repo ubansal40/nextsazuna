@@ -33,8 +33,37 @@ interface Banner {
   tone: "paid" | "pending" | "failed";
 }
 
+/** Ends the ladder. `buildTimeline` collapses these to a single step. */
+const TERMINAL: Record<string, string> = {
+  cancelled: "This order was cancelled",
+  refunded: "This order was refunded",
+  returned: "This order was returned",
+};
+
 function banner(order: OrderViewData): Banner {
   const label = PAYMENT_LABELS[order.paymentMethod] ?? order.paymentMethod;
+
+  /**
+   * A finished order first, before anything about payment.
+   *
+   * Without this a cancelled cash order read "Cash on Delivery — pay in cash
+   * when your order arrives", chipped "Order placed", because the payment
+   * status on a cancelled COD row is still `pending` and nothing had asked
+   * whether the order was still alive.
+   */
+  const ended = TERMINAL[order.status];
+  if (ended) {
+    return {
+      title: ended,
+      detail:
+        order.paymentStatus === "paid"
+          ? "Any payment taken has been returned to your original method."
+          : "Nothing was charged. Message us if you would like to reorder.",
+      chip: order.status.charAt(0).toUpperCase() + order.status.slice(1),
+      icon: "info",
+      tone: "pending",
+    };
+  }
 
   if (order.paymentStatus === "paid") {
     return {

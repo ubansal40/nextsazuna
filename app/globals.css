@@ -466,6 +466,11 @@
   --sz-text-story-card-title: 19px;
   --sz-story-icon: 46px;
   --sz-radius-story-icon: 13px;
+
+  /* Account portal — Sazuna Account.dc.html. */
+  --sz-account-rail: 246px;
+  --sz-account-gap: 36px;
+  --sz-account-rail-top: calc(var(--sz-header-h) + 15px);
 }
 
 /* Policy pages: the ToC becomes a disclosure and the grid collapses to one
@@ -481,6 +486,11 @@
 /* The order pages put the status timeline beside the items; below 820 the two
  * cards stop fitting side by side — Sazuna Order Status.dc.html. */
 @custom-variant order-stacked (@media (width < 820px));
+
+/* The account portal's 246px rail becomes a horizontally scrolling tab strip at
+ * 900 — Sazuna Account.dc.html. */
+@custom-variant account-stacked (@media (width < 900px));
+@custom-variant account-split (@media (width >= 900px));
 
 /* ----------------------------------------------------------------------------
  * TAILWIND THEME BRIDGE

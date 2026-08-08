@@ -261,6 +261,41 @@ export async function lookupOrderByContact(
 }
 
 /**
+ * One of a signed-in customer's own orders.
+ *
+ * Ownership is proved **in the query** — `WHERE id = ? AND customer_id = ?` —
+ * rather than by fetching and then comparing, so there is no window in which
+ * the wrong row exists in memory. The customer id comes from the session, never
+ * from the request.
+ *
+ * Returns null for "not yours" and "does not exist" alike, so the page can 404
+ * rather than 403 and the route never confirms another customer's order is
+ * real. Hidden statuses are filtered for the same reason they are everywhere
+ * else: a gateway-incomplete order is not yet a purchase.
+ *
+ * Note that `orders.note` is not projected. It is a mixed-trust column — the
+ * buyer's gift note sits alongside `[paid]`, `txn:` and `[payment failed: …]`
+ * markers this app writes — and the reference filters it with a denylist that
+ * leaks the moment a new marker is added. Not selecting it is the version that
+ * cannot rot.
+ */
+export async function loadOrderForCustomer(
+  orderId: number,
+  customerId: number,
+): Promise<OrderView | null> {
+  if (!Number.isInteger(orderId) || orderId <= 0) return null;
+
+  const row = await queryOne<FullOrderRow>(
+    `SELECT ${ORDER_COLUMNS} FROM orders WHERE id = ? AND customer_id = ? LIMIT 1`,
+    [orderId, customerId],
+  );
+  if (!row || !isVisibleStatus(row.status)) return null;
+
+  // Their own order, so the full phone is theirs to see.
+  return toReceiptView(row, await loadItems(row.order_number));
+}
+
+/**
  * The thin summary, for the gateway return paths.
  *
  * They need the total to match against what the gateway echoed and nothing
