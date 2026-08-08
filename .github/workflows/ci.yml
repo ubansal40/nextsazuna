@@ -51,6 +51,11 @@ jobs:
       - name: Sign-in checks
         run: npm run check:auth
 
+      # The only place author-supplied text becomes HTML, and it carries no
+      # sanitiser by design — escaping precedes every formatting rule.
+      - name: Journal renderer checks
+        run: npm run check:blog
+
       - name: Typecheck
         run: npm run typecheck
 
