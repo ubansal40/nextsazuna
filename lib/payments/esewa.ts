@@ -37,12 +37,22 @@ export interface EsewaForm {
   fields: Record<string, string>;
 }
 
+/**
+ * eSewa's published sandbox merchant. In the legacy API the merchant code *is*
+ * the credential, and a real `ES-…` code is not registered on UAT — so sending
+ * the live code at a sandbox endpoint fails. Test mode uses this instead,
+ * unless a sandbox code has been configured explicitly.
+ */
+const TEST_MERCHANT = "EPAYTEST";
+
 async function settings() {
   const config = await getGatewayCredentials("esewa");
   const mode = config?.mode ?? "test";
+  const configured = config?.credentials.merchant_code ?? "";
+
   return {
     mode,
-    merchant: config?.credentials.merchant_code ?? "",
+    merchant: mode === "live" ? configured : (config?.credentials.test_merchant_code ?? TEST_MERCHANT),
     formUrl: FORM_URL[mode],
     verifyUrl: VERIFY_URL[mode],
   };

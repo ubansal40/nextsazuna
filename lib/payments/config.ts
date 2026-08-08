@@ -130,13 +130,19 @@ export async function getGatewayCredentials(code: string): Promise<GatewayCreden
   );
 
   /**
-   * Live mode is opt-in through the environment, never through the database.
+   * Mode comes from the method's own row, the way the Express app resolves it —
+   * it is the founder's setting, editable in the admin, and per gateway.
    *
-   * The block says "live" for every gateway today. Honouring that on a laptop
-   * would put real transactions through a development build, so a gateway is
-   * only live when the deployment explicitly says so.
+   * `SAZUNA_PAYMENTS_MODE` overrides it in one direction only: a deployment
+   * can force `test`, so a development machine never puts a real transaction
+   * through a live gateway. It cannot force `live`, because switching a
+   * gateway on for real money should be a deliberate content change, not an
+   * environment variable someone copies between hosts.
    */
-  const mode = process.env.SAZUNA_PAYMENTS_MODE === "live" ? "live" : "test";
+  const override = process.env.SAZUNA_PAYMENTS_MODE?.trim().toLowerCase();
+  const declared = typeof method.mode === "string" ? method.mode.toLowerCase() : "";
+  const mode: "test" | "live" =
+    override === "test" ? "test" : declared === "live" ? "live" : "test";
 
   return { code, mode, credentials: { ...fromBlock, ...fromEnv } };
 }
