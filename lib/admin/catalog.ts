@@ -297,3 +297,29 @@ export async function deleteProduct(admin: AdminContext, id: number): Promise<De
     return { mode: "hard" };
   });
 }
+
+export interface ProductEditorOptions {
+  categories: { id: number; name: string }[];
+  tags: { id: number; name: string }[];
+  materials: string[];
+  purities: string[];
+}
+
+/** The vocabularies the product editor's selects need — categories and tags by
+ *  id (the write layer keys on id), materials and purities as the free strings
+ *  the catalogue uses until they become managed vocabularies in the taxonomy
+ *  phase. */
+export async function getProductEditorOptions(): Promise<ProductEditorOptions> {
+  const [categories, tags, materials, purities] = await Promise.all([
+    query<IdNameRow>("SELECT id, name FROM categories ORDER BY name"),
+    query<IdNameRow>("SELECT id, name FROM tags ORDER BY name"),
+    query<VocabRow>("SELECT DISTINCT material AS value FROM products WHERE material IS NOT NULL AND material <> '' ORDER BY material"),
+    query<VocabRow>("SELECT DISTINCT purity AS value FROM products WHERE purity IS NOT NULL AND purity <> '' ORDER BY purity"),
+  ]);
+  return {
+    categories: categories.map((c) => ({ id: c.id, name: c.name })),
+    tags: tags.map((t) => ({ id: t.id, name: t.name })),
+    materials: materials.map((m) => m.value),
+    purities: purities.map((p) => p.value),
+  };
+}
