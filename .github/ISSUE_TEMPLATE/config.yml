@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Roadmap
+    url: https://github.com/ubansal40/nextsazuna/milestones
+    about: Phases and their progress. Each milestone is a phase; the percentage is computed from its issues.

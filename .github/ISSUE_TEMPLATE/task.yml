@@ -1,0 +1,48 @@
+name: Task
+description: A shippable unit of work in a phase
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most issues come from `scripts/roadmap.mjs` — edit the roadmap and run
+        `npm run roadmap:apply` rather than opening those by hand. Use this form
+        for work that comes up in between.
+
+  - type: input
+    id: spec
+    attributes:
+      label: Spec
+      description: The `.dc.html` file this implements, if any. The design project is the source of truth.
+      placeholder: Sazuna Policy.dc.html
+    validations:
+      required: false
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What needs to be true
+      description: >
+        Written so someone picking this up cold can start. Name the files or
+        routes involved, and anything already known to be wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: Checkable by someone other than the author.
+      value: |
+        - [ ]
+        - [ ] `npm run verify` passes
+        - [ ] Verified in the browser at desktop and mobile widths
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything already known
+      description: Data quirks, decisions still open, things that bit us last time.
+    validations:
+      required: false

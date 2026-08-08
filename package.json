@@ -12,7 +12,9 @@
     "migrate": "node scripts/migrate.mjs",
     "migrate:status": "node scripts/migrate.mjs status",
     "verify": "npm run check:tokens && npm run check:payments && npm run typecheck && npm run lint && npm run build",
-    "check:payments": "node scripts/check-payment-signatures.mjs"
+    "check:payments": "node scripts/check-payment-signatures.mjs",
+    "roadmap": "node scripts/sync-github.mjs",
+    "roadmap:apply": "node scripts/sync-github.mjs --apply"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
