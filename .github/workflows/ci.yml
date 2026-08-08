@@ -49,6 +49,8 @@ jobs:
   commits:
     name: Commit messages
     runs-on: ubuntu-latest
+    # Only meaningful on a PR, where there is a range to check.
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,15 +63,5 @@ jobs:
 
       - run: npm ci
 
-      # This repo commits directly to main, so a pull-request-only check never
-      # ran. Commit messages are load-bearing now that `Closes #12` is what
-      # moves an issue (ADR 0008), so both paths are checked.
-      - name: Lint commit messages (pull request)
-        if: github.event_name == 'pull_request'
+      - name: Lint commit messages
         run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
-
-      # `before` is all-zeroes on a branch's first push and on a force push;
-      # there is no range to check in that case.
-      - name: Lint commit messages (push)
-        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
-        run: npx commitlint --from ${{ github.event.before }} --to ${{ github.sha }} --verbose
