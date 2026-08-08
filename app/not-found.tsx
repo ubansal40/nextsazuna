@@ -1,58 +1,32 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { ErrorHomeLink, ErrorPage } from "@/components/content/error-page";
-import { NAV_CATEGORIES, jewelleryUrl } from "@/lib/navigation";
+import { NotFoundView, notFoundMetadata } from "@/components/content/not-found-view";
+import { StorefrontShell } from "@/components/shell/storefront-shell";
 
 /**
- * 404 — Sazuna Error Pages.dc.html.
+ * The 404 for a URL that matches no route at all.
  *
- * This is the first styled 404 the rebuild has had: notFound() is already
- * called from the PDP, the confirmation page and the catalog, and every one of
- * them has been landing on Next's stock black-and-white page.
+ * This one is easy to lose. Next only consults the *root* `not-found.tsx` for
+ * an unmatched URL — a `not-found.tsx` inside a route group is never reached,
+ * because there is no matched segment to reach it through. Moving the storefront
+ * into `(storefront)/` therefore silently regressed every mistyped URL back to
+ * Next's stock black-and-white 404, with no header, no footer and no way back
+ * into the shop. Verified in the browser, not assumed.
  *
- * Copy is the Express storefront's, which is better than the spec's demo text
- * because it says the true thing — a lot of these pieces are one-of-a-kind and
- * genuinely sell.
+ * So this boundary mounts the shell itself. That is not a second shell: the root
+ * layout is only `<html>`/`<body>`, and `(storefront)/layout.tsx` is not in the
+ * tree here, so `StorefrontShell` renders exactly once either way.
+ *
+ * When the admin grows its own 404, it goes in `(admin)/`, and an unmatched
+ * `/admin/*` URL will still land here — which is correct, since an unmatched URL
+ * is a public URL until proven otherwise, and this page reveals nothing.
  */
 
-export const metadata: Metadata = {
-  title: "Page not found",
-  description:
-    "That page could not be found. Browse the Sazuna Jewellers collection or talk to us on WhatsApp.",
-  robots: { index: false, follow: true },
-};
+export const metadata: Metadata = notFoundMetadata;
 
 export default function NotFound() {
   return (
-    <ErrorPage
-      code="Error 404"
-      title="We can't find that page."
-      blurb="Maybe it was a piece that sold — we make a lot of one-of-a-kinds — or maybe the link is a little off. Either way, here are some places to head next."
-      icon="search"
-      tone="notice"
-      whatsappText="Hi, I was looking for something on your site and hit a dead end."
-    >
-      <div className="mt-7 flex flex-wrap justify-center gap-2.5">
-        {NAV_CATEGORIES.slice(0, 6).map((category) => (
-          <Link
-            key={category.slug}
-            href={jewelleryUrl(category.slug)}
-            className="inline-flex items-center rounded-pill border border-line bg-raised px-4 text-sm font-semibold text-body no-underline min-h-11 hover:border-accent hover:text-primary-700 hover:no-underline"
-          >
-            {category.label}
-          </Link>
-        ))}
-      </div>
-
-      <div className="mt-8 flex flex-wrap justify-center gap-3">
-        <ErrorHomeLink />
-        <Link
-          href="/jewellery"
-          className="inline-flex items-center justify-center rounded-[var(--sz-radius-control)] border border-line bg-raised px-6 text-control font-semibold text-primary-700 no-underline min-h-[52px] hover:border-primary-700 hover:no-underline"
-        >
-          Browse jewellery
-        </Link>
-      </div>
-    </ErrorPage>
+    <StorefrontShell>
+      <NotFoundView />
+    </StorefrontShell>
   );
 }

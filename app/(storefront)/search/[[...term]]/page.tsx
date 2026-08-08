@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { listProducts, type SortKey } from "@/lib/catalog";
 import { bracketById, getFacets } from "@/lib/catalog/facets";
 import { readFilters, type RawParams } from "@/lib/catalog/filter-params";
-import { ProductListingView } from "@/app/jewellery/[slug]/_components/product-listing";
-import { SORT_VALUES } from "@/app/jewellery/[slug]/_components/toolbar";
+import { ProductListingView } from "@/app/(storefront)/jewellery/[slug]/_components/product-listing";
+import { SORT_VALUES } from "@/app/(storefront)/jewellery/[slug]/_components/toolbar";
 
 /**
  * Search results — /search and /search/{term}.
