@@ -673,6 +673,7 @@
   --animate-sheet-up: sz-sheet-up 280ms var(--sz-ease-out);
   --animate-toast-in: sz-toast-in var(--sz-dur) var(--sz-ease-out);
   --animate-shimmer: sz-shimmer 1.4s infinite;
+  --animate-float: sz-float 4s ease-in-out infinite;
   --animate-lift: sz-lift 3s ease-in-out infinite;
 
   /* Shell panels. Separate from the generic slide-in animations because the
@@ -701,6 +702,10 @@
 @keyframes sz-sheet-up { from { transform: translateY(24px); opacity: .4 } to { transform: none; opacity: 1 } }
 @keyframes sz-toast-in { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: none } }
 @keyframes sz-shimmer { 100% { transform: translateX(180%) } }
+/* The error page's diamond mark drifts while it sits on a 45° rotation. Animates
+ * `translate` rather than `transform` so it composes with the `rotate` utility
+ * instead of overwriting it. */
+@keyframes sz-float { 0%, 100% { translate: 0 0 } 50% { translate: 0 -8px } }
 @keyframes sz-lift { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-8px) } }
 
 /* ----------------------------------------------------------------------------
