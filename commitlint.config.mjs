@@ -16,7 +16,18 @@ const config = {
         "design-system", // tokens, the spec fixture, the parity checker
         "ui", // components/ui primitives
         "shell", // header, footer, nav, mini-cart
-        "storefront", // customer-facing pages
+        "storefront", // customer-facing pages, where no page scope fits
+        // Page scopes. Commits are named after the surface in practice, and
+        // "storefront" for every page made the log unreadable.
+        "home",
+        "plp",
+        "pdp",
+        "cart",
+        "account",
+        "search",
+        "content", // policy and support pages, content blocks
+        "payments", // gateways, signing, settlement
+        "orders",
         "admin", // admin pages
         "api", // route handlers and server actions
         "db", // schema, migrations, queries
