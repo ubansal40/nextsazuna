@@ -31,30 +31,39 @@ export function ContentKicker({ children }: { children: ReactNode }) {
 export const policyContainer =
   "mx-auto max-w-[var(--sz-policy-container)] px-10 pb-24 policy-narrow:px-[18px]";
 
-export function PolicyPage({
-  page,
-  entries,
+/**
+ * The page header — kicker, title, revision date. Shared with the FAQ, which
+ * the spec gives the same header and closing panel but no table of contents.
+ */
+export function ContentHeader({
+  kicker,
+  title,
+  updated,
   children,
 }: {
-  page: PolicyPageData;
-  /** Overrides the table of contents — the FAQ lists topics, not sections. */
-  entries?: TocEntry[];
-  /** Replaces the prose column. Used by the FAQ. */
+  kicker: string;
+  title: string;
+  updated: string;
   children?: ReactNode;
 }) {
-  const toc = entries ?? page.sections.map((s) => ({ id: s.id, label: s.heading }));
+  return (
+    <header className="max-w-[var(--sz-prose-max)] pt-[34px]">
+      <ContentKicker>{kicker}</ContentKicker>
+      <h1 className="m-0 text-content-h1 font-normal tracking-tight text-heading policy-stacked:text-content-h1-sm">
+        {title}
+      </h1>
+      <p className="m-0 mt-3 font-mono text-xs text-muted-soft">Last updated · {updated}</p>
+      {children}
+    </header>
+  );
+}
+
+export function PolicyPage({ page }: { page: PolicyPageData }) {
+  const toc: TocEntry[] = page.sections.map((s) => ({ id: s.id, label: s.heading }));
 
   return (
     <div className={policyContainer}>
-      <header className="max-w-[var(--sz-prose-max)] pt-[34px]">
-        <ContentKicker>{page.kicker}</ContentKicker>
-        <h1 className="m-0 text-content-h1 font-normal tracking-tight text-heading policy-stacked:text-content-h1-sm">
-          {page.title}
-        </h1>
-        <p className="m-0 mt-3 font-mono text-xs text-muted-soft">
-          Last updated · {page.updated}
-        </p>
-      </header>
+      <ContentHeader kicker={page.kicker} title={page.title} updated={page.updated} />
 
       <div
         className={cn(
@@ -66,18 +75,16 @@ export function PolicyPage({
         <PolicyToc entries={toc} />
 
         <div>
-          {children ?? (
-            <Prose>
-              {/* Flat, as the spec renders it: a section wrapper would put the
-                  first heading's top margin back on the page header. */}
-              {page.sections.map((section) => (
-                <Fragment key={section.id}>
-                  <h2 id={section.id}>{section.heading}</h2>
-                  <PolicyBlocks blocks={section.blocks} />
-                </Fragment>
-              ))}
-            </Prose>
-          )}
+          <Prose>
+            {/* Flat, as the spec renders it: a section wrapper would put the
+                first heading's top margin back on the page header. */}
+            {page.sections.map((section) => (
+              <Fragment key={section.id}>
+                <h2 id={section.id}>{section.heading}</h2>
+                <PolicyBlocks blocks={section.blocks} />
+              </Fragment>
+            ))}
+          </Prose>
 
           <ContentCta cta={page.cta} className="max-w-[var(--sz-prose-max)]" />
         </div>
