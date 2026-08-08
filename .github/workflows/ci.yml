@@ -32,6 +32,19 @@ jobs:
       - name: Design token parity
         run: npm run check:tokens
 
+      # These three exercise the parts that cannot be tested end to end without
+      # a live gateway, a mail server or a real order. They ran only in `npm run
+      # verify` locally, which meant CI would happily go green on a change that
+      # broke payment signing or the guest-lookup access control.
+      - name: Payment signature checks
+        run: npm run check:payments
+
+      - name: Order email checks
+        run: npm run check:emails
+
+      - name: Order lookup checks
+        run: npm run check:orders
+
       - name: Typecheck
         run: npm run typecheck
 

@@ -1,8 +1,17 @@
 import "server-only";
 
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
-import { execute, queryOne, transaction } from "./db";
+import { execute, query, queryOne, transaction } from "./db";
 import { formatPrice } from "./format";
+import {
+  contactMatches,
+  isVisibleStatus,
+  toBuyerSafeView,
+  toReceiptView,
+  type OrderItemRowLike,
+  type OrderRowLike,
+  type OrderView,
+} from "./order-lookup";
 import { verifyOrderLookupToken } from "./order-tokens";
 import type { CartLine } from "./cart";
 
@@ -12,6 +21,31 @@ interface OrderRow extends RowDataPacket {
   total_amount: string;
   payment_status: string;
   status: string;
+}
+
+/** The full row both order views project from. */
+type FullOrderRow = RowDataPacket & OrderRowLike;
+type OrderItemRow = RowDataPacket & OrderItemRowLike;
+
+/**
+ * Every column the two projections read. Written once so the token path and the
+ * guest path cannot drift into selecting different things — the allowlist that
+ * keeps email out of a guest response lives in the projection, not here.
+ */
+const ORDER_COLUMNS = `order_number, status, payment_method, payment_status,
+        created_at, updated_at, customer_name, email, phone,
+        address_line1, city, postal_code, country,
+        subtotal, discount_amount, shipping_amount, total_amount`;
+
+async function loadItems(orderNumber: string): Promise<OrderItemRow[]> {
+  return query<OrderItemRow>(
+    `SELECT i.product_name, i.product_sku, i.quantity, i.line_total
+       FROM order_items i
+       JOIN orders o ON o.id = i.order_id
+      WHERE o.order_number = ?
+      ORDER BY i.id ASC`,
+    [orderNumber],
+  );
 }
 
 /**
@@ -152,14 +186,65 @@ export interface OrderSummary {
 }
 
 /**
- * One order, for a receipt or a gateway return.
+ * One order in full, for the confirmation page.
  *
  * The lookup token is required, not optional. The order number travels in URLs
  * and in a gateway's query string; on its own it is a key anyone can try, which
  * is exactly the IDOR the Express app closed with these tokens.
  *
  * Returns null both for a wrong token and for an order that does not exist, so
- * the response cannot be used to discover which order numbers are real.
+ * the response cannot be used to discover which order numbers are real. Unlike
+ * the guest path this does NOT filter on status: someone holding the token for
+ * an order still awaiting its gateway is entitled to see that it is pending.
+ */
+export async function loadOrderReceipt(
+  orderNumber: string,
+  token: string | undefined,
+): Promise<OrderView | null> {
+  if (!orderNumber || !verifyOrderLookupToken(orderNumber, token)) return null;
+
+  const row = await queryOne<FullOrderRow>(
+    `SELECT ${ORDER_COLUMNS} FROM orders WHERE order_number = ? LIMIT 1`,
+    [orderNumber],
+  );
+  if (!row) return null;
+
+  return toReceiptView(row, await loadItems(row.order_number));
+}
+
+/**
+ * One order, for guest lookup on /order-status.
+ *
+ * The contact is the access control here — there is no token — so the match and
+ * the visibility filter run in TypeScript rather than in the WHERE clause. Two
+ * reasons: the query cannot then be shaped into an oracle that answers faster
+ * for a real order number than a fake one, and the rules stay in a pure module
+ * that scripts/check-order-lookup.mts can exercise directly.
+ *
+ * Every failure — unknown number, wrong contact, hidden status — returns the
+ * same null, so a caller learns nothing they did not already know.
+ */
+export async function lookupOrderByContact(
+  orderNumber: string,
+  contact: string,
+): Promise<OrderView | null> {
+  const trimmed = orderNumber.trim().replace(/^#/, "").slice(0, 64);
+  if (!trimmed || !contact.trim()) return null;
+
+  const row = await queryOne<FullOrderRow>(
+    `SELECT ${ORDER_COLUMNS} FROM orders WHERE order_number = ? LIMIT 1`,
+    [trimmed],
+  );
+  if (!row || !isVisibleStatus(row.status) || !contactMatches(row, contact)) return null;
+
+  return toBuyerSafeView(row, await loadItems(row.order_number));
+}
+
+/**
+ * The thin summary, for the gateway return paths.
+ *
+ * They need the total to match against what the gateway echoed and nothing
+ * else, so they should not pay for the items join.
  */
 export async function loadOrderForReceipt(
   orderNumber: string,

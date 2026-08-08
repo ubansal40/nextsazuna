@@ -11,9 +11,10 @@
     "check:tokens": "node scripts/check-tokens.mjs",
     "migrate": "node scripts/migrate.mjs",
     "migrate:status": "node scripts/migrate.mjs status",
-    "verify": "npm run check:tokens && npm run check:payments && npm run check:emails && npm run typecheck && npm run lint && npm run build",
+    "verify": "npm run check:tokens && npm run check:payments && npm run check:emails && npm run check:orders && npm run typecheck && npm run lint && npm run build",
     "check:payments": "node scripts/check-payment-signatures.mjs",
-    "check:emails": "tsx scripts/check-order-emails.mts"
+    "check:emails": "tsx scripts/check-order-emails.mts",
+    "check:orders": "tsx scripts/check-order-lookup.mts"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
