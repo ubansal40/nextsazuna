@@ -185,3 +185,189 @@ export async function reorderVocab(admin: AdminContext, kind: VocabKind, ordered
     await recordAdminAction(conn, admin, { action: `${section}.reorder`, resourceType: section, metadata: { count: ids.length } });
   });
 }
+
+/* --- categories ------------------------------------------------------------ */
+
+const UNCATEGORIZED_SLUG = "uncategorized";
+
+export interface CategoryRow {
+  id: number;
+  name: string;
+  slug: string;
+  parentId: number | null;
+  description: string;
+  imageUrl: string | null;
+  isVisible: boolean;
+  sortOrder: number;
+  productCount: number;
+  childCount: number;
+  isProtected: boolean;
+}
+
+interface CategoryDbRow extends RowDataPacket {
+  id: number;
+  name: string;
+  slug: string;
+  parent_id: number | null;
+  description: string | null;
+  image_url: string | null;
+  is_visible: number;
+  sort_order: number;
+  product_count: number;
+  child_count: number;
+}
+
+/** Every category with its parent, live product count and child count, in stored
+ *  order (top-level first, then by sort_order). The UI assembles the tree. */
+export async function listCategories(): Promise<CategoryRow[]> {
+  const rows = await query<CategoryDbRow>(
+    `SELECT c.id, c.name, c.slug, c.parent_id, c.description, c.image_url, c.is_visible, c.sort_order,
+            (SELECT COUNT(DISTINCT pc.product_id) FROM product_categories pc WHERE pc.category_id = c.id) AS product_count,
+            (SELECT COUNT(*) FROM categories k WHERE k.parent_id = c.id) AS child_count
+       FROM categories c
+      ORDER BY (c.parent_id IS NOT NULL), c.parent_id, c.sort_order, c.name`,
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    slug: r.slug,
+    parentId: r.parent_id,
+    description: r.description ?? "",
+    imageUrl: r.image_url,
+    isVisible: r.is_visible === 1,
+    sortOrder: r.sort_order,
+    productCount: Number(r.product_count),
+    childCount: Number(r.child_count),
+    isProtected: r.slug === UNCATEGORIZED_SLUG,
+  }));
+}
+
+export interface CategoryInput {
+  name: string;
+  slug: string;
+  parentId: number | null;
+  description: string;
+  imageUrl: string | null;
+  isVisible: boolean;
+}
+
+async function uniqueCategorySlug(conn: import("mysql2/promise").PoolConnection, base: string, excludeId: number | null): Promise<string> {
+  for (let n = 0; n < 50; n += 1) {
+    const candidate = n === 0 ? base : `${base}-${n + 1}`;
+    const [rows] = await conn.execute<(RowDataPacket & { id: number })[]>(
+      "SELECT id FROM categories WHERE slug = ? AND id <> ? LIMIT 1",
+      [candidate, excludeId ?? 0],
+    );
+    if (rows.length === 0) return candidate;
+  }
+  return `${base}-${Date.now().toString(36)}`;
+}
+
+/** A parent must be a real, top-level category (the tree is two levels), and a
+ *  category cannot be its own parent or a parent of its own parent. */
+async function validateParent(
+  conn: import("mysql2/promise").PoolConnection,
+  parentId: number | null,
+  selfId: number | null,
+): Promise<void> {
+  if (parentId == null) return;
+  if (parentId === selfId) throw new Error("A category cannot be its own parent.");
+  const [rows] = await conn.execute<(RowDataPacket & { parent_id: number | null })[]>(
+    "SELECT parent_id FROM categories WHERE id = ? LIMIT 1",
+    [parentId],
+  );
+  if (rows.length === 0) throw new Error("That parent category does not exist.");
+  if (rows[0].parent_id != null) throw new Error("Categories nest only two levels deep.");
+  // Would this give the category a child while also giving it a parent?
+  if (selfId != null) {
+    const [kids] = await conn.execute<(RowDataPacket & { n: number })[]>(
+      "SELECT COUNT(*) AS n FROM categories WHERE parent_id = ?",
+      [selfId],
+    );
+    if (kids[0].n > 0) throw new Error("A category with sub-categories can't become a sub-category itself.");
+  }
+}
+
+export async function createCategory(admin: AdminContext, input: CategoryInput): Promise<number> {
+  const name = input.name.trim().slice(0, 120);
+  if (!name) throw new Error("A name is required.");
+  return transaction(async (conn) => {
+    await validateParent(conn, input.parentId, null);
+    const slug = await uniqueCategorySlug(conn, slugify(input.slug || name), null);
+    const [[maxRow]] = await conn.execute<(RowDataPacket & { next: number })[]>(
+      "SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM categories WHERE (parent_id <=> ?)",
+      [input.parentId],
+    );
+    const [result] = await conn.execute<ResultSetHeader>(
+      `INSERT INTO categories (name, slug, description, image_url, parent_id, sort_order, is_visible)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [name, slug, input.description.trim() || null, input.imageUrl || null, input.parentId, maxRow.next, input.isVisible ? 1 : 0],
+    );
+    await recordAdminAction(conn, admin, { action: "categories.create", resourceType: "categories", resourceId: result.insertId, metadata: { name } });
+    return result.insertId;
+  });
+}
+
+export async function updateCategory(admin: AdminContext, id: number, input: CategoryInput): Promise<void> {
+  const name = input.name.trim().slice(0, 120);
+  if (!name) throw new Error("A name is required.");
+  await transaction(async (conn) => {
+    const [[current]] = await conn.execute<(RowDataPacket & { slug: string })[]>("SELECT slug FROM categories WHERE id = ? LIMIT 1", [id]);
+    if (!current) throw new Error("Not found.");
+    const isProtected = current.slug === UNCATEGORIZED_SLUG;
+    if (isProtected && (input.parentId != null)) throw new Error("Uncategorized stays a top-level category.");
+    await validateParent(conn, input.parentId, id);
+    // Keep the protected slug; otherwise regenerate from the given/derived slug.
+    const slug = isProtected ? current.slug : await uniqueCategorySlug(conn, slugify(input.slug || name), id);
+    await conn.execute(
+      `UPDATE categories SET name = ?, slug = ?, description = ?, image_url = ?, parent_id = ?, is_visible = ? WHERE id = ?`,
+      [name, slug, input.description.trim() || null, input.imageUrl || null, input.parentId, input.isVisible ? 1 : 0, id],
+    );
+    await recordAdminAction(conn, admin, { action: "categories.update", resourceType: "categories", resourceId: id, metadata: { name } });
+  });
+}
+
+/**
+ * Delete a category, reassigning its products to Uncategorized so no product is
+ * left with none. Uncategorized itself can't be deleted; a parent's children are
+ * lifted to top-level (the FK sets their parent_id null).
+ */
+export async function deleteCategory(admin: AdminContext, id: number): Promise<void> {
+  await transaction(async (conn) => {
+    const [[cat]] = await conn.execute<(RowDataPacket & { slug: string })[]>("SELECT slug FROM categories WHERE id = ? LIMIT 1", [id]);
+    if (!cat) throw new Error("Not found.");
+    if (cat.slug === UNCATEGORIZED_SLUG) throw new Error("Uncategorized can't be deleted.");
+
+    const [[uncat]] = await conn.execute<(RowDataPacket & { id: number })[]>("SELECT id FROM categories WHERE slug = ? LIMIT 1", [UNCATEGORIZED_SLUG]);
+    if (uncat) {
+      // Move products to Uncategorized, skipping any already there (avoid a PK clash).
+      await conn.execute(
+        `UPDATE IGNORE product_categories SET category_id = ? WHERE category_id = ?`,
+        [uncat.id, id],
+      );
+      await conn.execute("DELETE FROM product_categories WHERE category_id = ?", [id]);
+    }
+    await conn.execute("DELETE FROM categories WHERE id = ?", [id]);
+    await recordAdminAction(conn, admin, { action: "categories.delete", resourceType: "categories", resourceId: id });
+  });
+}
+
+export async function setCategoryVisibility(admin: AdminContext, id: number, visible: boolean): Promise<void> {
+  await transaction(async (conn) => {
+    await conn.execute("UPDATE categories SET is_visible = ? WHERE id = ?", [visible ? 1 : 0, id]);
+    await recordAdminAction(conn, admin, { action: "categories.visibility", resourceType: "categories", resourceId: id, metadata: { visible } });
+  });
+}
+
+/** Reorder siblings — the ids are all children of one parent (or all top-level),
+ *  becoming sort_order 1..n in that group. */
+export async function reorderCategories(admin: AdminContext, orderedIds: number[]): Promise<void> {
+  const ids = orderedIds.filter((n) => Number.isInteger(n) && n > 0);
+  if (ids.length === 0) return;
+  await transaction(async (conn) => {
+    for (let i = 0; i < ids.length; i += 1) {
+      await conn.execute("UPDATE categories SET sort_order = ? WHERE id = ?", [i + 1, ids[i]]);
+    }
+    await recordAdminAction(conn, admin, { action: "categories.reorder", resourceType: "categories", metadata: { count: ids.length } });
+  });
+}
