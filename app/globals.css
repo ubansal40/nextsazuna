@@ -473,6 +473,41 @@
   --sz-account-rail-top: calc(var(--sz-header-h) + 15px);
 }
 
+/* ----------------------------------------------------------------------------
+ * ADMIN TOKENS — Sazuna Admin.dc.html
+ *
+ * The admin is the same ceremony system as the storefront, so almost every
+ * colour it uses is already a palette token: primary-700 (#7A2226) / -800
+ * (#5B1A1E), accent (#C9A15A) and accent-strong (#B7893F) are the maroon and
+ * the two golds; --sz-canvas (#FBF8F3) is the light sidebar; --sz-line /
+ * -soft are its borders; --sz-error / -soft its danger surface. Only the values
+ * the palette does NOT already name live here — chiefly the console background,
+ * which the spec sets a shade cooler than the storefront canvas, and the
+ * admin's own radii and sidebar geometry.
+ * ------------------------------------------------------------------------- */
+:root {
+  /* The console body. Distinct from --sz-canvas (#FBF8F3): the spec runs the
+   * sidebar on the storefront canvas and the content area one step cooler. */
+  --sz-admin-canvas: #F4F1EA;
+
+  /* Sidebar geometry — full, then the collapsed icon rail. */
+  --sz-admin-side-w: 246px;
+  --sz-admin-side-rail: 66px;
+
+  /* Admin radii sit between the storefront's control (8px) and card (12px). */
+  --sz-admin-radius-control: 9px;   /* buttons, inputs, chips */
+  --sz-admin-radius-card: 13px;     /* content cards, tables */
+  --sz-admin-radius-login: 16px;    /* the sign-in card */
+
+  /* The dimmer gold used for the role label and the environment badge text —
+   * a step darker than accent-strong so it reads on the pale gold chip. */
+  --sz-admin-gold-ink: #8A6A22;
+
+  /* The elevated-card shadow (sign-in card, popovers): a low, maroon-tinted
+   * lift rather than the storefront's neutral --sz-shadow-*. */
+  --sz-admin-shadow-card: 0 24px 60px -28px rgb(var(--sz-primary-800-rgb) / .28);
+}
+
 /* Policy pages: the ToC becomes a disclosure and the grid collapses to one
  * column at 860 — where 230 + 52 + 760 stops fitting inside the gutter. Story
  * pages stack their image/text pairs at 900, and drop the 4-up stat row and
@@ -522,6 +557,7 @@
   --color-accent-strong: var(--sz-accent-strong);
 
   --color-canvas: var(--sz-canvas);
+  --color-admin-canvas: var(--sz-admin-canvas);
   --color-surface: var(--sz-surface);
   --color-raised: var(--sz-surface-raised);
   --color-line: var(--sz-line);
