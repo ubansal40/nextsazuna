@@ -10,6 +10,12 @@ import { CartView } from "./_components/cart-view";
  * price whatever it holds.
  */
 
+/**
+ * Never prerendered: the bag is per-visitor, and the empty state's
+ * bestsellers come from the catalog, which the build has no credentials for.
+ */
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Your Bag",
   // A personal, per-visitor page with nothing to rank for.

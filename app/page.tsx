@@ -23,11 +23,17 @@ import {
  */
 
 /**
- * The whole page is admin-editable content, so it must not be frozen into the
- * build. Five minutes keeps it cheap while making a content edit show up
- * without a redeploy.
+ * Rendered per request rather than prerendered.
+ *
+ * The deployment builds without database credentials on purpose (see
+ * .github/workflows/ci.yml), so this page cannot be generated at build time —
+ * and an ISR page that failed its build-time fetch would cache an empty
+ * homepage, which is worse than a slightly slower one.
+ *
+ * If the build ever gets read-only database access, this can go back to
+ * `revalidate` for the caching win. The content is admin-editable either way.
  */
-export const revalidate = 300;
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   description:

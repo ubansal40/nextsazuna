@@ -19,10 +19,31 @@ interface ContentRow extends RowDataPacket {
 }
 
 export async function getContentBlock<T>(key: string): Promise<T | null> {
-  const row = await queryOne<ContentRow>(
-    "SELECT `value` FROM content_blocks WHERE `key` = ? AND is_published = 1 LIMIT 1",
-    [key],
-  );
+  let row: ContentRow | null;
+
+  try {
+    row = await queryOne<ContentRow>(
+      "SELECT `value` FROM content_blocks WHERE `key` = ? AND is_published = 1 LIMIT 1",
+      [key],
+    );
+  } catch (error) {
+    /**
+     * Content blocks are decoration — an announcement strip, a payment mark, a
+     * category subheading. Every caller already handles their absence.
+     *
+     * Two situations depend on this not throwing. At build time there are no
+     * database credentials by design (see .github/workflows/ci.yml), yet the
+     * root layout reads two blocks, so prerendering `/_not-found` would fail
+     * the whole build. And at runtime, a brief database outage should cost the
+     * shell its announcement bar rather than turning every page into a 500.
+     *
+     * Catalog reads deliberately do not do this: a listing with no products is
+     * a lie, and should fail loudly.
+     */
+    console.warn(`[content] "${key}" unavailable; rendering without it`, error);
+    return null;
+  }
+
   if (!row?.value) return null;
 
   // MariaDB stores JSON as LONGTEXT, so the driver may hand back either a
