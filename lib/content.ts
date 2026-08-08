@@ -102,6 +102,67 @@ export async function getAnnouncementBar(): Promise<AnnouncementBar | null> {
   };
 }
 
+/** Shop details the footer renders, from `site_identity`. */
+export interface SiteContact {
+  address: string | null;
+  phone: string | null;
+  /** "10:00–20:00", already joined. Null when either end is missing. */
+  hours: string | null;
+  social: { instagram: string | null; facebook: string | null; tiktok: string | null; youtube: string | null };
+}
+
+export async function getSiteContact(): Promise<SiteContact> {
+  const identity = await getContentBlock<Record<string, unknown>>("site_identity");
+  const str = (value: unknown) =>
+    typeof value === "string" && value.trim() ? value.trim() : null;
+
+  const social = (identity?.social ?? {}) as Record<string, unknown>;
+  const opens = str(identity?.opens);
+  const closes = str(identity?.closes);
+
+  return {
+    address: str(identity?.address),
+    phone: str(identity?.phone),
+    hours: opens && closes ? `${opens}–${closes}` : null,
+    social: {
+      instagram: str(social.instagram),
+      facebook: str(social.facebook),
+      tiktok: str(social.tiktok),
+      youtube: str(social.youtube),
+    },
+  };
+}
+
+/** A payment method as the storefront may see it. */
+export interface PaymentMethod {
+  code: string;
+  label: string;
+}
+
+/**
+ * Enabled payment methods, projected down to what is safe to render.
+ *
+ * SECURITY: the `payment_methods` block stores live gateway credentials —
+ * CyberSource and Khalti secret keys sit in the same JSON. Never hand that
+ * object to a component: a Client Component would serialise the whole thing
+ * into the RSC payload and publish the keys. This returns code and label only,
+ * and every storefront reader must go through it rather than
+ * `getContentBlock("payment_methods")`.
+ */
+export async function getEnabledPaymentMethods(): Promise<PaymentMethod[]> {
+  const block = await getContentBlock<unknown>("payment_methods");
+  if (!Array.isArray(block)) return [];
+
+  return block.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const method = entry as Record<string, unknown>;
+    if (!method.is_enabled) return [];
+    const code = typeof method.code === "string" ? method.code : "";
+    const label = typeof method.label === "string" ? method.label : "";
+    return code && label ? [{ code, label }] : [];
+  });
+}
+
 /** Editorial copy shown under a category title, keyed by category slug. */
 export async function getCategoryIntro(slug: string): Promise<string | null> {
   const intros = await getContentBlock<Record<string, unknown>>("category_intros");

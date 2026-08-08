@@ -238,6 +238,29 @@
 }
 
 /* ----------------------------------------------------------------------------
+ * FOOTER TOKENS — SazunaFooter.dc.html
+ *
+ * The footer is the one dark surface in the system. Its neutrals are a warm
+ * ink ramp of their own, not the canvas ramp inverted, so they are named here
+ * rather than derived.
+ * ------------------------------------------------------------------------- */
+:root {
+  --sz-footer-bg: #231B18;
+  --sz-footer-text: #D8CBB8;
+  --sz-footer-muted: #A99C89;
+  --sz-footer-eyebrow: #8A7B69;
+  --sz-footer-line: #4A3E38;     /* control + social borders */
+  --sz-footer-rule: #3A2F2A;     /* the bottom-bar divider, one step darker */
+  --sz-footer-field: #2E2521;    /* input and payment chip fill */
+
+  --sz-logo-h-footer: 32px;
+  --sz-social-btn: 38px;
+  --sz-text-footer-link: 13.5px;
+}
+
+@custom-variant footer-stacked (@media (width < 760px));
+
+/* ----------------------------------------------------------------------------
  * PRODUCT DETAIL TOKENS — Sazuna Product Detail PDP.dc.html
  * ------------------------------------------------------------------------- */
 :root {
@@ -335,6 +358,14 @@
   --color-whatsapp: var(--sz-whatsapp);
   --color-whatsapp-hover: var(--sz-whatsapp-hover);
 
+  --color-footer-bg: var(--sz-footer-bg);
+  --color-footer-text: var(--sz-footer-text);
+  --color-footer-muted: var(--sz-footer-muted);
+  --color-footer-eyebrow: var(--sz-footer-eyebrow);
+  --color-footer-line: var(--sz-footer-line);
+  --color-footer-rule: var(--sz-footer-rule);
+  --color-footer-field: var(--sz-footer-field);
+
   --color-sgl-bg: var(--sz-sgl-bg);
   --color-sgl-border: var(--sz-sgl-border);
 
@@ -386,6 +417,7 @@
   --text-trust: var(--sz-text-trust);
   --text-offer: var(--sz-text-offer);
   --text-related-price: var(--sz-text-related-price);
+  --text-footer-link: var(--sz-text-footer-link);
 
   --leading-tight: var(--sz-leading-tight);
   --leading-snug: var(--sz-leading-snug);

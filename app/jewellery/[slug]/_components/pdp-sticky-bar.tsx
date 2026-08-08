@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { addToBag, type AddToBagDetail } from "@/lib/cart-events";
-import { Icon, useToast } from "@/components/ui";
+import { Icon, useFooterVisible, useToast } from "@/components/ui";
 
 export interface PdpStickyBarProps {
   product: AddToBagDetail;
@@ -23,20 +22,7 @@ export interface PdpStickyBarProps {
  * above any z-index this bar could claim.
  */
 export function PdpStickyBar({ product, inStock, whatsappHref }: PdpStickyBarProps) {
-  const [footerVisible, setFooterVisible] = useState(false);
-
-  useEffect(() => {
-    const footer = document.querySelector("footer");
-    if (!footer) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => setFooterVisible(entry.isIntersecting),
-      // Matches the spec's 40px lead-in before the footer counts as on screen.
-      { rootMargin: "0px 0px -40px 0px" },
-    );
-    observer.observe(footer);
-    return () => observer.disconnect();
-  }, []);
-
+  const footerVisible = useFooterVisible();
   const { toast } = useToast();
 
   if (footerVisible) return null;

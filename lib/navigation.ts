@@ -79,6 +79,13 @@ export interface NavSection {
   links: { label: string; href: string }[];
 }
 
+/**
+ * Footer link columns — SazunaFooter.dc.html.
+ *
+ * Two columns only; the spec's fourth is the contact block, which is content
+ * rather than links. The legal links live in Help, where the spec puts them,
+ * rather than in a separate strip.
+ */
 export const FOOTER_SECTIONS: NavSection[] = [
   {
     title: "Shop",
@@ -87,32 +94,21 @@ export const FOOTER_SECTIONS: NavSection[] = [
       { label: "Earrings", href: jewelleryUrl("diamond-earrings") },
       { label: "Mangalsutra", href: jewelleryUrl("diamond-mangalsutra") },
       { label: "Necklaces", href: jewelleryUrl("diamond-necklace") },
+      { label: "Pendants", href: jewelleryUrl("diamond-pendant") },
       { label: "Bridal Necklace", href: jewelleryUrl("diamond-wedding-necklace") },
+      { label: "Bangles & Bracelets", href: jewelleryUrl("diamond-bangles") },
     ],
   },
   {
     title: "Help",
     links: [
+      { label: "Track your order", href: "/order-status" },
       { label: "Shipping", href: "/shipping" },
-      { label: "Returns", href: "/returns" },
+      { label: "Exchange & Resale", href: "/exchange-resale" },
       { label: "Payment options", href: "/payment-options" },
-      { label: "Certification", href: "/certification" },
-      { label: "FAQs", href: "/faqs" },
+      { label: "Privacy / Policy", href: "/privacy" },
+      { label: "Terms", href: "/terms" },
+      { label: "Account deletion", href: "/account-deletion" },
     ],
   },
-  {
-    title: "Visit & contact",
-    links: [
-      { label: "Our stores", href: "/stores" },
-      { label: "Craftsmanship", href: "/craftsmanship" },
-      { label: "About Sazuna", href: "/about" },
-      { label: "The Journal", href: "/blog" },
-    ],
-  },
-];
-
-export const LEGAL_LINKS = [
-  { label: "Privacy", href: "/privacy" },
-  { label: "Terms", href: "/terms" },
-  { label: "Account deletion", href: "/account-deletion" },
 ];

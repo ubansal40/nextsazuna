@@ -24,3 +24,4 @@ export { Textarea, type TextareaProps } from "./textarea";
 export { ToastProvider, useToast, type ToastTone } from "./toast";
 export { Toggle, type ToggleProps } from "./toggle";
 export { useDialog } from "./use-dialog";
+export { useFooterVisible } from "./use-footer-visible";

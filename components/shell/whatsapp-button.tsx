@@ -1,4 +1,6 @@
-import { Icon } from "@/components/ui";
+"use client";
+
+import { Icon, useFooterVisible } from "@/components/ui";
 
 /**
  * Floating WhatsApp pill — spec §Floating WhatsApp (SazunaHeader.dc.html:189-192).
@@ -6,8 +8,14 @@ import { Icon } from "@/components/ui";
  * Mounted once by the root layout, never per page. Green is WhatsApp's own
  * brand colour and deliberately sits outside the Ceremony palette — the point
  * of the affordance is that it is recognisably WhatsApp.
+ *
+ * It stands down once the footer is on screen. The two specs both pin content
+ * to the bottom-right — this pill and the footer's payment marks — so without
+ * that rule the pill covers them for as long as the reader is in the footer.
  */
 export function WhatsAppButton({ href }: { href: string }) {
+  if (useFooterVisible()) return null;
+
   return (
     <a
       href={href}
