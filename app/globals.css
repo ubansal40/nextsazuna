@@ -238,6 +238,25 @@
 }
 
 /* ----------------------------------------------------------------------------
+ * CHECKOUT TOKENS — Sazuna Checkout.dc.html
+ * ------------------------------------------------------------------------- */
+:root {
+  --sz-checkout-summary: 400px;
+  --sz-checkout-header-h: 64px;
+  --sz-logo-h-checkout: 28px;
+  --sz-field-h: 48px;
+  --sz-error-border: #D98A86;
+  --sz-radio-outer: 20px;
+  --sz-radio-inner: 10px;
+  --sz-summary-thumb-w: 58px;
+  --sz-summary-thumb-h: 72px;
+}
+
+@custom-variant checkout-stacked (@media (width < 900px));
+@custom-variant checkout-split (@media (width >= 900px));
+@custom-variant checkout-narrow (@media (width < 600px));
+
+/* ----------------------------------------------------------------------------
  * CART TOKENS — Sazuna Cart.dc.html
  * ------------------------------------------------------------------------- */
 :root {
@@ -427,6 +446,7 @@
   --color-whatsapp-hover: var(--sz-whatsapp-hover);
 
   --color-success-border: var(--sz-success-border);
+  --color-error-border: var(--sz-error-border);
   --color-hero-body: var(--sz-hero-body);
   --color-quote-mark: var(--sz-quote-mark);
 

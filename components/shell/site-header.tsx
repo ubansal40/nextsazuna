@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { ADD_TO_BAG_EVENT, type AddToBagDetail } from "@/lib/cart-events";
@@ -60,6 +61,7 @@ export function SiteHeader({
   const [accountOpen, setAccountOpen] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
   const accountRef = useRef<HTMLDivElement>(null);
+  const checkout = usePathname()?.startsWith("/checkout") ?? false;
 
   /**
    * Publish the header's real height as `--sz-header-h`.
@@ -186,6 +188,36 @@ export function SiteHeader({
   function openMega(category: NavCategory) {
     setMega(category);
     setAccountOpen(false);
+  }
+
+  /**
+   * Checkout gets a stripped header — spec Sazuna Checkout.dc.html:60-66.
+   *
+   * No nav, no search, no bag: once someone is paying, every other link is an
+   * exit. Still the shared component rather than a second header, so the logo,
+   * the surface and the sticky behaviour cannot drift apart.
+   */
+  if (checkout) {
+    return (
+      <header className="sticky top-0 z-[60] border-b border-line bg-[var(--sz-header-bg)] backdrop-blur-[var(--sz-header-blur)]">
+        <div className="mx-auto flex h-[var(--sz-checkout-header-h)] max-w-[var(--sz-container)] items-center justify-between gap-4 px-10 checkout-narrow:px-[18px]">
+          <Link href="/" aria-label="Sazuna Jewellers — home" className="inline-flex shrink-0">
+            <Image
+              src="/sazuna-logo.webp"
+              alt="Sazuna Jewellers"
+              width={1130}
+              height={240}
+              priority
+              className="block h-[var(--sz-logo-h-checkout)] w-auto"
+            />
+          </Link>
+          <span className="inline-flex items-center gap-2 text-trust font-semibold text-muted">
+            <Icon name="lock" size={15} strokeWidth={1.7} className="text-primary-700" />
+            Secure checkout
+          </span>
+        </div>
+      </header>
+    );
   }
 
   return (

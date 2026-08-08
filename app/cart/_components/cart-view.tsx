@@ -74,6 +74,33 @@ export function CartView({
 
   useEffect(refresh, [refresh]);
 
+  // Carried to checkout, which reads the same key — otherwise the choice is
+  // silently dropped at the moment it would be charged for.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("sazuna:gift-wrap", giftWrap ? "1" : "0");
+    } catch {
+      // Not worth failing the bag over.
+    }
+  }, [giftWrap]);
+
+  // Deferred: the first render also happens on the server, where storage does
+  // not exist, so reading it synchronously would be a hydration mismatch.
+  useEffect(() => {
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (!active) return;
+      try {
+        setGiftWrap(window.localStorage.getItem("sazuna:gift-wrap") === "1");
+      } catch {
+        // Ignore.
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Another tab, or the header's own add-to-bag, changed the contents.
   useEffect(() => onCartChanged(refresh), [refresh]);
 
