@@ -474,6 +474,7 @@
  * 3-up feature grid to two columns at 600. */
 @custom-variant policy-stacked (@media (width < 860px));
 @custom-variant policy-split (@media (width >= 860px));
+@custom-variant policy-narrow (@media (width < 600px));
 @custom-variant story-stacked (@media (width < 900px));
 @custom-variant story-narrow (@media (width < 600px));
 

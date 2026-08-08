@@ -18,22 +18,40 @@ import { cn } from "@/lib/cn";
  * The measure is the variant: `policy` runs the spec's 760px column, `story`
  * the narrower 720px that --sz-container-narrow already names.
  */
+/**
+ * Every rule below is scoped with `:not([class])`, so Prose styles exactly the
+ * elements that do not style themselves.
+ *
+ * Without it a descendant rule (`.prose p`, specificity 0,1,1) silently beats a
+ * utility on the element itself (`.text-sm`, 0,1,0) — so a callout's smaller
+ * paragraph would render at body size and no amount of class-shuffling at the
+ * call site would fix it. This inverts that: bare markup gets the prose
+ * treatment, anything carrying its own classes is left alone.
+ */
 const prose = cva(
   cn(
-    "[&_p]:m-0 [&_p]:text-base [&_p]:leading-prose [&_p]:text-body [&_p]:[text-wrap:pretty]",
-    "[&_p+p]:mt-[var(--sz-prose-gap)]",
+    "[&_p:not([class])]:m-0 [&_p:not([class])]:mb-[var(--sz-prose-gap)]",
+    "[&_p:not([class])]:text-base [&_p:not([class])]:leading-prose",
+    "[&_p:not([class])]:text-body [&_p:not([class])]:[text-wrap:pretty]",
+    // Headings space themselves off what precedes them rather than resetting a
+    // top margin on the first child. `* + h2` simply never matches the opening
+    // heading, so it needs no override — and an override would lose anyway,
+    // since a descendant rule out-specifies a first-child one.
+    "[&_*+h2:not([class])]:mt-[var(--sz-prose-section-gap)]",
+    "[&_*+h3:not([class])]:mt-[22px]",
     // The display face and heading colour come from the base layer; only the
     // size, weight and rhythm are the content pages' own.
-    "[&_h2]:mt-[var(--sz-prose-section-gap)] [&_h2]:mb-3 [&_h2]:text-content-h2 [&_h2]:font-medium",
-    // Anchors are offset past the sticky header, which measures its own height.
-    "[&_h2]:scroll-mt-[var(--sz-anchor-offset)]",
-    "[&_h3]:mt-[22px] [&_h3]:mb-2 [&_h3]:font-[family-name:var(--sz-font-ui)] [&_h3]:text-base [&_h3]:font-semibold",
-    "[&_ul]:m-0 [&_ul]:mb-4 [&_ul]:ps-[var(--sz-prose-indent)] [&_ul]:text-base [&_ul]:leading-relaxed [&_ul]:text-body",
-    "[&_li]:mb-[var(--sz-prose-gap-tight)]",
+    "[&_h2:not([class])]:mb-3 [&_h2:not([class])]:text-content-h2 [&_h2:not([class])]:font-medium",
+    // Anchors clear the sticky header, which measures its own height.
+    "[&_h2:not([class])]:scroll-mt-[var(--sz-anchor-offset)]",
+    "[&_h3:not([class])]:mb-2 [&_h3:not([class])]:text-base",
+    "[&_h3:not([class])]:font-[family-name:var(--sz-font-ui)] [&_h3:not([class])]:font-semibold",
+    // Preflight resets list-style, so the marker has to be asked for back.
+    "[&_ul:not([class])]:list-disc",
+    "[&_ul:not([class])]:m-0 [&_ul:not([class])]:mb-4 [&_ul:not([class])]:text-base",
+    "[&_ul:not([class])]:ps-[var(--sz-prose-indent)] [&_ul:not([class])]:leading-relaxed",
+    "[&_ul:not([class])]:text-body [&_li:not([class])]:mb-[var(--sz-prose-gap-tight)]",
     "[&_strong]:font-semibold [&_strong]:text-heading",
-    // The first child never leads with its own top margin — the page header
-    // above it already owns that spacing.
-    "[&>*:first-child]:mt-0",
   ),
   {
     variants: {
@@ -58,23 +76,30 @@ export function Prose({ children, measure, className }: ProseProps) {
 }
 
 export interface ProseTableProps {
-  /** Two column headings. The spec's table is always two columns. */
-  head: readonly [string, string];
-  rows: readonly (readonly [string, string])[];
+  head: readonly ReactNode[];
+  rows: readonly (readonly ReactNode[])[];
   className?: string;
 }
 
 /**
- * ProseTable — the two-column comparison table in Sazuna Policy.dc.html.
+ * ProseTable — the comparison table in Sazuna Policy.dc.html.
  *
  * A real <table>, not the spec's nested grid divs: the shipping and buyback
- * tables are tabular data, and a screen reader should be able to say "row 2,
- * Silver, 60%" rather than reading twelve unrelated cells in a line.
+ * tables are tabular data, and a screen reader should be able to announce "row
+ * 2, Silver, 60% credit" rather than reading nine unrelated cells in a line.
  *
- * The right column is mono and tabular-nums because it always carries a figure
- * — a percentage, a duration, a price band.
+ * Columns are open-ended. The spec draws two because its demo data had two, but
+ * shipping's real table is Region / Cut-off / Arrives. The last column keeps the
+ * spec's mono treatment — across every table on the site it is the one carrying
+ * the value, whether that is a percentage, a duration or a price band.
+ *
+ * The wrapper scrolls rather than the page: three columns of Nepali province
+ * names do not fit 375px, and a horizontally scrolling body would take the
+ * header and footer with it.
  */
 export function ProseTable({ head, rows, className }: ProseTableProps) {
+  const last = head.length - 1;
+
   return (
     <div
       className={cn(
@@ -84,22 +109,37 @@ export function ProseTable({ head, rows, className }: ProseTableProps) {
     >
       <table className="w-full border-collapse text-left">
         <thead>
-          <tr className="bg-surface text-xs font-semibold text-muted">
-            <th scope="col" className="px-3.5 py-2.5 font-semibold">
-              {head[0]}
-            </th>
-            <th scope="col" className="border-l border-line px-3.5 py-2.5 font-semibold">
-              {head[1]}
-            </th>
+          <tr className="bg-surface text-xs text-muted">
+            {head.map((cell, column) => (
+              <th
+                key={column}
+                scope="col"
+                className={cn(
+                  "px-3.5 py-2.5 font-semibold",
+                  column > 0 && "border-l border-line",
+                )}
+              >
+                {cell}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map(([left, right]) => (
-            <tr key={left} className="border-t border-line-soft text-sm">
-              <td className="px-3.5 py-2.5 text-body">{left}</td>
-              <td className="border-l border-line-soft px-3.5 py-2.5 font-mono text-[length:var(--sz-text-spec-key)] text-body tabular-nums">
-                {right}
-              </td>
+          {rows.map((row, index) => (
+            <tr key={index} className="border-t border-line-soft text-sm">
+              {row.map((cell, column) => (
+                <td
+                  key={column}
+                  className={cn(
+                    "px-3.5 py-2.5 text-body",
+                    column > 0 && "border-l border-line-soft",
+                    column === last &&
+                      "font-mono text-[length:var(--sz-text-spec-key)] tabular-nums",
+                  )}
+                >
+                  {cell}
+                </td>
+              ))}
             </tr>
           ))}
         </tbody>
