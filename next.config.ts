@@ -23,6 +23,24 @@ const nextConfig: NextConfig = {
       })),
       // The old app tracked orders in a second view of the receipt page.
       { source: "/order-success.html", destination: "/order-status", permanent: true },
+
+      /**
+       * Journal posts. The slug pattern is explicit because a bare `:slug`
+       * matches dots too, so it would swallow the `.html` and never match.
+       */
+      {
+        source: "/blog/:slug([a-z0-9-]+).html",
+        destination: "/blog/:slug",
+        permanent: true,
+      },
+      // The pre-clean-URL post page, which carried its slug in the query.
+      {
+        source: "/blog-post.html",
+        has: [{ type: "query", key: "slug", value: "(?<slug>[a-z0-9-]+)" }],
+        destination: "/blog/:slug",
+        permanent: true,
+      },
+      { source: "/blog-post.html", destination: "/blog", permanent: true },
     ];
   },
 

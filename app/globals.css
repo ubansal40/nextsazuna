@@ -492,6 +492,14 @@
 @custom-variant account-stacked (@media (width < 900px));
 @custom-variant account-split (@media (width >= 900px));
 
+/* The Journal — Sazuna Journal.dc.html. The card grid steps 3 → 2 → 1, the
+ * featured card and the article's table-of-contents rail collapse at 980, and
+ * the gutter narrows at 760. */
+@custom-variant journal-stacked (@media (width < 980px));
+@custom-variant journal-split (@media (width >= 980px));
+@custom-variant journal-narrow (@media (width < 760px));
+@custom-variant journal-single (@media (width < 640px));
+
 /* ----------------------------------------------------------------------------
  * TAILWIND THEME BRIDGE
  * `inline` emits utilities that reference the custom properties above rather

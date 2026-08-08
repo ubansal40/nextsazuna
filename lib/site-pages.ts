@@ -28,6 +28,7 @@ export const CONTENT_ROUTES: ContentRoute[] = [
   { path: "/exchange-resale", indexable: true, changeFrequency: "monthly", priority: 0.5, legacy: "/returns.html" },
   { path: "/payment-options", indexable: true, changeFrequency: "monthly", priority: 0.5, legacy: "/payment-options.html" },
   { path: "/order-status", indexable: true, changeFrequency: "monthly", priority: 0.5 },
+  { path: "/blog", indexable: true, changeFrequency: "monthly", priority: 0.6, legacy: "/blog.html" },
 
   /**
    * Noindexed, carried over from the Express storefront, and therefore absent
