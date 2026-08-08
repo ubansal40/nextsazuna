@@ -37,3 +37,6 @@ yarn-error.log*
 
 # vercel
 .vercel
+
+# Product image uploads (dev writes here; prod uses PRODUCT_IMAGE_UPLOAD_DIR)
+/public/uploads/

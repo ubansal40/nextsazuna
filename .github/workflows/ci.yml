@@ -63,6 +63,12 @@ jobs:
       - name: Journal renderer checks
         run: npm run check:blog
 
+      # Runs the real sharp pipeline on a generated image and asserts the output
+      # is a 1000×1000 AVIF — the product image handling must match the reference,
+      # and the output is a binary no reviewer reads by eye.
+      - name: Product image pipeline checks
+        run: npm run check:images
+
       - name: Typecheck
         run: npm run typecheck
 
