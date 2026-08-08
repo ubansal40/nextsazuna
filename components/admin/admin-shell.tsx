@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Icon, type IconName } from "@/components/ui";
+import { Icon, ToastProvider, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { sectionTitle, type VisibleNav } from "@/lib/admin/nav";
 import { adminSignOut } from "@/app/(admin)/admin/_actions";
@@ -59,6 +59,7 @@ export function AdminShell({ admin, nav, environment, children }: AdminShellProp
   const avatarInitial = (admin.name?.trim() || admin.email).charAt(0).toUpperCase();
 
   return (
+    <ToastProvider>
     <div className="min-h-dvh bg-admin-canvas lg:grid lg:grid-cols-[var(--sz-admin-side-w)_minmax(0,1fr)]">
       {mobileOpen && (
         <button
@@ -193,6 +194,7 @@ export function AdminShell({ admin, nav, environment, children }: AdminShellProp
         <div className="flex-1 px-4 py-[18px] pb-14 sm:px-[18px]">{children}</div>
       </div>
     </div>
+    </ToastProvider>
   );
 }
 
