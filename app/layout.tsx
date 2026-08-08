@@ -2,10 +2,18 @@ import type { Metadata } from "next";
 import { fontVariables } from "@/lib/fonts";
 import { getAnnouncementBar, getWhatsAppHref } from "@/lib/content";
 import { SiteFooter, SiteHeader, WhatsAppButton } from "@/components/shell";
+import { SiteSchema } from "@/components/shell/site-schema";
+import { staticOrigin } from "@/lib/site-url";
 import { ToastProvider } from "@/components/ui";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  /**
+   * Every page sets a relative `alternates.canonical`. Without a base, Next
+   * emits them relative and logs a warning; with one, they resolve to absolute
+   * URLs, which is what a canonical has to be to mean anything.
+   */
+  metadataBase: new URL(staticOrigin()),
   title: {
     default: "Sazuna Jewellers",
     template: "%s · Sazuna Jewellers",
@@ -38,6 +46,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </a>
           <SiteHeader announcement={announcement} whatsappHref={whatsappHref} />
           <main id="main">{children}</main>
+          {/* Site-wide, because /about and /stores reference these nodes by @id. */}
+          <SiteSchema origin={staticOrigin()} />
           <SiteFooter />
           {whatsappHref && <WhatsAppButton href={whatsappHref} />}
         </ToastProvider>

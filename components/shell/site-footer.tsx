@@ -50,7 +50,13 @@ export async function SiteFooter() {
   return (
     <footer className="bg-footer-bg text-footer-text">
       <div className="mx-auto max-w-[var(--sz-container)] px-10 pt-14 footer-stacked:px-5">
-        <div className="grid grid-cols-[1.6fr_1fr_1fr_1.4fr] gap-10 footer-stacked:grid-cols-1 footer-stacked:gap-7">
+        {/* Brand, then one track per FOOTER_SECTIONS, then contact. Derived
+            rather than hardcoded, so adding or removing a link column does not
+            silently leave the grid a column short. */}
+        <div
+          className="grid gap-10 footer-stacked:grid-cols-1 footer-stacked:gap-7"
+          style={{ gridTemplateColumns: `1.6fr repeat(${FOOTER_SECTIONS.length}, 1fr) 1.4fr` }}
+        >
           <div>
             <Image
               src="/sazuna-logo.webp"

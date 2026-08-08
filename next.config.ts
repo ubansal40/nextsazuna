@@ -1,7 +1,31 @@
 import path from "node:path";
 import type { NextConfig } from "next";
+import { CONTENT_ROUTES } from "./lib/site-pages";
 
 const nextConfig: NextConfig = {
+  /**
+   * Legacy `.html` URLs.
+   *
+   * Every content page on the Express storefront ended in `.html`, and those
+   * URLs are in the live sitemap, in WhatsApp threads and on printed invoices.
+   * Permanent redirects so none of it dead-ends at cutover.
+   *
+   * /returns.html moves to /exchange-resale rather than /returns: the promise
+   * is a lifetime exchange and a buyback rate, not a return window, and the
+   * footer has always named it that way.
+   */
+  async redirects() {
+    return [
+      ...CONTENT_ROUTES.filter((route) => route.legacy).map((route) => ({
+        source: route.legacy!,
+        destination: route.path,
+        permanent: true,
+      })),
+      // The old app tracked orders in a second view of the receipt page.
+      { source: "/order-success.html", destination: "/order-status", permanent: true },
+    ];
+  },
+
   /**
    * Pin the workspace root. Without this, Turbopack walks up looking for a
    * lockfile and can latch onto an unrelated one outside the repository.

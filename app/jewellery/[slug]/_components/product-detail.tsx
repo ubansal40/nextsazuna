@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { Accordion, Icon } from "@/components/ui";
+import { staticOrigin } from "@/lib/site-url";
 import { getRelatedProducts, type ProductDetail } from "@/lib/catalog";
 import { getWhatsAppHref } from "@/lib/content";
 import { formatCarats, formatWeight } from "@/lib/format";
@@ -20,7 +21,15 @@ import { TrustPanels } from "./trust-panels";
  * the structured data — is rendered on the server.
  */
 
-const CANONICAL_ORIGIN = "https://next.sazunajewellers.com";
+/**
+ * The origin the product's structured data and WhatsApp link are built from.
+ *
+ * Was a second hardcoded copy of the site URL; now the same source as
+ * `metadataBase`, the sitemap and robots.txt, so a domain change is one edit.
+ * Deliberately the request-free variant — this renders inside a Server
+ * Component tree that must not become dynamic for a canonical.
+ */
+const CANONICAL_ORIGIN = staticOrigin();
 
 /**
  * Policy copy, identical on every product. It belongs to the brand rather than

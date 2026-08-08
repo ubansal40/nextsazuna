@@ -82,9 +82,23 @@ export interface NavSection {
 /**
  * Footer link columns — SazunaFooter.dc.html.
  *
- * Two columns only; the spec's fourth is the contact block, which is content
- * rather than links. The legal links live in Help, where the spec puts them,
- * rather than in a separate strip.
+ * The spec's fourth column is the contact block, which is content rather than
+ * links. The legal links live in Help, where the spec puts them, rather than in
+ * a separate strip.
+ *
+ * THE COMPANY COLUMN IS A DELIBERATE DEPARTURE FROM THE SPEC.
+ *
+ * SazunaFooter.dc.html draws exactly two link columns, Shop and Help, and the
+ * seven Help entries below are its list verbatim. It has no slot at all for
+ * about, craftsmanship, certification, stores or FAQs — so with the spec
+ * followed literally, five real pages have no entry point anywhere on the site.
+ *
+ * The Express storefront grouped precisely these under "Company"
+ * (public/assets/sazuna-chrome.js), and the migration rule is design from the
+ * spec, information architecture from the old project. The spec was drawn
+ * before those pages existed to link. If this column is unwanted, delete it
+ * here and narrow the grid in components/shell/site-footer.tsx — the two go
+ * together.
  */
 export const FOOTER_SECTIONS: NavSection[] = [
   {
@@ -97,6 +111,16 @@ export const FOOTER_SECTIONS: NavSection[] = [
       { label: "Pendants", href: jewelleryUrl("diamond-pendant") },
       { label: "Bridal Necklace", href: jewelleryUrl("diamond-wedding-necklace") },
       { label: "Bangles & Bracelets", href: jewelleryUrl("diamond-bangles") },
+    ],
+  },
+  {
+    title: "Company",
+    links: [
+      { label: "Our story", href: "/about" },
+      { label: "Craftsmanship", href: "/craftsmanship" },
+      { label: "Certification", href: "/certification" },
+      { label: "Visit us", href: "/stores" },
+      { label: "FAQs", href: "/faqs" },
     ],
   },
   {
