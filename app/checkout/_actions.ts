@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { priceCart } from "@/lib/cart";
 import { MAX_QUANTITY, type CartEntry } from "@/lib/cart-storage";
 import { createOrder, generateOrderNumber } from "@/lib/orders";
@@ -153,6 +154,25 @@ function validPhone(phone: string): boolean {
   return phone.replace(/\D/g, "").length >= 7;
 }
 
+/**
+ * The absolute origin a gateway should send the customer back to.
+ *
+ * `SAZUNA_SITE_URL` wins, because behind Cloudflare and LiteSpeed the host we
+ * see is not always the one the customer typed. Falling back to the request's
+ * own headers matters more than it looks: without it an unset variable sends
+ * the return URLs to localhost, and a customer who has paid is redirected
+ * nowhere while the order stays unsettled.
+ */
+async function siteOrigin(): Promise<string> {
+  const configured = process.env.SAZUNA_SITE_URL?.trim();
+  if (configured) return configured.replace(/\/+$/, "");
+
+  const incoming = await headers();
+  const host = incoming.get("x-forwarded-host") ?? incoming.get("host");
+  const protocol = incoming.get("x-forwarded-proto") ?? "https";
+  return host ? `${protocol}://${host}` : "http://localhost:3200";
+}
+
 export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResult> {
   const name = (input.name ?? "").trim();
   const address = (input.address ?? "").trim();
@@ -201,7 +221,7 @@ export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResu
       return { ok: true, kind: "placed", orderNumber };
     }
 
-    const origin = process.env.SAZUNA_SITE_URL ?? "http://localhost:3200";
+    const origin = await siteOrigin();
 
     if (methodCode === "esewa") {
       const form = await buildEsewaForm({
