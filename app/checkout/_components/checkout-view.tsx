@@ -16,6 +16,7 @@ const DRAFT_KEY = "sazuna:checkout-draft";
 const METHOD_ICON: Record<string, IconName> = {
   cod: "card",
   esewa: "wallet",
+  khalti: "receipt",
   cybersource: "card",
 };
 
@@ -168,6 +169,14 @@ export function CheckoutView({
     }
 
     setFlow("redirecting");
+
+    // Khalti prepares its own payment page server-side, so there is nothing to
+    // post — just go there.
+    if (result.kind === "navigate") {
+      window.location.assign(result.url);
+      return;
+    }
+
     setRedirect({ action: result.action, fields: result.fields });
   }
 

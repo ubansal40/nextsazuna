@@ -74,7 +74,8 @@ export async function createOrder(input: {
   customer: OrderCustomer;
   lines: CartLine[];
   totals: OrderTotals;
-  paymentMethod: "cod" | "esewa" | "cybersource";
+  /** Must be a value the `orders.payment_method` enum accepts. */
+  paymentMethod: "cod" | "esewa" | "khalti" | "cybersource";
 }): Promise<CreatedOrder> {
   if (!input.lines.length) throw new Error("Cannot create an order with no lines");
 

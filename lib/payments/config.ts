@@ -19,7 +19,7 @@ import { getContentBlock } from "../content";
  */
 
 /** Methods this build can actually complete a payment with. */
-export const IMPLEMENTED = ["cod", "esewa", "cybersource"] as const;
+export const IMPLEMENTED = ["cod", "esewa", "khalti", "cybersource"] as const;
 export type MethodCode = (typeof IMPLEMENTED)[number];
 
 /** What the checkout page is allowed to know about a method. */
@@ -52,6 +52,7 @@ interface RawMethod {
 const TAG: Record<MethodCode, string> = {
   cod: "COD",
   esewa: "eSewa",
+  khalti: "Khalti",
   cybersource: "+3%",
 };
 

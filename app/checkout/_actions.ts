@@ -8,6 +8,7 @@ import { createOrder, generateOrderNumber } from "@/lib/orders";
 import { listCheckoutMethods, type CheckoutMethod, type MethodCode } from "@/lib/payments/config";
 import { buildEsewaForm } from "@/lib/payments/esewa";
 import { buildCardForm } from "@/lib/payments/cybersource";
+import { initiateKhaltiPayment } from "@/lib/payments/khalti";
 import { formatPrice } from "@/lib/format";
 
 /**
@@ -147,6 +148,7 @@ export interface PlaceOrderInput {
 
 export type PlaceOrderResult =
   | { ok: true; kind: "placed"; orderNumber: string; token: string }
+  /** Auto-submitting form post — eSewa and CyberSource. */
   | {
       ok: true;
       kind: "redirect";
@@ -155,6 +157,8 @@ export type PlaceOrderResult =
       action: string;
       fields: Record<string, string>;
     }
+  /** Plain navigation — Khalti hands back a URL it has already prepared. */
+  | { ok: true; kind: "navigate"; orderNumber: string; token: string; url: string }
   | { ok: false; error: "empty" | "invalid" | "unavailable" | "failed" };
 
 /** Enough to reach someone about a delivery, not a format police. */
@@ -226,6 +230,17 @@ export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResu
         failureUrl: `${origin}/api/payments/esewa/failure?${back}`,
       });
       return { ok: true, kind: "redirect", orderNumber, token, ...form };
+    }
+
+    if (methodCode === "khalti") {
+      const session = await initiateKhaltiPayment({
+        orderNumber,
+        totalMinor: priced.totalMinor,
+        returnUrl: `${origin}/api/payments/khalti/callback?${back}`,
+        websiteUrl: origin,
+        customer: { name, email, phone },
+      });
+      return { ok: true, kind: "navigate", orderNumber, token, url: session.paymentUrl };
     }
 
     const form = await buildCardForm({
