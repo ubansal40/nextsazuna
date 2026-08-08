@@ -1,3 +1,5 @@
+import type { IconName } from "@/components/ui";
+
 /**
  * Content page shapes — Sazuna Policy.dc.html and Sazuna Story.dc.html.
  *
@@ -40,7 +42,12 @@ export type PolicyBlock =
   /** Full-width pull quote. Used once, on the buyback promise. */
   | { type: "quote"; text: InlineText }
   /** Small print under a table: tax treatment, how a rate is calculated. */
-  | { type: "note"; text: InlineText };
+  | { type: "note"; text: InlineText }
+  /**
+   * A short run of disclosures inside a prose page — certification closes with
+   * a two-question "Quick FAQ". Rendered with the same card accordion as /faqs.
+   */
+  | { type: "faq"; items: FaqItem[] };
 
 export interface PolicySection {
   /** Anchor id. Load-bearing: the table of contents and deep links use it. */
@@ -66,6 +73,70 @@ export interface PolicyPage {
   updated: string;
   sections: PolicySection[];
   cta: ContentCta;
+}
+
+/** A link out of a story page, as a button or a card action. */
+export interface ContentAction {
+  label: string;
+  href: string;
+}
+
+export interface FeatureCard {
+  /** An icon from the system set, or a short mono badge like "925" / "SGL". */
+  icon?: IconName;
+  badge?: string;
+  title: string;
+  body: InlineText;
+  action?: ContentAction;
+}
+
+/**
+ * Sazuna Story.dc.html's block union, as the real copy needs it.
+ *
+ * Two of the spec's blocks are absent. `gallery` and the hero image have
+ * nowhere to draw from — the Express pages carry no photography at all, and a
+ * comment in about.html records that the stock imagery was deliberately deleted
+ * rather than left in with invented alt text. `stats` is absent because the
+ * spec's row ("20+ years on New Road", "12k+ families served") is demo data
+ * that appears nowhere in the source, and those are claims about the business.
+ *
+ * `links` is the addition: about closes with a row of pointers to
+ * craftsmanship, the store and the catalog, which is a lighter thing than the
+ * spec's single full-width closing panel.
+ */
+export type StoryBlock =
+  | {
+      type: "imageText";
+      eyebrow?: string;
+      heading: string;
+      body: InlineText[];
+      /** Mirrors the column order. The spec alternates sides down the page. */
+      reverse?: boolean;
+    }
+  | { type: "statement"; quote: string; attribution?: string }
+  | {
+      type: "features";
+      eyebrow?: string;
+      heading?: string;
+      cards: FeatureCard[];
+    }
+  | { type: "links"; cards: { heading: string; body: InlineText; action: ContentAction }[] }
+  | { type: "cta"; heading: string; body?: InlineText; action: ContentAction }
+  | {
+      type: "store";
+      name: string;
+      /** One line per row. Kept whole rather than split into street/city. */
+      address: string[];
+      hours: string[];
+      phone: string;
+      directionsHref: string;
+      mapEmbedSrc: string;
+      mapTitle: string;
+    };
+
+export interface StoryPage {
+  hero: { eyebrow: string; title: string; intro: InlineText };
+  blocks: StoryBlock[];
 }
 
 export interface FaqItem {

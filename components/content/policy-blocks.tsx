@@ -1,4 +1,4 @@
-import { Icon, ProseTable } from "@/components/ui";
+import { Accordion, Icon, ProseTable } from "@/components/ui";
 import type { PolicyBlock } from "@/lib/content-pages/types";
 import { renderInline } from "./inline";
 
@@ -87,6 +87,20 @@ export function PolicyBlocks({ blocks }: { blocks: PolicyBlock[] }) {
               <p key={index} className="text-trust leading-relaxed text-muted">
                 {renderInline(block.text)}
               </p>
+            );
+
+          case "faq":
+            return (
+              <Accordion
+                key={index}
+                variant="card"
+                className="my-4"
+                items={block.items.map((item) => ({
+                  id: item.id,
+                  question: item.question,
+                  answer: <p className="m-0 max-w-[64ch]">{renderInline(item.answer)}</p>,
+                }))}
+              />
             );
         }
       })}

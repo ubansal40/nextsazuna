@@ -543,7 +543,9 @@
   --color-control-border: var(--sz-control-border);
   --color-control-ring: var(--sz-control-ring);
   --color-price-struck: var(--sz-price-struck);
-  --color-content-lead: var(--sz-content-lead);
+  /* `lead`, not `content-lead`: --text-content-lead already claims that name in
+   * the `text-` namespace as a size, and one utility cannot mean both. */
+  --color-lead: var(--sz-content-lead);
   --color-content-dashed: var(--sz-content-dashed);
   --color-danger-hover: var(--sz-danger-hover);
   --color-metal-yellow: var(--sz-metal-yellow);
