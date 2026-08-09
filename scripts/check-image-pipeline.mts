@@ -16,7 +16,7 @@
  *
  * Run: npx tsx scripts/check-image-pipeline.mts
  */
-import sharp from "sharp";
+import sharp, { type Sharp } from "sharp";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -38,6 +38,7 @@ const {
   storeProductImage,
   storeSquareImage,
   normaliseSku,
+  sniffImageFormat,
   pathForUrl,
   finalUrl,
   PermanentImageError,
@@ -60,6 +61,10 @@ const source = await sharp({
 })
   .png()
   .toBuffer();
+
+/** A tiny image in whatever format the caller asks for. */
+const make = async (fn: (s: Sharp) => Sharp): Promise<Buffer> =>
+  fn(sharp({ create: { width: 40, height: 40, channels: 3, background: { r: 200, g: 150, b: 90 } } })).toBuffer();
 
 const output = await processProductImage(source, "SAZ-RING-001");
 const meta = await sharp(output).metadata();
@@ -153,22 +158,69 @@ checks.push(
 
 /* --- refusals -------------------------------------------------------------- */
 
-const refuses = async (input: Buffer): Promise<boolean> => {
+/** The refusal message, or null when the input was accepted. */
+const refusal = async (input: Buffer): Promise<string | null> => {
   try {
     await processProductImage(input, "SAZ-X");
-    return false;
+    return null;
   } catch (error) {
     // Permanent, not transient: the upload route answers 400 on this class and
     // asks the operator to fix the file. Getting the type wrong turns a bad
     // upload into "please try again", forever.
-    return error instanceof PermanentImageError;
+    if (!(error instanceof PermanentImageError)) return `WRONG TYPE: ${String(error)}`;
+    return error.message;
   }
 };
 
+const emptyMsg = await refusal(Buffer.alloc(0));
+const htmlMsg = await refusal(Buffer.from("<!doctype html><html>404 Not Found</html>"));
+const textMsg = await refusal(Buffer.from("this is not an image at all, not even slightly"));
+// A real JPEG header with the rest of the file lopped off — a format we DO
+// read, so the advice must be "re-save it", not "convert it".
+const truncated = Buffer.concat([(await make((s) => s.jpeg())).subarray(0, 40)]);
+const truncatedMsg = await refusal(truncated);
+
 checks.push(
-  ["an empty buffer is refused permanently", await refuses(Buffer.alloc(0))],
-  ["an HTML error page is refused permanently", await refuses(Buffer.from("<!doctype html><html>404</html>"))],
-  ["a text file is refused permanently", await refuses(Buffer.from("this is not an image at all"))],
+  ["an empty buffer is refused permanently", emptyMsg !== null && !emptyMsg.startsWith("WRONG TYPE")],
+  ["an HTML error page is named as a web page", htmlMsg?.includes("web page") === true],
+  ["an unrecognised file suggests real formats", textMsg?.includes("JPEG") === true],
+  [
+    "a damaged JPEG is called damaged, not unsupported",
+    truncatedMsg !== null && /corrupt|incomplete/i.test(truncatedMsg) && !/can't read/i.test(truncatedMsg),
+  ],
+);
+
+/* --- format coverage -------------------------------------------------------
+ * The gate is the decoder, not an allowlist in this repo — so what is asserted
+ * here is that every format libvips advertises is actually accepted end to end,
+ * and that the sniffer's names stay useful for the messages.
+ */
+for (const [name, buffer] of [
+  ["JPEG", await make((s) => s.jpeg())],
+  ["PNG", await make((s) => s.png())],
+  ["WebP", await make((s) => s.webp())],
+  ["TIFF", await make((s) => s.tiff())],
+  ["GIF", await make((s) => s.gif())],
+  ["AVIF", await make((s) => s.avif())],
+  ["SVG", Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40"/></svg>')],
+] as [string, Buffer][]) {
+  checks.push([`${name} is accepted end to end`, (await refusal(buffer)) === null]);
+}
+
+// Every ISO-BMFF brand an Apple device writes must reach the HEIC advice, not
+// a generic "unrecognised". `msf1` is an ordinary burst; it used to be refused
+// as an unknown container even where libheif could read it.
+const ftyp = (brand: string): Buffer =>
+  Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftyp"), Buffer.from(brand), Buffer.alloc(16)]);
+
+checks.push(
+  ["a heic brand is recognised", sniffImageFormat(ftyp("heic")) === "heic"],
+  ["a mif1 brand is recognised as the HEIC family", sniffImageFormat(ftyp("mif1")) === "heic"],
+  ["an msf1 burst is recognised as the HEIC family", sniffImageFormat(ftyp("msf1")) === "heic"],
+  ["an hevc brand is recognised as the HEIC family", sniffImageFormat(ftyp("hevc")) === "heic"],
+  ["an avif brand is still avif, not heic", sniffImageFormat(ftyp("avif")) === "avif"],
+  ["an ICO is named", sniffImageFormat(Buffer.concat([Buffer.from([0, 0, 1, 0]), Buffer.alloc(16)])) === "ico"],
+  ["a JPEG XL is named", sniffImageFormat(Buffer.concat([Buffer.from([0xff, 0x0a]), Buffer.alloc(16)])) === "jxl"],
 );
 
 /* --- storage --------------------------------------------------------------- */

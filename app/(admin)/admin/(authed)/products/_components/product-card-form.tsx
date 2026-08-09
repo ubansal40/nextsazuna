@@ -272,10 +272,16 @@ export function ProductCardForm({
               </button>
             )}
 
+            {/* `image/*` alone is not enough: several file pickers (Windows,
+                some Android builds) map it from the OS type registry and hide
+                .heic/.heif entirely — the format an iPhone produces by default.
+                Naming the extensions as well makes them selectable. The server
+                decides what it can actually read; this only decides what the
+                dialog is willing to show. */}
             <input
               ref={fileRef}
               type="file"
-              accept="image/*"
+              accept="image/*,.heic,.heif,.avif,.jpg,.jpeg,.png,.webp,.gif,.tif,.tiff,.bmp"
               multiple
               hidden
               onChange={(e) => {
