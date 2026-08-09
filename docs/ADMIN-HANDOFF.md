@@ -84,6 +84,32 @@ Also deferred within B: product editor **multi-card batch add + Excel autofill**
 (layers onto the existing product card), and picker **bulk-edit** of a
 multi-selection.
 
+## Storefront integration — STILL PENDING (admin changes don't reach the shop yet)
+
+The admin screens are built, but several admin changes do **not yet affect the
+customer storefront**. These are real, unbuilt wiring tasks — do them as each
+phase lands:
+
+- **Taxonomy visibility + order → filter facets.** `lib/catalog/facets.ts` still
+  builds the material/purity filter sidebar from `SELECT DISTINCT p.material /
+  p.purity` (free strings), and the category/collection facets don't filter on
+  the new `is_visible`. So hiding or reordering a material/purity/category/
+  collection in the admin has NO effect on the storefront filters yet. Switch
+  facets.ts to read the `materials`/`purities` tables (respecting `is_visible`
+  + `sort_order`) and to honour `categories.is_visible` / `collections.is_active`
+  + order. (Renames DO propagate — `renameVocab` rewrites the product strings.)
+- **Collections membership → collection pages.** The admin now stores collection
+  rules (category/tag) + a sale-price band + (deferred) manual picks. Whatever
+  the storefront uses to render a collection page must read this membership
+  (`COLLECTION_MATCH` in `lib/admin/taxonomy.ts` is the canonical rule; manual
+  picks live in `collection_products`).
+- **Configurable order statuses → customer timeline** (Phase E). `lib/order-
+  lookup.ts` buildTimeline + `/order-status` + `/account/orders/[id]` currently
+  map a hardcoded status ladder; they must read `order_statuses` (labels +
+  `customer_visible`) once 0013 lands.
+- Already fine: **multiple categories per product** is supported storefront-side
+  (no change needed).
+
 ## Migration numbering (IMPORTANT — renumbered from the plan)
 
 Taxonomy built before orders, so it took the numbers the plan reserved for
