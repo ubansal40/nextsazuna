@@ -1,5 +1,73 @@
 # Admin rebuild — session handoff (Stage 4)
 
+> ## ⚠ START HERE — open thread as of `ab68f28`
+>
+> **Phases A–H are complete and pushed.** The live blocker is product image
+> processing on Hostinger. Do these in order.
+>
+> ### 1. The image queue is built but NOT proven end to end
+>
+> `ab68f28` replaced the inline image pipeline with a port of the reference's
+> worker (`lib/admin/image-jobs.ts`, `lib/admin/image-queue.ts`, migration
+> **0016 applied**, `check:image-queue` = 51 checks in verify + CI).
+>
+> **Never run together against a live job row.** The SQL is proven in isolation
+> and the sharp pipeline by `check:images`, but the two have not met. The UI
+> (Processing poll, failure reason under the chip, "Retry photos") is
+> typechecked, never seen in a browser.
+>
+> **First action:** restart the Node app in hPanel, upload one photo on
+> `next.sazunajewellers.com`, watch it go Processing → Ready.
+>
+> ### 2. Deploy requirement — cron, or jobs strand
+>
+> There is no daemon. `drainImageJobs()` fires on save (`after()`), on the
+> products list while a row is Processing, and via
+> `POST /admin/products/image-jobs` (bearer `IMAGE_JOB_DRAIN_TOKEN`, see
+> `.env.example`). **Without a cron entry, a job stranded by a deploy waits
+> until a human opens the admin.**
+>
+> ### 3. Production facts — VERIFIED over SSH, do NOT re-investigate
+>
+> I had key-based SSH (`~/.ssh/id_ed25519_sazuna`, port 65002,
+> `u721828376@76.13.74.211`) and tested on the box itself:
+>
+> - **sharp is fine.** libvips 8.17.3; PNG/JPEG/AVIF decode; HEIF in+out true;
+>   logo loads; pango renders (36 fonts); SVG input renders.
+> - **The exact JPEG that failed decodes** (4032×3024) and **the full pipeline
+>   succeeds on it** — 58,374 bytes of AVIF.
+> - So "Input buffer contains unsupported image format" was **NOT** a codec or
+>   code fault. **Do not reinstall sharp** — an earlier diagnosis of mine said
+>   to; it was wrong.
+> - **Cause: the live process was running a STALE BUILD.** Hostinger deploys to
+>   `hbuilds/versions/<uuid>` with `current` a symlink; the process kept an old
+>   version while `current` moved. Anything written inside the app dir dies on
+>   the next deploy — which is why uploads must live in `sazuna-storage`.
+> - `PRODUCT_IMAGE_UPLOAD_DIR` **is** set correctly now; raws land in
+>   `~/domains/sazuna-storage/uploads/products/raw`.
+> - **App path:** `~/domains/next.sazunajewellers.com/hbuilds/current/nodejs`.
+>   Node is not on PATH — use `/opt/alt/alt-nodejs22/root/usr/bin/node`.
+>   Run node from inside that dir or `require("sharp")` will not resolve.
+> - **A second deploy exists at `new.sazunajewellers.com`** running the same
+>   app. `next.` is authoritative (owner confirmed). Retire `new.`.
+> - The owner was asked to rotate the SSH password (it was pasted in chat and
+>   never used by me). Confirm it was rotated.
+>
+> ### 4. Then: performance (the one unstarted item from the fix list)
+>
+> Owner had no preference; **decided approach**: cache storefront pages with
+> ~60s revalidation AND bust paths on admin writes, so the timer is a safety
+> net for any path missed. Storefront pages are all `force-dynamic` today and
+> the DB is ~320ms per round trip.
+>
+> ### 5. Unverified UI from the parallel agent work (`626e16b`)
+>
+> Five agents built these; all typecheck + lint + build, and I browser-checked
+> only customers and pricing. **Not visually verified:** the multi-card product
+> editor, bulk-edit screen, product picker, dashboard, orders mobile collapse,
+> footer at 375px, tag drag, customer phone change.
+>
+
 **Purpose.** Resume the admin build in a fresh session with zero loss. Read this
 top-to-bottom. Phases **A–H are complete**; what remains is the "Still open at
 cutover" list below. Fact as of `8a37ba6`.
