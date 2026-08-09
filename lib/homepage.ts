@@ -98,9 +98,12 @@ function str(value: unknown, fallback = ""): string {
 
 function image(value: unknown): string | null {
   const url = str(value);
-  // Only absolute URLs; a relative path here points at the Express app's own
-  // filesystem, which this deployment does not serve. See `usableImage`.
-  return /^https?:\/\//i.test(url) ? url : null;
+  // Absolute URLs (the legacy silveejewels.com photos) and app-relative
+  // `/uploads/…` paths (anything the admin pipeline wrote) are both servable.
+  // A protocol-relative `//host` is neither — it loads from another origin.
+  // Kept in step with `usableImage` in lib/catalog/products.ts.
+  if (/^https?:\/\//i.test(url)) return url;
+  return /^\/(?!\/)/.test(url) ? url : null;
 }
 
 /**

@@ -23,14 +23,33 @@ interface ImageRow extends RowDataPacket {
 /**
  * Keep only image URLs this deployment can actually serve.
  *
- * A handful of rows still hold `/uploads/...` paths pointing at the Express
- * app's own filesystem. There is no such file here, so next/image answers 400
- * and the page shows a blank frame. Dropping them instead lets the gallery fall
- * through to its "photography in progress" state, which is the truth.
+ * Two shapes are servable, and the distinction matters:
+ *
+ *   - An absolute `https://…` URL — the 2,575 legacy photos still on
+ *     silveejewels.com.
+ *   - An app-relative `/uploads/…` path — everything the admin's own image
+ *     pipeline writes, served from `PRODUCT_IMAGE_UPLOAD_DIR` (under `public/`
+ *     in development, the Hostinger storage dir behind a LiteSpeed alias in
+ *     production).
+ *
+ * This originally allowed only the first, because at the time every relative
+ * path was a stale pointer into the Express app's filesystem. That stopped
+ * being true the moment the admin could upload: a freshly uploaded product
+ * stores `/uploads/products/….avif`, and this guard was silently throwing it
+ * away, so the product looked permanently photo-less on the storefront.
+ *
+ * Anything else — a bare filename, a `data:` or `javascript:` URI, a
+ * protocol-relative `//host` — is still dropped rather than handed to
+ * next/image.
  */
 function usableImage(url: string | null | undefined): string | null {
   const value = url?.trim();
-  return value && /^https?:\/\//i.test(value) ? value : null;
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  // A single leading slash only: `//evil.com/x.png` is protocol-relative, not a
+  // local path, and would load from another origin entirely.
+  if (/^\/(?!\/)/.test(value)) return value;
+  return null;
 }
 
 const DEFAULT_PAGE_SIZE = 24;
