@@ -1,8 +1,8 @@
 # Admin rebuild — session handoff (Stage 4)
 
 **Purpose.** Resume the admin build in a fresh session with zero loss. Read this
-top-to-bottom, then continue from **§Resume here**. Everything below is fact as
-of the last commit (`1e4d317`, taxonomy complete).
+top-to-bottom. Phases **A–H are complete**; what remains is the "Still open at
+cutover" list below. Fact as of `8a37ba6`.
 
 ## TL;DR resume
 
@@ -10,15 +10,15 @@ The admin is being rebuilt in Next to the **Claude Design specs** (project
 `deea797d-e4b5-409c-b32f-f5f926846bb6`, read via the DesignSync tool). Owner
 chose **full design fidelity** — build the mocks completely, new backend
 included. Full architecture + decisions + sequence live in the plan file:
-`~/.claude/plans/twinkling-prancing-babbage.md`. **Read the plan and this file,
-then continue with Phase D → E → F → G → H.**
+`~/.claude/plans/twinkling-prancing-babbage.md`. **Read the plan and this file.**
+Every phase A–H has landed; the open items are the cutover list at the end.
 
 Design source of truth per screen: fetch the page's `.dc.html` via
 `DesignSync get_file` (projectId above) **before building it**, strip
-`<style>/<script>/<svg>` to read structure, and match it. Specs seen so far:
-`Sazuna Admin.dc.html` (shell + all shared patterns), `…Products`, `…Product
-Picker`, `…Taxonomy`. Still to read: `Sazuna Admin Orders.dc.html`,
-`Sazuna Admin Stock Management.dc.html`, `Sazuna Admin Pricing Rules.dc.html`.
+`<style>/<script>/<svg>` to read structure, and match it. All in-scope specs have now been read and built: `Sazuna Admin.dc.html`
+(shell + shared patterns), `…Products`, `…Product Picker`, `…Taxonomy`,
+`…Stock Management`, `…Orders`, `…Pricing Rules`. Unread and unbuilt, by owner
+decision: `…Coupons`, `…Loyalty`, and the Orders spec's **Order Desk (POS)**.
 
 ## What is DONE (all committed, all `npm run verify` green)
 
@@ -87,22 +87,35 @@ Picker`, `…Taxonomy`. Still to read: `Sazuna Admin Orders.dc.html`,
      atomic statement, so no partial state exists). Notify is the real gap —
      `AAKASH_SMS_TOKEN` and SMTP are unset, so it would "skip" anyway.
 
-4. **Phase F — customers CRM** (no design spec — shared data-table + profile
-   drawer; reference `admin-customers.js`). Columns Name/Phone(mono)/Email/
-   Orders/Lifetime spend/Joined; profile = contact, address, dob/anniversary,
-   sizes, loyalty ledger (read-only), notes, order history. `phone` immutable,
-   escape LIKE, gate `customers`.
-5. **Phase G — pricing-rules UI.** New migration **0014**: pricing_rules weight-
-   range columns. List (priority order, drag-reorder, condition chips, active
-   toggle, catch-all, unpriced-products nudge) + rule editor drawer (name,
-   priority, active, material/purity/category conditions, weight ranges, formula
-   with live validity via `formulaError`, Test-this-rule by SKU / manual). The
-   evaluator `lib/admin/pricing.ts` already exists. Authoring-time only. Gate
-   `products_pricing`.
-6. **Phase H — close-out.** Basic audit-log viewer; ADRs (route-group split,
-   admin session model, configurable statuses, taxonomy-as-tables); docs.
+4. ~~**Phase F — customers CRM.**~~ **DONE** (`8a37ba6`). `lib/admin/customers.ts`
+   + the screen. `phone` is immutable *structurally* — the UPDATE is built from
+   an `EDITABLE_FIELDS` whitelist that has no phone entry, so no request body
+   can reach the column. `loyalty_points` excluded for the same reason (it is a
+   balance `loyalty_ledger` reconciles to).
+   - **Lifetime spend is a DENYLIST** (excludes pending_payment, payment_failed,
+     cancelled), not the reference's allowlist of billed+completed. With
+     configurable statuses an allowlist values every newly-added status at zero.
+   - `loyalty_ledger` has **0 rows** live, so only its empty state has been seen.
+5. ~~**Phase G — pricing-rules UI.**~~ **DONE** (`14c713a`). Migration 0014 adds
+   the four weight bands; `lib/admin/pricing-rules.ts` + the screen; `check:pricing`
+   is 24 → 33 checks.
+   - **`resolveBasePrice` in `product-write.ts` must read the band columns.** It
+     originally selected only material/purity/category/formula, so bands would
+     have been silently ignored at the one moment they decide a price. If you add
+     a rule column, check that query too.
+   - Bounds are inclusive both ends; a product with NO weight does not match a
+     banded rule; a null/null pair means "ignore", not "must be zero".
+   - **3,077 of 3,078 active products match no rule** — only one rule exists, so
+     auto-pricing effectively does nothing today. Data gap, not a code gap.
+6. ~~**Phase H — close-out.**~~ **DONE** (`14c713a`). Audit viewer at
+   `/admin/audit`, owner-only via `requireOwner()` and deliberately NOT an
+   `ADMIN_SECTIONS` key — the log records what every admin did, so it must not be
+   a grant a staffer can be given. ADR 0009 (route group + session model) and
+   ADR 0010 (taxonomy and statuses as tables).
 
-Also deferred within B: product editor **multi-card batch add + Excel autofill**
+## Still open at cutover
+
+Deferred within B: product editor **multi-card batch add + Excel autofill**
 (layers onto the existing product card), and picker **bulk-edit** of a
 multi-selection.
 
