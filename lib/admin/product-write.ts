@@ -102,7 +102,28 @@ function slugify(input: string): string {
   );
 }
 
-interface RuleRow extends RowDataPacket, PricingRuleCondition {}
+/** The raw rule row: bounds arrive as DECIMAL strings (or null). */
+interface RuleRow extends RowDataPacket {
+  material: string | null;
+  purity: string | null;
+  category_id: number | null;
+  formula: string;
+  gross_weight_min: string | null;
+  gross_weight_max: string | null;
+  net_weight_min: string | null;
+  net_weight_max: string | null;
+  diamond_weight_min: string | null;
+  diamond_weight_max: string | null;
+  stone_weight_min: string | null;
+  stone_weight_max: string | null;
+}
+
+/** A DECIMAL-string bound pair as the matcher's numeric range, or null when
+ *  both sides are unset (meaning "ignore this weight"). */
+function range(min: string | null, max: string | null) {
+  if (min == null && max == null) return null;
+  return { min: min == null ? null : Number(min), max: max == null ? null : Number(max) };
+}
 interface SlugRow extends RowDataPacket {
   id: number;
 }
@@ -115,11 +136,28 @@ interface CurrentRow extends RowDataPacket {
 /** The base (MRP) price for a product from the pricing rules, clamped so it is
  *  never below the selling price. Falls back to `fallback` when no rule matches. */
 async function resolveBasePrice(input: ProductInput, fallback: string): Promise<string> {
-  const rules = await pool()
+  const rows = await pool()
     .execute<RuleRow[]>(
-      "SELECT material, purity, category_id, formula FROM pricing_rules WHERE is_active = 1 ORDER BY priority ASC, id ASC",
+      `SELECT material, purity, category_id, formula,
+              gross_weight_min, gross_weight_max, net_weight_min, net_weight_max,
+              diamond_weight_min, diamond_weight_max, stone_weight_min, stone_weight_max
+         FROM pricing_rules WHERE is_active = 1 ORDER BY priority ASC, id ASC`,
     )
-    .then(([rows]) => rows);
+    .then(([result]) => result);
+
+  // The weight ranges (migration 0014) are part of a rule's conditions, so they
+  // have to reach the matcher here too — otherwise a band set in the pricing
+  // screen would be ignored at the one moment it decides a price.
+  const rules: PricingRuleCondition[] = rows.map((row) => ({
+    material: row.material,
+    purity: row.purity,
+    category_id: row.category_id,
+    formula: row.formula,
+    gross_weight: range(row.gross_weight_min, row.gross_weight_max),
+    net_weight: range(row.net_weight_min, row.net_weight_max),
+    diamond_weight: range(row.diamond_weight_min, row.diamond_weight_max),
+    stone_weight: range(row.stone_weight_min, row.stone_weight_max),
+  }));
 
   const computed = computeRulePrice(rules, {
     material: input.material || null,

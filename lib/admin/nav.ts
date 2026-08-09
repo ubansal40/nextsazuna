@@ -18,6 +18,9 @@ export interface AdminNavItem {
   label: string;
   href: string;
   icon: IconName;
+  /** Owner-only, and deliberately not an RBAC section: the audit log records
+   *  what every admin did, so it must not be a grant a staffer can be given. */
+  ownerOnly?: boolean;
 }
 
 /** A collapsible sub-tree in the sidebar (the spec's Products / Taxonomy). */
@@ -71,12 +74,19 @@ export const ADMIN_NAV = {
         { section: "customers", label: "Customers", href: "/admin/customers", icon: "users" },
       ],
     },
+    {
+      label: "System",
+      items: [
+        { section: null, ownerOnly: true, label: "Audit log", href: "/admin/audit", icon: "shield" },
+      ],
+    },
   ] satisfies AdminNavGroup[],
   storefront: { section: null, label: "View storefront", href: "/", icon: "exit" } satisfies AdminNavItem,
 };
 
 /** Can this admin see this item? Null section = always. */
 function canSee(admin: Pick<AdminContext, "isOwner" | "sections">, item: AdminNavItem): boolean {
+  if (item.ownerOnly) return admin.isOwner;
   return item.section === null || authorizeSection(admin, item.section);
 }
 

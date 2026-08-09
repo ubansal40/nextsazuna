@@ -87,6 +87,71 @@ checks.push(
   ["computeRulePrice is null when no rule matches", computeRulePrice([], { material: "Gold", purity: null, categoryIds: [], net_weight: 3 }) === null],
 );
 
+
+/* --- weight ranges (migration 0014) ---------------------------------------- */
+
+// Two rules on identical attributes, separated only by a net-weight band. This
+// is the case the ranges exist for: before them, priority alone decided and the
+// heavy band was unreachable.
+const banded = [
+  { material: null, purity: null, category_id: null, formula: "net_weight * 1000", net_weight: { min: null, max: 5 } },
+  { material: null, purity: null, category_id: null, formula: "net_weight * 2000", net_weight: { min: 5, max: null } },
+];
+const light = { material: null, purity: null, categoryIds: [], net_weight: 3 };
+const heavy = { material: null, purity: null, categoryIds: [], net_weight: 9 };
+
+checks.push(
+  ["a light piece takes the light band", findMatchingRule(banded, light)?.formula === "net_weight * 1000"],
+  ["a heavy piece takes the heavy band", findMatchingRule(banded, heavy)?.formula === "net_weight * 2000"],
+  [
+    "a bound is inclusive, so priority breaks the tie at the boundary",
+    findMatchingRule(banded, { material: null, purity: null, categoryIds: [], net_weight: 5 })?.formula ===
+      "net_weight * 1000",
+  ],
+  [
+    "an open-ended minimum means 'over'",
+    findMatchingRule(
+      [{ material: null, purity: null, category_id: null, formula: "x", gross_weight: { min: 10, max: null } }],
+      { material: null, purity: null, categoryIds: [], gross_weight: 50 },
+    ) !== null,
+  ],
+  [
+    "a weight below an open-ended minimum does not match",
+    findMatchingRule(
+      [{ material: null, purity: null, category_id: null, formula: "x", gross_weight: { min: 10, max: null } }],
+      { material: null, purity: null, categoryIds: [], gross_weight: 2 },
+    ) === null,
+  ],
+  [
+    "a rule with no ranges still matches anything",
+    findMatchingRule(
+      [{ material: null, purity: null, category_id: null, formula: "x" }],
+      { material: null, purity: null, categoryIds: [], net_weight: 7 },
+    ) !== null,
+  ],
+  [
+    "a null/null range is treated as 'ignore', not as zero",
+    findMatchingRule(
+      [{ material: null, purity: null, category_id: null, formula: "x", net_weight: { min: null, max: null } }],
+      { material: null, purity: null, categoryIds: [], net_weight: 7 },
+    ) !== null,
+  ],
+  [
+    "a product with NO weight does not match a banded rule",
+    findMatchingRule(
+      [{ material: null, purity: null, category_id: null, formula: "x", diamond_weight: { min: 0.5, max: 2 } }],
+      { material: null, purity: null, categoryIds: [] },
+    ) === null,
+  ],
+  [
+    "ranges compose with attribute conditions",
+    findMatchingRule(
+      [{ material: "gold", purity: null, category_id: null, formula: "x", net_weight: { min: 1, max: 4 } }],
+      { material: "Silver", purity: null, categoryIds: [], net_weight: 2 },
+    ) === null,
+  ],
+);
+
 let failed = 0;
 for (const [name, ok] of checks) {
   if (!ok) failed += 1;

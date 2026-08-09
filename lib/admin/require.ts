@@ -33,3 +33,17 @@ export async function requireSection(section: string): Promise<AdminContext> {
   if (!authorizeSection(admin, section)) redirect("/admin");
   return admin;
 }
+
+/**
+ * Require the owner — the account with no `role_id`.
+ *
+ * For oversight surfaces rather than sections: the audit log records what every
+ * admin did, which is exactly the thing a staffer should not be able to be
+ * granted. Deliberately NOT an `ADMIN_SECTIONS` key, because adding it there
+ * would make "who watches the watchers" a checkbox someone can tick.
+ */
+export async function requireOwner(): Promise<AdminContext> {
+  const admin = await requireAdmin();
+  if (!admin.isOwner) redirect("/admin");
+  return admin;
+}

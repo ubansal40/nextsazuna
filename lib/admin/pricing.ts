@@ -102,11 +102,42 @@ export function formulaError(expression: string): string | null {
   }
 }
 
+/**
+ * A weight range on a rule. Both bounds optional and independent: both null
+ * ignores that weight, one side null means "over" or "under" (migration 0014).
+ */
+export interface WeightRange {
+  min: number | null;
+  max: number | null;
+}
+
 export interface PricingRuleCondition {
   material: string | null;
   purity: string | null;
   category_id: number | null;
   formula: string;
+  /** Optional, so a rule written before 0014 still type-checks and matches. */
+  gross_weight?: WeightRange | null;
+  net_weight?: WeightRange | null;
+  diamond_weight?: WeightRange | null;
+  stone_weight?: WeightRange | null;
+}
+
+/**
+ * Is `value` inside `range`?
+ *
+ * Inclusive on both ends, so a rule for 0–5g and one for 5–10g both accept
+ * exactly 5g and priority decides — which is what an author who wrote those two
+ * rules means. A rule with a range but a product with no weight for it does NOT
+ * match: an unknown weight is not evidence the rule applies, and guessing would
+ * price a piece from a rule that was never meant for it.
+ */
+function withinRange(value: number | null | undefined, range: WeightRange | null | undefined): boolean {
+  if (!range || (range.min == null && range.max == null)) return true;
+  if (value == null || !Number.isFinite(value)) return false;
+  if (range.min != null && value < range.min) return false;
+  if (range.max != null && value > range.max) return false;
+  return true;
 }
 
 export interface ProductPricingInput {
@@ -124,7 +155,7 @@ export interface ProductPricingInput {
  */
 export function findMatchingRule<T extends PricingRuleCondition>(
   rules: readonly T[],
-  product: ProductPricingInput,
+  product: ProductPricingInput & FormulaVariables,
 ): T | null {
   const material = (product.material ?? "").trim().toLowerCase();
   const purity = (product.purity ?? "").trim().toUpperCase();
@@ -136,6 +167,10 @@ export function findMatchingRule<T extends PricingRuleCondition>(
     if (ruleMaterial && ruleMaterial !== material) continue;
     if (rulePurity && rulePurity !== purity) continue;
     if (rule.category_id != null && !categoryIds.has(rule.category_id)) continue;
+    if (!withinRange(product.gross_weight, rule.gross_weight)) continue;
+    if (!withinRange(product.net_weight, rule.net_weight)) continue;
+    if (!withinRange(product.diamond_weight, rule.diamond_weight)) continue;
+    if (!withinRange(product.stone_weight, rule.stone_weight)) continue;
     return rule;
   }
   return null;
