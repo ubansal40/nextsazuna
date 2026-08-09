@@ -44,11 +44,15 @@ Picker`, `…Taxonomy`. Still to read: `Sazuna Admin Orders.dc.html`,
 
 ## Resume here — remaining work, in order
 
-1. **Shared taxonomy image upload (small follow-up).** The 1:1 image for
-   categories + collections, and collections' hand-picked manual products
-   (`collection_products` table already exists). Add a taxonomy image route +
-   `storeSquareImage` (sharp resize cover, no stamp) in `lib/admin/images.ts`;
-   wire the `image_url` fields already in the data layer.
+1. ~~**Shared taxonomy image upload.**~~ **DONE** (`931d837`). `storeSquareImage`
+   + `POST /admin/taxonomy/image` (authorizes the `kind` the caller names) +
+   `components/admin/image-field.tsx`, wired into both drawers. Collections also
+   gained the spec's hand-picked `collection_products` (ordered, replace-in-full,
+   audited in-transaction) and a rules∪picks DISTINCT count.
+   **Storefront wired at the same time:** `lib/catalog/products.ts` had resolved
+   collections by category rules alone — the live collection showed 906 products
+   against the admin's 953. `collectionMembership()` there is now the twin of
+   `COLLECTION_MATCH`; keep the two in step.
 2. **Phase D — stock management.** `Sazuna Admin Stock Management.dc.html`.
    Excel/CSV upload → **dry-run** (returns publish/draft/exempt/unmatched counts
    + the unmatched-SKU list for CSV, changing nothing) → **Apply** (the
@@ -84,6 +88,17 @@ Also deferred within B: product editor **multi-card batch add + Excel autofill**
 (layers onto the existing product card), and picker **bulk-edit** of a
 multi-selection.
 
+**Known open defect (pre-existing, all taxonomy screens).** Every taxonomy table
+clips its own actions column below ~760px: the table's intrinsic width (644px on
+categories) exceeds the card, and the card is `overflow-hidden`, so Edit/Delete
+are unreachable on a phone. The spec's answer is the shared DataTable's
+`data-label` mobile-card collapse (plan §Shell & shared primitives), which is not
+built yet — fix it there once, not per screen.
+
+**Two admin specs are in the design project but in neither the plan nor this
+file:** `Sazuna Admin Coupons.dc.html` and `Sazuna Admin Loyalty.dc.html`. Owner
+decision needed on whether they are in scope for cutover.
+
 ## Storefront integration — STILL PENDING (admin changes don't reach the shop yet)
 
 The admin screens are built, but several admin changes do **not yet affect the
@@ -98,11 +113,10 @@ phase lands:
   facets.ts to read the `materials`/`purities` tables (respecting `is_visible`
   + `sort_order`) and to honour `categories.is_visible` / `collections.is_active`
   + order. (Renames DO propagate — `renameVocab` rewrites the product strings.)
-- **Collections membership → collection pages.** The admin now stores collection
-  rules (category/tag) + a sale-price band + (deferred) manual picks. Whatever
-  the storefront uses to render a collection page must read this membership
-  (`COLLECTION_MATCH` in `lib/admin/taxonomy.ts` is the canonical rule; manual
-  picks live in `collection_products`).
+- ~~**Collections membership → collection pages.**~~ **DONE** (`931d837`) — see
+  §Resume item 1. `collectionMembership()` in `lib/catalog/products.ts` now
+  mirrors `COLLECTION_MATCH`: category rules OR tag rules (both narrowed by the
+  price band) OR an unconditional hand-pick.
 - **Configurable order statuses → customer timeline** (Phase E). `lib/order-
   lookup.ts` buildTimeline + `/order-status` + `/account/orders/[id]` currently
   map a hardcoded status ladder; they must read `order_statuses` (labels +
