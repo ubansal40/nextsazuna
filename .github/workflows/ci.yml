@@ -80,6 +80,12 @@ jobs:
       - name: Stock sheet parsing checks
         run: npm run check:stock
 
+      # The admin can edit line prices, discounts and promo codes on a live
+      # order; this arithmetic decides what the customer is charged, so it is
+      # tested against the failure it exists to prevent — binary floating point.
+      - name: Order money checks
+        run: npm run check:order-money
+
       - name: Typecheck
         run: npm run typecheck
 

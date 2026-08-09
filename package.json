@@ -12,7 +12,7 @@
     "migrate": "node scripts/migrate.mjs",
     "migrate:status": "node scripts/migrate.mjs status",
     "admin:create": "tsx scripts/create-admin.mts",
-    "verify": "npm run check:tokens && npm run check:payments && npm run check:emails && npm run check:orders && npm run check:auth && npm run check:admin-auth && npm run check:blog && npm run check:images && npm run check:pricing && npm run check:stock && npm run typecheck && npm run lint && npm run build",
+    "verify": "npm run check:tokens && npm run check:payments && npm run check:emails && npm run check:orders && npm run check:auth && npm run check:admin-auth && npm run check:blog && npm run check:images && npm run check:pricing && npm run check:stock && npm run check:order-money && npm run typecheck && npm run lint && npm run build",
     "check:payments": "node scripts/check-payment-signatures.mjs",
     "check:emails": "tsx scripts/check-order-emails.mts",
     "check:orders": "tsx scripts/check-order-lookup.mts",
@@ -21,7 +21,8 @@
     "check:blog": "tsx scripts/check-blog-render.mts",
     "check:images": "tsx scripts/check-image-pipeline.mts",
     "check:pricing": "tsx scripts/check-pricing.mts",
-    "check:stock": "tsx scripts/check-stock.mts"
+    "check:stock": "tsx scripts/check-stock.mts",
+    "check:order-money": "tsx scripts/check-order-money.mts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
