@@ -1,50 +1,65 @@
 # Admin rebuild — session handoff (Stage 4)
 
-> ## ⚠ START HERE — open thread as of `ab68f28`
+> ## ⚠ START HERE — open thread as of `5742e22`
 >
-> **Phases A–H are complete and pushed.** The live blocker is product image
-> processing on Hostinger. Do these in order.
+> **Phases A–H are complete and pushed.** So is the image system, which was
+> rebuilt from scratch on the owner's instruction in `5742e22`.
 >
-> ### 1. The image queue is built but NOT proven end to end
+> ### 1. Images: the job queue is GONE. Do not look for it.
 >
-> `ab68f28` replaced the inline image pipeline with a port of the reference's
-> worker (`lib/admin/image-jobs.ts`, `lib/admin/image-queue.ts`, migration
-> **0016 applied**, `check:image-queue` = 51 checks in verify + CI).
+> Photos are processed **inside their own upload request, one file per
+> request** (`app/(admin)/admin/(authed)/products/upload/route.ts` →
+> `storeProductImage`). A product record only ever points at finished images.
 >
-> **Never run together against a live job row.** The SQL is proven in isolation
-> and the sharp pipeline by `check:images`, but the two have not met. The UI
-> (Processing poll, failure reason under the chip, "Retry photos") is
-> typechecked, never seen in a browser.
+> Deleted in `5742e22`, along with migration **0017 dropping
+> `product_image_jobs`**: `lib/admin/image-jobs.ts`, `lib/admin/image-queue.ts`,
+> the `/admin/products/image-jobs` route, `check:image-queue`, the cron
+> requirement, `IMAGE_JOB_*` env vars, and the Processing/Failed product
+> statuses. **If an older note in this file or in git history mentions any of
+> them, that note is stale.**
 >
-> **First action:** restart the Node app in hPanel, upload one photo on
-> `next.sazunajewellers.com`, watch it go Processing → Ready.
+> What replaces the queue's memory ceiling is `lib/admin/image-limit.ts` — a
+> counting gate, default 2 concurrent encodes, because each sharp pipeline holds
+> a decoded ~48 MB bitmap and an OOM kill on shared hosting takes the storefront
+> down with the admin.
 >
-> ### 2. Deploy requirement — cron, or jobs strand
+> **Owner's decisions, all explicit — do not relitigate:** process at upload ·
+> storage at `/home/u721828376/domains/sazuna-storage/uploads/products` · keep
+> logo + SKU burned in · single 1000×1000 AVIF · SKU required first and locked
+> once photos exist (existing products too) · originals discarded · centre
+> cover-crop · existing 2,585 products untouched · taxonomy artwork untouched ·
+> 5 photos, 25 MB each · drag to reorder, first is cover.
 >
-> There is no daemon. `drainImageJobs()` fires on save (`after()`), on the
-> products list while a row is Processing, and via
-> `POST /admin/products/image-jobs` (bearer `IMAGE_JOB_DRAIN_TOKEN`, see
-> `.env.example`). **Without a cron entry, a job stranded by a deploy waits
-> until a human opens the admin.**
+> ### 2. What is proven, and what is not
+>
+> `npm run verify` passes. `check:images` is **40 assertions** and runs the real
+> sharp pipeline — including that the stamp actually renders (the same photo
+> under two SKUs must produce different bytes; a blank pango render would make
+> them identical) and the gate's ordering, throw-safety and timeout cleanup.
+> The upload route answers 401 unauthenticated; `/admin/products/image-jobs` is
+> 404. Migration 0017 applied locally.
+>
+> **Not verified:** the editor UI in a browser. It is behind the admin login and
+> I do not enter passwords. The owner was asked to either sign in on the local
+> preview so it can be driven, or test on production — they chose production.
+>
+> **Not yet done on production:** apply migration 0017, set
+> `PRODUCT_IMAGE_UPLOAD_DIR`, deploy, restart, upload one photo.
 >
 > ### 3. Production facts — VERIFIED over SSH, do NOT re-investigate
 >
-> I had key-based SSH (`~/.ssh/id_ed25519_sazuna`, port 65002,
-> `u721828376@76.13.74.211`) and tested on the box itself:
+> Key-based SSH (`~/.ssh/id_ed25519_sazuna`, port 65002,
+> `u721828376@76.13.74.211`), tested on the box itself:
 >
 > - **sharp is fine.** libvips 8.17.3; PNG/JPEG/AVIF decode; HEIF in+out true;
->   logo loads; pango renders (36 fonts); SVG input renders.
-> - **The exact JPEG that failed decodes** (4032×3024) and **the full pipeline
->   succeeds on it** — 58,374 bytes of AVIF.
-> - So "Input buffer contains unsupported image format" was **NOT** a codec or
->   code fault. **Do not reinstall sharp** — an earlier diagnosis of mine said
->   to; it was wrong.
+>   logo loads; pango renders (36 fonts); SVG input renders. **Do not reinstall
+>   sharp** — an earlier diagnosis of mine said to; it was wrong.
+> - **The exact JPEG that failed decodes** (4032×3024) and the full pipeline
+>   succeeds on it. The failure was never a codec fault.
 > - **Cause: the live process was running a STALE BUILD.** Hostinger deploys to
 >   `hbuilds/versions/<uuid>` with `current` a symlink; the process kept an old
 >   version while `current` moved. Anything written inside the app dir dies on
 >   the next deploy — which is why uploads must live in `sazuna-storage`.
-> - `PRODUCT_IMAGE_UPLOAD_DIR` **is** set correctly now; raws land in
->   `~/domains/sazuna-storage/uploads/products/raw`.
 > - **App path:** `~/domains/next.sazunajewellers.com/hbuilds/current/nodejs`.
 >   Node is not on PATH — use `/opt/alt/alt-nodejs22/root/usr/bin/node`.
 >   Run node from inside that dir or `require("sharp")` will not resolve.
