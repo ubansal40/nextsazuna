@@ -8,7 +8,6 @@ import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
 import type { ProductEditorOptions } from "@/lib/admin/catalog";
 import type { EditorCard } from "./editor-model";
-import { derivedName } from "./editor-model";
 
 /**
  * One product card — the shared card from Sazuna Admin Products.dc.html.
@@ -69,7 +68,6 @@ export function ProductCardForm({
   const fileRef = useRef<HTMLInputElement>(null);
   const materialOptions = unique([card.material, ...options.materials]);
   const purityOptions = unique([card.purity, ...options.purities]);
-  const categoryLabel = (id: string) => options.categories.find((c) => String(c.id) === id)?.name ?? "";
   const locked = card.status === "saved" || card.status === "saving";
 
   const badge = mode === "edit" ? "EDIT" : `#${index + 1}`;
@@ -230,18 +228,15 @@ export function ProductCardForm({
           </div>
         </div>
 
-        {/* Name. The spec hides this when adding; here it stays, optional, with
-            the name it would derive as its placeholder — see editor-model.ts. */}
+        {/* Name. The spec hides this when adding; here it stays, optional — a
+            blank name is still derived from category and SKU on save (see
+            editor-model.ts). Placeholders are off by owner preference; the
+            floating label carries the field's meaning. */}
         <Fw label={mode === "add" ? "Product name" : "Product name *"} required={mode !== "add"} error={card.errors.name}>
           <input
             value={card.name}
             disabled={locked}
             onChange={(e) => handlers.edit({ name: e.target.value })}
-            placeholder={
-              mode === "add"
-                ? derivedName(card, categoryLabel) || "Named from category and SKU if left blank"
-                : "e.g. Solitaire Halo Ring"
-            }
             aria-invalid={!!card.errors.name}
             className={cn(fieldClass, card.errors.name && "border-error")}
           />
@@ -255,7 +250,6 @@ export function ProductCardForm({
                 value={card.sku}
                 disabled={locked}
                 onChange={(e) => handlers.onSkuChange(e.target.value)}
-                placeholder="DGR-0000"
                 aria-invalid={!!card.errors.sku}
                 className={cn(fieldClass, "font-mono", card.errors.sku && "border-error")}
               />
@@ -294,7 +288,6 @@ export function ProductCardForm({
                 disabled={locked}
                 onChange={(e) => handlers.onPriceChange(e.target.value)}
                 inputMode="decimal"
-                placeholder="9999"
                 aria-invalid={!!card.errors.salePrice}
                 className={cn(fieldClass, "font-mono", card.errors.salePrice && "border-error")}
               />
@@ -325,7 +318,6 @@ export function ProductCardForm({
           <Weight
             label="Gross g"
             value={card.gross}
-            placeholder="4.20"
             disabled={locked}
             onChange={(v) => handlers.edit({ gross: v, origin: { ...card.origin, gross: "typed" } })}
           />
@@ -333,7 +325,6 @@ export function ProductCardForm({
             label="Net g *"
             required
             value={card.net}
-            placeholder="3.85"
             disabled={locked}
             error={card.errors.netWeight}
             onChange={(v) => handlers.edit({ net: v, origin: { ...card.origin, net: "typed" } })}
@@ -341,14 +332,12 @@ export function ProductCardForm({
           <Weight
             label="Dia ct"
             value={card.diamond}
-            placeholder="0.75"
             disabled={locked}
             onChange={(v) => handlers.edit({ diamond: v, origin: { ...card.origin, diamond: "typed" } })}
           />
           <Weight
             label="Stn ct"
             value={card.stone}
-            placeholder="0.40"
             disabled={locked}
             onChange={(v) => handlers.edit({ stone: v, origin: { ...card.origin, stone: "typed" } })}
           />
@@ -454,7 +443,6 @@ function Weight({
   label,
   required,
   value,
-  placeholder,
   disabled,
   error,
   onChange,
@@ -462,7 +450,6 @@ function Weight({
   label: string;
   required?: boolean;
   value: string;
-  placeholder: string;
   disabled: boolean;
   error?: string;
   onChange: (value: string) => void;
@@ -474,7 +461,6 @@ function Weight({
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
         inputMode="decimal"
-        placeholder={placeholder}
         aria-invalid={!!error}
         className={cn(fieldClass, "font-mono", error && "border-error")}
       />
