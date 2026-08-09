@@ -25,15 +25,6 @@ import { MAX_PHOTO_BYTES, photoSizeLimitMessage } from "@/lib/admin/product-limi
  */
 
 /**
- * Any `image/*`, as sazuna-unik 2 does. A narrower allowlist rejected files
- * this pipeline can actually process, and browsers report HEIC inconsistently
- * (often `application/octet-stream`), so the declared type is a poor gate.
- * `storeProductImage` sniffs the real format and refuses what it cannot read,
- * with a message naming the format — that is the honest boundary.
- */
-const ALLOWED = /^image\//;
-
-/**
  * How many encodes run at once, process-wide, and how long a request may wait
  * for a slot.
  *
@@ -87,10 +78,21 @@ export async function POST(request: Request): Promise<Response> {
   if (file.size > MAX_PHOTO_BYTES) {
     return NextResponse.json({ error: photoSizeLimitMessage() }, { status: 400 });
   }
-  if (!ALLOWED.test(file.type)) {
-    return NextResponse.json({ error: "Only image files are allowed." }, { status: 400 });
-  }
 
+  /**
+   * There is deliberately no check on `file.type`.
+   *
+   * The declared MIME type is whatever the browser felt like sending, and for
+   * the format that matters most it is routinely wrong: iPhones hand over HEIC
+   * as `application/octet-stream`, so an `image/*` gate rejects a photograph
+   * this pipeline can decode perfectly well — with "only image files are
+   * allowed", about an image file.
+   *
+   * The magic bytes are the honest boundary. `storeProductImage` sniffs the
+   * real format and refuses what this build cannot read, naming the format in
+   * the message. A file that lies about being an image gets refused there, one
+   * sentence later, having cost nothing but a buffer.
+   */
   const source = Buffer.from(await file.arrayBuffer());
 
   try {
