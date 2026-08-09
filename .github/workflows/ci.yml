@@ -74,6 +74,12 @@ jobs:
       - name: Pricing formula checks
         run: npm run check:pricing
 
+      # The stock sync flips is_active across the whole catalogue from one
+      # uploaded column, so a parser bug takes the shop offline rather than
+      # rendering a wrong pixel. The hand-rolled CSV reader is fuzzed here.
+      - name: Stock sheet parsing checks
+        run: npm run check:stock
+
       - name: Typecheck
         run: npm run typecheck
 
