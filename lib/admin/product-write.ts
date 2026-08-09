@@ -133,9 +133,9 @@ interface CurrentRow extends RowDataPacket {
   is_active: number;
 }
 
-/** The base (MRP) price for a product from the pricing rules, clamped so it is
- *  never below the selling price. Falls back to `fallback` when no rule matches. */
-async function resolveBasePrice(input: ProductInput, fallback: string): Promise<string> {
+/** Active rules in priority order, with their weight bands mapped for the
+ *  matcher. One loader, so every caller sees the same rule set. */
+async function loadPricingRules(): Promise<PricingRuleCondition[]> {
   const rows = await pool()
     .execute<RuleRow[]>(
       `SELECT material, purity, category_id, formula,
@@ -158,6 +158,42 @@ async function resolveBasePrice(input: ProductInput, fallback: string): Promise<
     diamond_weight: range(row.diamond_weight_min, row.diamond_weight_max),
     stone_weight: range(row.stone_weight_min, row.stone_weight_max),
   }));
+  return rules;
+}
+
+/**
+ * The price the rules derive for a set of attributes and weights, or null when
+ * nothing matches.
+ *
+ * Exported for the editor's live preview. It goes through the SAME rule load and
+ * the SAME matcher as `resolveBasePrice`, so the number the admin is shown while
+ * typing cannot disagree with the number the save computes — two implementations
+ * of "what does this cost" is how a preview becomes a lie.
+ */
+export async function previewRulePrice(input: {
+  material: string;
+  purity: string;
+  categoryIds: number[];
+  grossWeight: string;
+  netWeight: string;
+  diamondWeight: string;
+  stoneWeight: string;
+}): Promise<string | null> {
+  return computeRulePrice(await loadPricingRules(), {
+    material: input.material || null,
+    purity: input.purity || null,
+    categoryIds: input.categoryIds,
+    gross_weight: Number(input.grossWeight) || 0,
+    net_weight: Number(input.netWeight) || 0,
+    diamond_weight: Number(input.diamondWeight) || 0,
+    stone_weight: Number(input.stoneWeight) || 0,
+  });
+}
+
+/** The base (MRP) price for a product from the pricing rules, clamped so it is
+ *  never below the selling price. Falls back to `fallback` when no rule matches. */
+async function resolveBasePrice(input: ProductInput, fallback: string): Promise<string> {
+  const rules = await loadPricingRules();
 
   const computed = computeRulePrice(rules, {
     material: input.material || null,

@@ -40,3 +40,7 @@ yarn-error.log*
 
 # Product image uploads (dev writes here; prod uses PRODUCT_IMAGE_UPLOAD_DIR)
 /public/uploads/
+
+# Fetched design specs, cached for reference. Not source — the Claude Design
+# project is the source of truth (CLAUDE.md rule 1).
+.design-cache/

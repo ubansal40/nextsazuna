@@ -86,6 +86,12 @@ jobs:
       - name: Order money checks
         run: npm run check:order-money
 
+      # The inventory sheet fills purity and four weights into a product card,
+      # and a pricing rule then derives the sale price from those weights. A
+      # column detected one position out prices jewellery from the wrong number.
+      - name: SKU sheet parsing checks
+        run: npm run check:sku-sheet
+
       - name: Typecheck
         run: npm run typecheck
 

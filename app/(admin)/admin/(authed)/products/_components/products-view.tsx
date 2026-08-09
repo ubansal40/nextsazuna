@@ -1,5 +1,7 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { Icon, useToast } from "@/components/ui";
@@ -10,7 +12,7 @@ import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
 import type { AdminProductListItem, ProductStatus } from "@/lib/admin/product-projection";
 import type { AdminProductFilters, AdminProductFilterOptions, AdminProductPage } from "@/lib/admin/catalog";
-import { fetchProductsPage, setVisibility, removeProduct } from "../_actions";
+import { fetchProductsPage, setVisibility, removeProduct, setAlwaysAvailable, removeProducts } from "../_actions";
 
 /**
  * All Products — Sazuna Admin Products.dc.html.
@@ -58,6 +60,8 @@ export function ProductsView({
   const [searchInput, setSearchInput] = useState("");
   const [filters, setFilters] = useState<DrawerFilters>(EMPTY_DRAWER);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [draft, setDraft] = useState<DrawerFilters>(EMPTY_DRAWER);
   const [openMenu, setOpenMenu] = useState<number | null>(null);
@@ -125,6 +129,45 @@ export function ProductsView({
   }
 
   // --- mutations ---
+  /** Bulk-set the stock-sync exemption. The list carries no always_available
+   *  column, so the page is refetched rather than patched — showing a state the
+   *  row cannot display would be worse than a round trip. */
+  function alwaysAvailable(ids: number[], value: boolean) {
+    setOpenMenu(null);
+    startTransition(async () => {
+      const result = await setAlwaysAvailable(ids, value);
+      if (!result.ok) {
+        toast("error", result.error);
+        return;
+      }
+      toast("success", `${result.changed} product${result.changed === 1 ? "" : "s"} updated.`);
+      setSelected(new Set());
+      apply(filters, q);
+    });
+  }
+
+  /** Bulk delete. Products with order history come back as "unpublished
+   *  instead", and the toast says so — silently keeping them would look like
+   *  the delete failed. */
+  function bulkDelete(ids: number[]) {
+    setConfirmBulkDelete(false);
+    startTransition(async () => {
+      const result = await removeProducts(ids);
+      if (!result.ok) {
+        toast("error", result.error);
+        return;
+      }
+      toast(
+        "success",
+        result.softDeleted > 0
+          ? `${result.hardDeleted} deleted · ${result.softDeleted} unpublished instead (they appear in past orders).`
+          : `${result.hardDeleted} product${result.hardDeleted === 1 ? "" : "s"} deleted.`,
+      );
+      setSelected(new Set());
+      apply(filters, q);
+    });
+  }
+
   function publish(ids: number[], isActive: boolean) {
     setOpenMenu(null);
     startTransition(async () => {
@@ -374,32 +417,66 @@ export function ProductsView({
         </div>
       </div>
 
-      {/* Bulk bar */}
+      {/* Bulk bar — `pBulkOpen` in the spec: a dark pill floating over the list,
+          not a panel. "Bulk edit" is its lead action and carries the sand fill;
+          everything destructive stays in the danger red. */}
       {selected.size > 0 && (
-        <div className="fixed inset-x-0 bottom-4 z-40 mx-auto flex w-[min(680px,calc(100vw-32px))] flex-wrap items-center gap-3 rounded-[var(--sz-admin-radius-card)] border border-line bg-raised px-4 py-3 shadow-[var(--sz-shadow-dropdown)]">
-          <span className="text-[13px] font-semibold text-heading">{selected.size} selected</span>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => publish([...selected], true)}
-              className="min-h-10 rounded-[var(--sz-admin-radius-control)] border border-line px-3 text-[12.5px] font-semibold text-body hover:border-primary-700"
-            >
-              Publish
-            </button>
-            <button
-              type="button"
-              onClick={() => publish([...selected], false)}
-              className="min-h-10 rounded-[var(--sz-admin-radius-control)] border border-line px-3 text-[12.5px] font-semibold text-body hover:border-primary-700"
-            >
-              Unpublish
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelected(new Set())}
-              className="min-h-10 px-2 text-[12.5px] font-semibold text-muted hover:text-body"
-            >
-              Clear
-            </button>
+        <div className="fixed bottom-4 left-1/2 z-40 max-w-[calc(100vw-24px)] -translate-x-1/2 rounded-xl bg-body px-4 py-2.5 text-white shadow-[0_18px_44px_-14px_rgb(var(--sz-heading-rgb)/.55)]">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="whitespace-nowrap text-[12.5px] font-semibold">{selected.size} selected</span>
+            <div className="flex flex-wrap gap-[7px]">
+              <button
+                type="button"
+                onClick={() => router.push(`/admin/products/bulk?ids=${[...selected].join(",")}`)}
+                className="min-h-10 rounded-[7px] bg-ann-text px-3 py-2 text-[12px] font-semibold text-body hover:bg-white"
+              >
+                Bulk edit
+              </button>
+              <button
+                type="button"
+                onClick={() => publish([...selected], true)}
+                className="min-h-10 rounded-[7px] bg-white/10 px-3 py-2 text-[12px] font-semibold text-white hover:bg-white/20"
+              >
+                Publish
+              </button>
+              <button
+                type="button"
+                onClick={() => publish([...selected], false)}
+                className="min-h-10 rounded-[7px] bg-white/10 px-3 py-2 text-[12px] font-semibold text-white hover:bg-white/20"
+              >
+                Unpublish
+              </button>
+              <button
+                type="button"
+                onClick={() => alwaysAvailable([...selected], true)}
+                title="Exempt these from the stock sync drafting them"
+                className="min-h-10 rounded-[7px] bg-white/10 px-3 py-2 text-[12px] font-semibold text-white hover:bg-white/20"
+              >
+                Always available on
+              </button>
+              <button
+                type="button"
+                onClick={() => alwaysAvailable([...selected], false)}
+                className="min-h-10 rounded-[7px] bg-white/10 px-3 py-2 text-[12px] font-semibold text-white hover:bg-white/20"
+              >
+                Always available off
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmBulkDelete(true)}
+                className="min-h-10 rounded-[7px] bg-error px-3 py-2 text-[12px] font-semibold text-white hover:bg-danger-hover"
+              >
+                Delete
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                aria-label="Clear selection"
+                className="inline-flex size-10 items-center justify-center rounded-[7px] text-white/65 hover:text-white"
+              >
+                <Icon name="close" size={16} />
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -415,6 +492,22 @@ export function ProductsView({
           apply(draft, q);
         }}
         onClear={() => setDraft(EMPTY_DRAWER)}
+      />
+
+      <ConfirmDialog
+        open={confirmBulkDelete}
+        title={`Delete ${selected.size} product${selected.size === 1 ? "" : "s"}?`}
+        tone="danger"
+        confirmLabel="Delete"
+        onCancel={() => setConfirmBulkDelete(false)}
+        onConfirm={() => bulkDelete([...selected])}
+        body={
+          <>
+            Any of these that appear in a past order are <strong className="text-body">unpublished instead of
+            deleted</strong> — removing one would tear a line item out of a customer&rsquo;s receipt. The rest are
+            removed for good.
+          </>
+        }
       />
 
       <ConfirmDialog

@@ -12,6 +12,15 @@ interface Props {
   request: Omit<LoadMoreInput, "page" | "pageSize">;
 }
 
+const SCROLL_KEY = "sz-plp-scroll";
+
+/** What we park in sessionStorage on the way to a product. */
+interface SavedScroll {
+  /** Identity of the listing the offset was taken from. */
+  listing?: unknown;
+  y?: unknown;
+}
+
 /**
  * Product grid with infinite scroll — spec §Product grid.
  *
@@ -70,32 +79,66 @@ export function InfiniteGrid({ initial, total, pageSize, request }: Props) {
     return () => observer.disconnect();
   }, [hasMore, loadMore]);
 
-  // Restore scroll position when returning to the listing from a product.
-  useEffect(() => {
-    const KEY = "sz-plp-scroll";
-    const saved = Number(sessionStorage.getItem(KEY) ?? 0);
-    if (saved > 0) {
-      const id = setTimeout(() => window.scrollTo(0, saved), 60);
-      return () => clearTimeout(id);
+  /**
+   * Scroll restoration — spec §Product grid, "restores scroll position when
+   * returning from a product".
+   *
+   * The offset is stamped with the identity of the listing it was taken from,
+   * written only as the customer leaves for a product, and consumed on the way
+   * back. So it can restore that one listing, once, and nothing else.
+   *
+   * It used to be a bare number under a single global key, rewritten on every
+   * scroll frame and replayed on every mount. A *fresh* listing therefore
+   * inherited the previous one's offset and jumped 60ms after paint: opening a
+   * different category from the menu, running a search, or changing any filter
+   * or sort — all of which mount this component, the last two by design via the
+   * `key` in product-listing.tsx — scrolled the customer down a page they had
+   * never scrolled. The filter links pass `scroll={false}` precisely to hold
+   * position; this effect then overrode them.
+   */
+  const listingKey = JSON.stringify(request);
+
+  const rememberPosition = useCallback(() => {
+    try {
+      sessionStorage.setItem(
+        SCROLL_KEY,
+        JSON.stringify({ listing: listingKey, y: Math.round(window.scrollY) }),
+      );
+    } catch {
+      /* private mode — position restore is a nicety, not a requirement */
     }
-  }, []);
+  }, [listingKey]);
 
   useEffect(() => {
-    const KEY = "sz-plp-scroll";
-    const onScroll = () => {
-      try {
-        sessionStorage.setItem(KEY, String(Math.round(window.scrollY)));
-      } catch {
-        /* private mode — position restore is a nicety, not a requirement */
-      }
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+    let saved: SavedScroll | null = null;
+    try {
+      const raw = sessionStorage.getItem(SCROLL_KEY);
+      // Consumed whether or not it matches. An entry belonging to another
+      // listing is stale by definition, and leaving it in place is what let it
+      // fire on an unrelated mount in the first place.
+      sessionStorage.removeItem(SCROLL_KEY);
+      if (raw) saved = JSON.parse(raw) as SavedScroll;
+    } catch {
+      return;
+    }
+
+    if (!saved || saved.listing !== listingKey) return;
+    const y = typeof saved.y === "number" ? saved.y : 0;
+    if (y <= 0) return;
+
+    const id = setTimeout(() => window.scrollTo(0, y), 60);
+    return () => clearTimeout(id);
+  }, [listingKey]);
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-x-3 gap-y-[18px] md:gap-x-[22px] md:gap-y-7 xl:grid-cols-3">
+      {/* Records the position on the way out. Card clicks — pointer and
+          keyboard alike, both raise click — bubble to here, so the offset is
+          only ever stored when the customer actually leaves for a product. */}
+      <div
+        onClick={rememberPosition}
+        className="grid grid-cols-2 gap-x-3 gap-y-[18px] md:gap-x-[22px] md:gap-y-7 xl:grid-cols-3"
+      >
         {products.map((product) => (
           <ProductCard
             key={product.id}

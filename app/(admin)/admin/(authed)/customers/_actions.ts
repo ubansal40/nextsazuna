@@ -5,10 +5,12 @@ import {
   listAdminCustomers,
   getCustomerDetail,
   updateCustomerProfile,
+  changeCustomerPhone,
   type AdminCustomerFilters,
   type AdminCustomerPage,
   type CustomerDetail,
   type CustomerProfileInput,
+  type PhoneChange,
 } from "@/lib/admin/customers";
 
 /**
@@ -28,6 +30,9 @@ export type CustomersResult = { ok: true; page: AdminCustomerPage } | { ok: fals
 export type CustomerResult = { ok: true; customer: CustomerDetail } | { ok: false; error: string };
 export type CustomerSaveResult =
   | { ok: true; customer: CustomerDetail; page: AdminCustomerPage }
+  | { ok: false; error: string };
+export type CustomerPhoneResult =
+  | { ok: true; customer: CustomerDetail; page: AdminCustomerPage; change: PhoneChange }
   | { ok: false; error: string };
 
 /** Errors this code raises deliberately carry a message meant for a human; an
@@ -64,7 +69,8 @@ export async function loadCustomerAction(id: number): Promise<CustomerResult> {
  * The patch is partial by design — the drawer's sections save independently, so
  * an open address editor cannot overwrite the personal details beside it. What
  * a patch may contain is decided by `EDITABLE_FIELDS` in the data layer, not by
- * what the client sends; `phone` is not among them.
+ * what the client sends; `phone` is not among them, and reaches the column only
+ * through `changeCustomerPhoneAction` below.
  *
  * The list is re-read alongside the profile because name and email are columns
  * on it, and a row that still shows the old name after a save is a bug the user
@@ -83,6 +89,35 @@ export async function saveCustomerProfileAction(
     return { ok: true, customer, page };
   } catch (error) {
     console.error("[admin] customer save failed", error);
+    return fail(error);
+  }
+}
+
+/**
+ * Move a customer's login to a different number.
+ *
+ * Its own action rather than a key in the patch above, because it is its own
+ * decision: the data layer collision-checks it, revokes the sessions the old
+ * number authorised and audits it as `customers.phone_change`. The screen
+ * confirms it first.
+ *
+ * The list comes back with the profile for the same reason a name save does —
+ * phone is a column on the row behind the drawer, and a row still showing the
+ * old number after the change is how a user learns not to trust the screen.
+ */
+export async function changeCustomerPhoneAction(
+  id: number,
+  phone: string,
+  filters: AdminCustomerFilters,
+): Promise<CustomerPhoneResult> {
+  const admin = await requireSection("customers");
+  try {
+    const change = await changeCustomerPhone(admin, id, phone);
+    const [customer, page] = await Promise.all([getCustomerDetail(id), listAdminCustomers(filters)]);
+    if (!customer) return { ok: false, error: "That customer no longer exists." };
+    return { ok: true, customer, page, change };
+  } catch (error) {
+    console.error("[admin] customer phone change failed", error);
     return fail(error);
   }
 }

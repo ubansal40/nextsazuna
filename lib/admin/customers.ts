@@ -1,19 +1,22 @@
 import "server-only";
 
-import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
+import type { PoolConnection, RowDataPacket, ResultSetHeader } from "mysql2/promise";
 import { query, queryOne, transaction } from "../db";
+import { normalisePhone } from "../order-lookup";
 import { recordAdminAction } from "./audit";
 import { escapeLike } from "./catalog";
 import { normaliseColour, type StatusColour } from "./order-status-colours";
 import type { AdminContext } from "./rbac";
 
 /**
- * The customer CRM — the list, one profile, and the only edit it allows.
+ * The customer CRM — the list, one profile, and the two edits it allows.
  *
  * `customers` is phone-keyed: the row is created by checkout or by the order
  * desk from a phone number, and that number is also the customer's OTP login
- * handle. So `phone` is identity here, not a contact field — see
- * `EDITABLE_FIELDS` below, which deliberately has no entry for it.
+ * handle. So `phone` is identity here, not a contact field — which is why it is
+ * absent from `EDITABLE_FIELDS` and moved by `changeCustomerPhone` instead, a
+ * deliberate operation with its own confirmation, its own audit action and the
+ * session revocation that moving a login handle demands.
  *
  * Money stays a string end-to-end (ADR 0003). Lifetime spend is a SUM of
  * `orders.total_amount`, a DECIMAL, which the driver returns as a string with
@@ -434,12 +437,12 @@ const date = (value: unknown): string | null => {
  * **`phone` is absent on purpose, and must stay absent.** It is the customer's
  * identity: `customers.phone` is UNIQUE, it is the key the order desk looks a
  * walk-in up by, and it is the handle the storefront sends an OTP to
- * (`customer_otp` / `customer_sessions`). Editing it here would silently move
- * someone's login to a number they do not hold, or collide with an existing row
- * and fail at the constraint. Correcting a wrong number is a merge, not an
- * edit, and it does not belong on this screen. `loyalty_points` is absent for
- * the same class of reason — it is a balance `loyalty_ledger` reconciles to,
- * not a field.
+ * (`customer_otp` / `customer_sessions`). A mistyped number does have to be
+ * fixable — that is `changeCustomerPhone` below, which collision-checks, revokes
+ * the sessions the old number authorised and audits itself as its own action.
+ * None of that can be expressed as "one more column in the patch", so the column
+ * stays out of this list. `loyalty_points` is absent for the same class of
+ * reason — it is a balance `loyalty_ledger` reconciles to, not a field.
  *
  * A whitelist also means the UPDATE is built from keys this module names, never
  * from keys the client sent, so no request body can reach a column that is not
@@ -510,5 +513,151 @@ export async function updateCustomerProfile(
       resourceId: id,
       metadata: { fields: changed },
     });
+  });
+}
+
+/* --- the phone, which is not a field --------------------------------------- */
+
+export interface PhoneChange {
+  /** The number as it was stored, not as it was typed. */
+  from: string;
+  /** The normalised 10 digits now in the column. */
+  to: string;
+  /** Live sessions ended by the move. The customer signs in again, on the new
+   *  number. */
+  sessionsRevoked: number;
+}
+
+/**
+ * mysql2 raises a constraint violation as a plain driver error carrying a
+ * `code`. Read structurally: the driver's error class is not exported, so
+ * `instanceof` is not a check this module can make.
+ */
+function isDuplicateEntry(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && (error as { code?: unknown }).code === "ER_DUP_ENTRY"
+  );
+}
+
+/**
+ * Who else holds this number, locked for the rest of the transaction.
+ *
+ * `FOR UPDATE` on a UNIQUE-indexed column takes the row lock when there is a
+ * holder and a gap lock when there is not, so two admins typing the same new
+ * number at once serialise here instead of both reading "free" and racing to the
+ * INSERT. The unique index is still the backstop — see the catch below.
+ */
+async function phoneHolder(
+  connection: PoolConnection,
+  phone: string,
+  excludeId: number,
+): Promise<{ id: number; name: string | null } | null> {
+  const [rows] = await connection.execute<(RowDataPacket & { id: number; name: string | null })[]>(
+    "SELECT id, name FROM customers WHERE phone = ? AND id <> ? LIMIT 1 FOR UPDATE",
+    [phone, excludeId],
+  );
+  return rows[0] ?? null;
+}
+
+/** Name the holder, because "that number is taken" sends an admin hunting. An
+ *  unnamed row is identified by its id rather than described as "someone". */
+const collision = (phone: string, holder: { id: number; name: string | null }) =>
+  new Error(`${phone} already belongs to ${holder.name?.trim() || `customer #${holder.id}`}.`);
+
+/**
+ * Move a customer's phone number — a deliberate operation, not a field edit.
+ *
+ * Phone is how this shop identifies a person, so a mistyped number has to be
+ * fixable; but it is also the OTP login handle, so moving it is closer to
+ * changing a password than to correcting a spelling. Four things therefore
+ * happen together, in one transaction, or none of them do:
+ *
+ *   1. **Normalise.** `normalisePhone` is the storefront's own function
+ *      (`lib/order-lookup.ts`, pure), so `+977 9803-999930` and `09803999930`
+ *      and `9803999930` are one number here exactly as they are at sign-in. The
+ *      column stores the bare ten digits. The rule is deliberately no stricter
+ *      than the storefront's: refusing a number the OTP flow would accept is how
+ *      an admin ends up unable to enter a number that demonstrably works.
+ *   2. **Refuse a collision, by name.** The check and the write share the
+ *      transaction, so two concurrent edits cannot both pass it, and
+ *      `ER_DUP_ENTRY` is caught as a backstop and turned into the same sentence
+ *      rather than surfacing as a driver error with an index name in it.
+ *   3. **Revoke the sessions.** `customer_sessions` rows were authorised by an
+ *      OTP sent to the OLD number. Leaving them alive means whoever still holds
+ *      that number keeps a live session on an account they no longer own — the
+ *      exact failure the change was made to prevent.
+ *   4. **Clear pending codes.** `customer_otp` keys on `phone`, not on
+ *      `customer_id`, so an unconsumed code for the old number would still be a
+ *      valid sign-in for whoever now holds it. The NEW number is cleared too: a
+ *      code issued while some earlier customer held it would otherwise be a
+ *      ready-made session on this account.
+ *
+ * **`orders.phone` is deliberately left alone.** Orders carry a denormalised
+ * contact copy, and it is a fact about that order — the number given at
+ * checkout, printed on the confirmation, dialled by the courier. Rewriting it
+ * would edit history to say the customer supplied a number they had not yet
+ * been given. Nothing is lost by leaving it: the account's own order history
+ * joins on `orders.customer_id`, so the customer still sees every order after
+ * the move, and guest lookup (`lib/order-lookup.ts`) keeps matching the number
+ * actually printed on each confirmation. Where a specific in-flight order does
+ * need the new number for delivery, the order detail screen edits that order's
+ * contact directly (`saveOrderCustomer`) — a per-order call an admin makes
+ * knowingly, rather than a silent rewrite of every row a profile edit touches.
+ */
+export async function changeCustomerPhone(
+  admin: AdminContext,
+  id: number,
+  rawPhone: string,
+): Promise<PhoneChange> {
+  if (!Number.isInteger(id) || id <= 0) throw new Error("That customer no longer exists.");
+
+  const to = normalisePhone(rawPhone);
+  if (to.length !== 10) throw new Error("Enter a 10-digit mobile number.");
+
+  return transaction(async (connection) => {
+    const [[current]] = await connection.execute<(RowDataPacket & { phone: string })[]>(
+      "SELECT phone FROM customers WHERE id = ? FOR UPDATE",
+      [id],
+    );
+    if (!current) throw new Error("That customer no longer exists.");
+
+    const from = current.phone;
+    // Typed differently but the same number: nothing to do, and saying so is
+    // more useful than revoking their sessions for no reason.
+    if (from === to) throw new Error("That is already this customer’s number.");
+
+    const holder = await phoneHolder(connection, to, id);
+    if (holder) throw collision(to, holder);
+
+    // Only the statement is wrapped, so the catch can be about one thing: the
+    // unique index firing anyway because another transaction committed between
+    // the check above and this write.
+    let moved: ResultSetHeader;
+    try {
+      [moved] = await connection.execute<ResultSetHeader>("UPDATE customers SET phone = ? WHERE id = ?", [to, id]);
+    } catch (error) {
+      if (!isDuplicateEntry(error)) throw error;
+      // A duplicate key rolls back the statement, not the transaction, so the
+      // connection can still be asked who won the race — and the admin gets the
+      // same specific sentence either path took.
+      const winner = await phoneHolder(connection, to, id);
+      throw winner ? collision(to, winner) : new Error(`${to} already belongs to another customer.`);
+    }
+    if (moved.affectedRows === 0) throw new Error("That customer no longer exists.");
+
+    const [revoked] = await connection.execute<ResultSetHeader>(
+      "DELETE FROM customer_sessions WHERE customer_id = ?",
+      [id],
+    );
+    await connection.execute("DELETE FROM customer_otp WHERE phone IN (?, ?)", [from, to]);
+
+    await recordAdminAction(connection, admin, {
+      action: "customers.phone_change",
+      resourceType: "customers",
+      resourceId: id,
+      metadata: { from, to, sessionsRevoked: revoked.affectedRows },
+    });
+
+    return { from, to, sessionsRevoked: revoked.affectedRows };
   });
 }

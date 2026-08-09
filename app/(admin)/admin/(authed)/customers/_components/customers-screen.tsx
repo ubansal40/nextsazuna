@@ -2,9 +2,14 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { Icon, useToast } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
+// `lib/order-lookup` is pure — no `server-only`, no I/O — so the browser can
+// share the storefront's own idea of what a phone number is. The confirm dialog
+// therefore shows the digits that will actually be stored, not what was typed.
+import { normalisePhone } from "@/lib/order-lookup";
 import type {
   AdminCustomerFilters,
   AdminCustomerPage,
@@ -19,6 +24,7 @@ import {
   loadCustomersAction,
   loadCustomerAction,
   saveCustomerProfileAction,
+  changeCustomerPhoneAction,
   type CustomersResult,
 } from "../_actions";
 
@@ -30,10 +36,10 @@ import {
  * pagination, the collections drawer's 452px `aside`, and the order detail's
  * in-place section editing.
  *
- * `phone` is shown but never editable. It is the row's identity — the UNIQUE
- * key the order desk looks a walk-in up by, and the handle the storefront sends
- * an OTP to — so there is deliberately no input for it, and the data layer's
- * whitelist has no entry for the column either.
+ * `phone` is editable, but never as a field. It is the row's identity — the
+ * UNIQUE key the order desk looks a walk-in up by, and the handle the storefront
+ * sends an OTP to — so it is moved by a named action behind a confirm that says
+ * what moving it costs, not by an input that saves on blur beside the city.
  */
 
 /** Which sort keys a column header cycles through, first click first. */
@@ -230,6 +236,27 @@ export function CustomersScreen({ initialPage }: { initialPage: AdminCustomerPag
               }
             });
           }}
+          // Resolves to whether it landed, so the dialog closes on success and
+          // stays open — with what was typed still in it — on a collision.
+          onChangePhone={async (phone) => {
+            if (!detail) return false;
+            const result = await changeCustomerPhoneAction(detail.id, phone, filters);
+            if (!result.ok) {
+              toast("error", result.error);
+              return false;
+            }
+            setDetail(result.customer);
+            setPage(result.page);
+            toast(
+              "success",
+              result.change.sessionsRevoked > 0
+                ? `Phone changed to ${result.change.to}. ${result.change.sessionsRevoked} session${
+                    result.change.sessionsRevoked === 1 ? "" : "s"
+                  } ended.`
+                : `Phone changed to ${result.change.to}.`,
+            );
+            return true;
+          }}
         />
       )}
     </div>
@@ -307,12 +334,15 @@ function ProfileDrawer({
   busy,
   onClose,
   onSave,
+  onChangePhone,
 }: {
   detail: CustomerDetail | null;
   loading: boolean;
   busy: boolean;
   onClose: () => void;
   onSave: (patch: Partial<CustomerProfileInput>, ok: string) => void;
+  /** Resolves true when the change landed. */
+  onChangePhone: (phone: string) => Promise<boolean>;
 }) {
   const [editingContact, setEditingContact] = useState(false);
   const [contact, setContact] = useState<ContactInput>(() => toContact(detail));
@@ -365,6 +395,13 @@ function ProfileDrawer({
                 <Stat label="Points" value={detail.loyaltyPoints.toLocaleString("en-IN")} />
               </div>
 
+              {/* Phone is its own panel, not a row inside the contact editor:
+                  it is the customer's identity and their OTP login handle, so it
+                  moves by a named action behind a confirm rather than by a field
+                  that saves alongside the postal code — and keeping it out here
+                  means confirming it cannot discard an open address edit. */}
+              <PhonePanel detail={detail} onChangePhone={onChangePhone} />
+
               <Section
                 title="Contact & address"
                 editing={editingContact}
@@ -379,13 +416,6 @@ function ProfileDrawer({
                   onSave(contact, "Contact details saved.");
                 }}
               >
-                {/* Phone is read out here and nowhere offered as an input: it is
-                    the customer's identity and their OTP login handle, so
-                    changing it is a merge, not an edit. */}
-                <p className="mb-3 rounded-[9px] border border-line-soft bg-raised px-2.5 py-2">
-                  <span className={labelClass}>Phone · can’t be changed</span>
-                  <span className="font-mono text-[13px] text-body">{detail.phone}</span>
-                </p>
                 {editingContact ? (
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="sm:col-span-2">
@@ -518,6 +548,146 @@ function ProfileDrawer({
         </div>
       </aside>
     </>
+  );
+}
+
+/**
+ * The phone, and the one way it moves.
+ *
+ * Three deliberate steps — reveal the input, then confirm, then write — because
+ * this is the customer's login handle rather than a contact detail: the same
+ * keystroke that fixes a typo would, unconfirmed, sign someone out of an account
+ * they are in the middle of using. The confirm names both numbers and says
+ * plainly what happens to the session.
+ *
+ * The typed value is normalised in the browser with the storefront's own
+ * `normalisePhone`, so the dialog promises the exact digits the column will
+ * hold. The server normalises again and is the authority — this is what makes
+ * the promise honest, not what makes it true.
+ */
+function PhonePanel({
+  detail,
+  onChangePhone,
+}: {
+  detail: CustomerDetail;
+  onChangePhone: (phone: string) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const next = normalisePhone(draft);
+  const valid = next.length === 10;
+  const same = next === detail.phone;
+
+  function cancel() {
+    setEditing(false);
+    setConfirming(false);
+    setDraft("");
+  }
+
+  async function commit() {
+    setSaving(true);
+    const ok = await onChangePhone(draft);
+    setSaving(false);
+    // A failure keeps the typed number on screen — a collision is corrected by
+    // editing what was typed, not by typing it all again.
+    if (ok) cancel();
+    else setConfirming(false);
+  }
+
+  return (
+    // Sits in the drawer's `space-y-3` stack and is styled as one of its cards,
+    // because it is a peer of "Contact & address", not a row inside it.
+    <section className="rounded-[var(--sz-admin-radius-card)] border border-line bg-canvas p-3.5">
+      <div className="flex items-center gap-2">
+        <p className="min-w-0 flex-1">
+          <span className={labelClass}>Phone · login handle</span>
+          <span className="font-mono text-[13px] text-body">{detail.phone}</span>
+        </p>
+        {!editing && (
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(detail.phone);
+              setEditing(true);
+            }}
+            className="min-h-9 shrink-0 rounded-lg px-1 text-xs font-semibold text-primary-700"
+          >
+            Change
+          </button>
+        )}
+      </div>
+
+      {editing && (
+        <div className="mt-2.5 border-t border-line-soft pt-2.5">
+          <label className="block">
+            <span className={labelClass}>New number</span>
+            <input
+              autoFocus
+              type="tel"
+              inputMode="numeric"
+              autoComplete="off"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && valid && !same) setConfirming(true);
+                if (e.key === "Escape") cancel();
+              }}
+              placeholder="98XXXXXXXX"
+              aria-describedby="phone-change-hint"
+              className={cn(fieldClass, "font-mono")}
+            />
+          </label>
+          <p id="phone-change-hint" className="mt-1.5 text-[11px] text-muted">
+            {draft.trim() === "" || same
+              ? "Ten digits. +977, spaces and dashes are fine — they’re stripped."
+              : valid
+                ? `Will be stored as ${next}.`
+                : "That isn’t ten digits yet."}
+          </p>
+          <div className="mt-2.5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={cancel}
+              className="min-h-10 rounded-lg border border-line bg-raised px-3 text-xs font-semibold text-muted"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(true)}
+              disabled={!valid || same}
+              className="min-h-10 rounded-lg bg-primary-700 px-3.5 text-xs font-semibold text-white hover:bg-primary-800 disabled:opacity-[var(--sz-disabled-opacity)]"
+            >
+              Change phone
+            </button>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={confirming}
+        title="Move this customer’s phone?"
+        confirmLabel="Move phone"
+        busy={saving}
+        onCancel={() => setConfirming(false)}
+        onConfirm={commit}
+        body={
+          <>
+            <strong className="text-body">{detail.name?.trim() || "This customer"}</strong> signs in with a code
+            sent to their phone, so their login moves from{" "}
+            <span className="font-mono text-body">{detail.phone}</span> to{" "}
+            <span className="font-mono text-body">{next}</span>. Every session they have open ends now, and they
+            can only sign in again on the new number.
+            <br />
+            <br />
+            Past orders keep the number they were placed with.
+          </>
+        }
+      />
+    </section>
   );
 }
 

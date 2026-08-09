@@ -823,3 +823,24 @@
     }
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Touch devices: form controls never render below 16px.
+ *
+ * iOS Safari auto-zooms the page when a control smaller than 16px receives
+ * focus, and does not zoom back out — which is the lurch that reads as "the
+ * site zoomed on me". The ceremony scale puts controls at 15px (and checkout's
+ * fields at 14.5px), which trips it on nearly every input in the shop.
+ *
+ * Fixed at the cause rather than by blocking zoom: blocking is ignored by iOS
+ * anyway, and it would take zoom away from customers who need it. `max()` keeps
+ * anything already larger — the search overlay's 17px, the OTP boxes' 18px —
+ * exactly as designed, and `pointer: coarse` leaves the desktop scale alone.
+ * ------------------------------------------------------------------------- */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}

@@ -4,6 +4,14 @@ import { useState, useTransition } from "react";
 import { Icon, useToast } from "@/components/ui";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { ProductThumb } from "@/components/admin/product-thumb";
+import {
+  StackedBody,
+  StackedCell,
+  StackedHead,
+  StackedRow,
+  StackedTable,
+  StackedTh,
+} from "@/components/admin/stacked-table";
 import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
 import type { AdminOrderFilters, AdminOrderPage, AdminOrderRow } from "@/lib/admin/orders";
@@ -170,11 +178,30 @@ export function OrdersScreen({
         })}
       </div>
 
-      <div className="overflow-x-auto rounded-[var(--sz-admin-radius-card)] border border-line bg-raised">
-        <table className="w-full min-w-[900px] text-[13px]">
-          <thead>
-            <tr className="border-b border-line-soft text-left text-xs text-muted">
-              <th className="w-10 px-3 py-2.5">
+      {page.rows.length === 0 ? (
+        /* The spec keeps its empty states beside the table rather than inside a
+         * spanning cell — which is also the only version that survives the
+         * collapse, where there are no columns left to span. */
+        <div className="rounded-[var(--sz-admin-radius-card)] border border-line bg-raised px-5 py-12 text-center text-[13px] text-muted">
+          No orders match these filters.
+        </div>
+      ) : (
+        <>
+          {/* Select-all lives in the header row, and the header row is gone once
+            * the table becomes cards — so it gets its own control down there. */}
+          <label className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-muted min-[761px]:hidden">
+            <input
+              type="checkbox"
+              checked={allChecked}
+              onChange={toggleAll}
+              className="size-4 accent-[var(--sz-primary-700)]"
+            />
+            Select all on this page
+          </label>
+
+          <StackedTable label="Orders" tableClassName="min-[761px]:min-w-[900px]">
+            <StackedHead>
+              <StackedTh className="w-10">
                 <input
                   type="checkbox"
                   checked={allChecked}
@@ -182,25 +209,17 @@ export function OrdersScreen({
                   aria-label="Select all loaded orders"
                   className="size-4 accent-[var(--sz-primary-700)]"
                 />
-              </th>
-              <th className="px-3 py-2.5 font-medium">Order #</th>
-              <th className="px-3 py-2.5 font-medium">Date</th>
-              <th className="px-3 py-2.5 font-medium">Customer</th>
-              <th className="px-3 py-2.5 font-medium">Items</th>
-              <th className="whitespace-nowrap px-3 py-2.5 font-medium">Total</th>
-              <th className="px-3 py-2.5 font-medium">Status</th>
-              <th className="px-3 py-2.5 font-medium">Payment</th>
-            </tr>
-          </thead>
-          <tbody>
-            {page.rows.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-[13px] text-muted">
-                  No orders match these filters.
-                </td>
-              </tr>
-            ) : (
-              page.rows.map((row) => (
+              </StackedTh>
+              <StackedTh>Order #</StackedTh>
+              <StackedTh>Date</StackedTh>
+              <StackedTh>Customer</StackedTh>
+              <StackedTh>Items</StackedTh>
+              <StackedTh className="whitespace-nowrap">Total</StackedTh>
+              <StackedTh>Status</StackedTh>
+              <StackedTh>Payment</StackedTh>
+            </StackedHead>
+            <StackedBody>
+              {page.rows.map((row) => (
                 <OrderTr
                   key={row.id}
                   row={row}
@@ -209,11 +228,11 @@ export function OrdersScreen({
                   onToggle={() => toggle(row.id)}
                   onStatus={(key, label) => changeStatus([row.id], key, label)}
                 />
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              ))}
+            </StackedBody>
+          </StackedTable>
+        </>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <p className="font-mono text-[11px] text-muted">
@@ -243,7 +262,10 @@ export function OrdersScreen({
         <div
           role="region"
           aria-label="Bulk actions"
-          className="fixed bottom-5 left-1/2 z-[900] flex -translate-x-1/2 flex-wrap items-center gap-2.5 rounded-[13px] bg-body px-3 py-2.5 shadow-[var(--sz-shadow-modal)]"
+          /* Edge-to-edge by default — a centred bar this wide runs off both sides
+           * of a phone — and centred again above the same 761px boundary the
+           * table uses, so the two never disagree about what "small" means. */
+          className="fixed inset-x-3 bottom-5 z-[900] flex flex-wrap items-center gap-2.5 rounded-[13px] bg-body px-3 py-2.5 shadow-[var(--sz-shadow-modal)] min-[761px]:left-1/2 min-[761px]:right-auto min-[761px]:-translate-x-1/2"
         >
           <span className="px-1 font-mono text-xs font-semibold text-canvas">{selected.size} selected</span>
           <select
@@ -360,8 +382,8 @@ function OrderTr({
 }) {
   const date = new Date(row.createdAt);
   return (
-    <tr className={cn("border-b border-line-soft last:border-0", checked && "bg-admin-canvas")}>
-      <td className="px-3 py-2.5">
+    <StackedRow selected={checked}>
+      <StackedCell label="Select">
         <input
           type="checkbox"
           checked={checked}
@@ -369,23 +391,31 @@ function OrderTr({
           aria-label={`Select order ${row.orderNumber}`}
           className="size-4 accent-[var(--sz-primary-700)]"
         />
-      </td>
-      <td className="whitespace-nowrap px-3 py-2.5">
+      </StackedCell>
+      <StackedCell label="Order #" className="whitespace-nowrap">
         <a
           href={`/admin/orders/${row.id}`}
           className="font-mono text-[12.5px] font-semibold text-primary-700 underline underline-offset-2"
         >
           {row.orderNumber}
         </a>
-      </td>
-      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[11.5px] text-muted">
-        {date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" })}
-      </td>
-      <td className="px-3 py-2.5">
-        <span className="block max-w-[200px] truncate font-medium text-heading">{row.customerName}</span>
-        <span className="font-mono text-[11px] text-muted">{row.phone}</span>
-      </td>
-      <td className="px-3 py-2.5">
+      </StackedCell>
+      <StackedCell label="Date" className="whitespace-nowrap">
+        {/* The mono face sits on the value, not the cell — the cell's `::before`
+          * carries the column name, and that label is UI text. */}
+        <span className="font-mono text-[11.5px] text-muted">
+          {date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" })}
+        </span>
+      </StackedCell>
+      <StackedCell label="Customer">
+        {/* Right-aligned beside its label on a phone, left-aligned in its column
+          * on desktop — the same two lines either way. */}
+        <span className="flex min-w-0 flex-col items-end min-[761px]:items-start">
+          <span className="max-w-[200px] truncate font-medium text-heading">{row.customerName}</span>
+          <span className="font-mono text-[11px] text-muted">{row.phone}</span>
+        </span>
+      </StackedCell>
+      <StackedCell label="Items">
         <span className="flex items-center gap-1.5">
           {row.thumbs.map((src, i) => (
             <ProductThumb key={i} src={src} alt="" size={26} />
@@ -394,11 +424,11 @@ function OrderTr({
             {row.itemCount} item{row.itemCount === 1 ? "" : "s"}
           </span>
         </span>
-      </td>
-      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[13px] font-semibold text-heading">
-        {formatPrice(row.total)}
-      </td>
-      <td className="px-3 py-2.5">
+      </StackedCell>
+      <StackedCell label="Total" className="whitespace-nowrap">
+        <span className="font-mono text-[13px] font-semibold text-heading">{formatPrice(row.total)}</span>
+      </StackedCell>
+      <StackedCell label="Status">
         <select
           value={row.status}
           onChange={(e) => {
@@ -419,19 +449,25 @@ function OrderTr({
           {/* A status removed out of band still renders its own row truthfully. */}
           {!statuses.some((s) => s.key === row.status) && <option value={row.status}>{row.statusLabel}</option>}
         </select>
-      </td>
-      <td className="px-3 py-2.5">
-        <span className="block text-xs capitalize text-body">{row.paymentMethod}</span>
-        <span
-          className={cn(
-            "font-mono text-[10px] font-semibold capitalize",
-            row.paymentStatus === "paid" ? "text-success" : row.paymentStatus === "failed" ? "text-error" : "text-muted",
-          )}
-        >
-          {row.paymentStatus}
+      </StackedCell>
+      <StackedCell label="Payment">
+        <span className="flex flex-col items-end min-[761px]:items-start">
+          <span className="text-xs capitalize text-body">{row.paymentMethod}</span>
+          <span
+            className={cn(
+              "font-mono text-[10px] font-semibold capitalize",
+              row.paymentStatus === "paid"
+                ? "text-success"
+                : row.paymentStatus === "failed"
+                  ? "text-error"
+                  : "text-muted",
+            )}
+          >
+            {row.paymentStatus}
+          </span>
         </span>
-      </td>
-    </tr>
+      </StackedCell>
+    </StackedRow>
   );
 }
 

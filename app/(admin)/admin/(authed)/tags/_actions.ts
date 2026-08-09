@@ -8,6 +8,7 @@ import {
   deleteTag,
   setTagVisibility,
   assignTagGroup,
+  moveTag,
   mergeTag,
   createTagGroup,
   renameTagGroup,
@@ -48,6 +49,18 @@ export async function setTagVisibilityAction(id: number, visible: boolean): Prom
 }
 export async function assignTagGroupAction(id: number, groupId: number | null): Promise<TagsResult> {
   return gated((a) => assignTagGroup(a, id, groupId));
+}
+/**
+ * One drop, or one use of the keyboard "Move" control: `orderedIds` is the
+ * destination group's membership as the screen now shows it, moved tag included.
+ * The data layer decides what of that it will honour — see `moveTag`.
+ */
+export async function moveTagAction(
+  id: number,
+  groupId: number | null,
+  orderedIds: number[],
+): Promise<TagsResult> {
+  return gated((a) => moveTag(a, id, groupId, orderedIds));
 }
 export async function mergeTagAction(sourceId: number, destId: number): Promise<TagsResult> {
   return gated((a) => mergeTag(a, sourceId, destId));

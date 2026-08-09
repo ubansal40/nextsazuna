@@ -743,6 +743,68 @@ export async function assignTagGroup(admin: AdminContext, id: number, groupId: n
 }
 
 /**
+ * Move a tag into a group and settle that group's order — one drop, one write.
+ *
+ * The two halves are inseparable: dragging a tag from Occasion into Style both
+ * reassigns it and decides where in Style it lands, and doing them as separate
+ * statements would leave a tag grouped but unpositioned if the second failed.
+ * Reordering inside one group is the same call with the group unchanged.
+ *
+ * `orderedIds` is the destination group's membership as the screen now shows it,
+ * including the moved tag, and it becomes `sort_order` 1..n. It is the user's
+ * intent, so it can only come from the client — but it is not trusted:
+ *
+ *   - ids are sanitised to positive integers and de-duplicated, so a repeated id
+ *     cannot make two tags fight over one position;
+ *   - each UPDATE is constrained by `group_id <=> ?`, the null-safe equal, so a
+ *     request can only renumber tags that really are in the group it claims to
+ *     have reordered (and the Ungrouped bucket, `group_id IS NULL`, is matched by
+ *     that same clause rather than needing a second statement);
+ *   - the destination group is verified to exist first, so a stale id fails as a
+ *     sentence rather than as an FK error with a constraint name in it.
+ *
+ * `tags.sort_order` has existed since migration 0011, so this needs no schema
+ * change. `listTags` already reads `ORDER BY t.sort_order, t.name`, which is what
+ * makes a tag left at the default 0 sort by name — the state every tag is in
+ * until the first drag renumbers its group.
+ */
+export async function moveTag(
+  admin: AdminContext,
+  id: number,
+  groupId: number | null,
+  orderedIds: number[],
+): Promise<void> {
+  if (!Number.isInteger(id) || id <= 0) throw new Error("That tag no longer exists.");
+  const ids = [...new Set(orderedIds.filter((n) => Number.isInteger(n) && n > 0))];
+
+  await transaction(async (conn) => {
+    if (groupId != null) {
+      const [[group]] = await conn.execute<(RowDataPacket & { id: number })[]>(
+        "SELECT id FROM tag_groups WHERE id = ? LIMIT 1",
+        [groupId],
+      );
+      if (!group) throw new Error("That tag group no longer exists.");
+    }
+
+    const [moved] = await conn.execute<ResultSetHeader>("UPDATE tags SET group_id = ? WHERE id = ?", [groupId, id]);
+    if (moved.affectedRows === 0) throw new Error("That tag no longer exists.");
+
+    for (let i = 0; i < ids.length; i += 1) {
+      await conn.execute("UPDATE tags SET sort_order = ? WHERE id = ? AND group_id <=> ?", [i + 1, ids[i], groupId]);
+    }
+
+    await recordAdminAction(conn, admin, {
+      action: "tags.move",
+      resourceType: "tags",
+      resourceId: id,
+      // `position` is 1-based and null when the moved tag is somehow not in the
+      // order it was sent with — the audit says what happened, not what was meant.
+      metadata: { groupId, position: ids.indexOf(id) + 1 || null, count: ids.length },
+    });
+  });
+}
+
+/**
  * Merge one tag into another: every product tagged with the source gains the
  * destination (INSERT IGNORE, so a product already carrying both does not clash),
  * the source's product links are removed, and the source tag is deleted — all in
