@@ -1,6 +1,5 @@
 "use server";
 
-import { after } from "next/server";
 import { requireSection } from "@/lib/admin/require";
 import {
   saveProduct,
@@ -9,17 +8,18 @@ import {
   type ProductInput,
 } from "@/lib/admin/product-write";
 import { previewRulePrice } from "@/lib/admin/product-write";
-import { drainImageJobs } from "@/lib/admin/image-jobs";
-import { ImageQueueFullError } from "@/lib/admin/image-queue";
 import { lookupSkuWeights, getSkuSheetStatus, type SkuSheetStatus } from "@/lib/admin/sku-weights";
 
 /**
  * Product editor save. Re-gates and re-validates — the client's validation is a
  * courtesy, this is the boundary. Resolves rather than rejects; a validation
  * failure names the field so the card can mark it.
+ *
+ * The save is now the cheap half of adding a product: the photos were processed
+ * as they were uploaded, so this writes rows and returns.
  */
 export type SaveProductResult =
-  | { ok: true; id: number; processing: boolean }
+  | { ok: true; id: number }
   | { ok: false; error: string; field?: string };
 
 export async function saveProductAction(
@@ -30,36 +30,10 @@ export async function saveProductAction(
   try {
     const input = parseProductInput(raw);
     const result = await saveProduct(admin, { id: id ?? undefined, input });
-
-    /**
-     * Turn the queue's crank without making the save wait for it.
-     *
-     * `after()` runs once the response has been sent but still inside the
-     * request's lifetime, which is the closest this runtime has to the
-     * reference's background worker. The save returns the moment the product is
-     * committed; the photos are encoded behind it.
-     *
-     * Deliberately not awaited and deliberately allowed to fail silently — the
-     * product IS saved and its job IS queued, so a drain that never runs is a
-     * delay, not a loss. The editor polls, and the drain route and cron are the
-     * other two ways the same work gets picked up.
-     */
-    if (result.processing) {
-      after(async () => {
-        await drainImageJobs();
-      });
-    }
-
     return { ok: true, ...result };
   } catch (error) {
     if (error instanceof ProductValidationError) {
       return { ok: false, error: error.message, field: error.field };
-    }
-    // The backlog cap refused the save outright. Its message is written for the
-    // operator and says what to do, so it is passed through rather than
-    // flattened into "couldn't save".
-    if (error instanceof ImageQueueFullError) {
-      return { ok: false, error: error.message };
     }
     console.error("[admin] save product failed", error);
     return { ok: false, error: "Couldn't save. Please try again." };

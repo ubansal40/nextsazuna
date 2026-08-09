@@ -4,8 +4,7 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { pool, transaction } from "../db";
 import { recordAdminAction } from "./audit";
 import { computeRulePrice, type PricingRuleCondition } from "./pricing";
-import { enqueueImageJob } from "./image-jobs";
-import { isRawUrl } from "./images";
+import { MAX_PRODUCT_PHOTOS } from "./product-limits";
 import type { AdminContext } from "./rbac";
 
 /**
@@ -13,8 +12,11 @@ import type { AdminContext } from "./rbac";
  *
  * Everything the reference validates, plus the guards it lacks and the pricing
  * model the owner chose. The base price is derived from the matching pricing
- * rule at save (the editor's field is the sale price); raw photos force the
- * product to draft until the image job restores its visibility.
+ * rule at save (the editor's field is the sale price).
+ *
+ * Photos arrive already processed — the upload route encodes each one before it
+ * ever reaches this function, so there is no draft-until-the-images-are-ready
+ * state and no job to enqueue. A saved product's images exist.
  */
 
 export interface ProductInput {
@@ -32,7 +34,7 @@ export interface ProductInput {
   stoneWeight: string;
   categoryIds: number[];
   tagIds: number[];
-  /** A mix of freshly-uploaded raw URLs and already-processed URLs. */
+  /** Processed image URLs, in gallery order. The first is the cover. */
   imageUrls: string[];
   alwaysAvailable: boolean;
 }
@@ -77,6 +79,15 @@ export function parseProductInput(raw: Partial<ProductInput>): ProductInput {
   const categoryIds = [...new Set((raw.categoryIds ?? []).filter((n) => Number.isInteger(n) && n > 0))];
   if (categoryIds.length === 0) throw new ProductValidationError("Choose at least one category.", "categories");
 
+  // De-duplicated first: the same photo listed twice is one photo, and counting
+  // it as two would refuse a save the operator has no way to understand.
+  const imageUrls = [
+    ...new Set((raw.imageUrls ?? []).filter((u): u is string => typeof u === "string" && u.length > 0)),
+  ];
+  if (imageUrls.length > MAX_PRODUCT_PHOTOS) {
+    throw new ProductValidationError(`At most ${MAX_PRODUCT_PHOTOS} photos per product.`, "photos");
+  }
+
   return {
     name: name.slice(0, 180),
     sku: sku.slice(0, 80),
@@ -91,7 +102,7 @@ export function parseProductInput(raw: Partial<ProductInput>): ProductInput {
     stoneWeight: decimal(raw.stoneWeight, "stoneWeight"),
     categoryIds,
     tagIds: [...new Set((raw.tagIds ?? []).filter((n) => Number.isInteger(n) && n > 0))],
-    imageUrls: (raw.imageUrls ?? []).filter((u): u is string => typeof u === "string" && u.length > 0),
+    imageUrls,
     alwaysAvailable: raw.alwaysAvailable === true,
   };
 }
@@ -129,8 +140,11 @@ interface SlugRow extends RowDataPacket {
 }
 interface CurrentRow extends RowDataPacket {
   slug: string;
+  sku: string;
   price: string;
   is_active: number;
+  /** How many photos the product has right now — governs the SKU lock. */
+  photo_count: number;
 }
 
 /** Active rules in priority order, with their weight bands mapped for the
@@ -254,41 +268,57 @@ function autoDescription(input: ProductInput): string {
 
 export interface SaveResult {
   id: number;
-  /** True when raw photos are being processed — the product is a draft until the
-   *  job finishes and restores its intended visibility. */
-  processing: boolean;
 }
 
 /**
- * Create (no id) or update (id) a product. Raw photos force the product to draft
- * and are handed to the image queue; a save with only already-processed images
- * keeps its intended visibility. Everything writes in one transaction with its
- * audit line.
+ * Create (no id) or update (id) a product, in one transaction with its audit
+ * line.
  *
- * This function does NOT process images. It used to, and that was the flaw
- * worth naming: a 4000×3000 photo takes seconds to encode, several take longer
- * than a request should live, and any failure left the product a draft with no
- * route back. Saving now returns as soon as the row and its job are committed;
- * `drainImageJobs` does the work, triggered by whoever gets there first.
+ * This function does NOT process images, and no longer needs to know that they
+ * exist as anything other than URLs. Each photo was encoded by the upload route
+ * as it was added, so by the time a save happens the files are on disk and the
+ * product can be published immediately. The intermediate state this used to
+ * have — saved, draft, photos pending, visibility to be restored later by a job
+ * — is gone along with the queue that produced it.
  */
 export async function saveProduct(
   admin: AdminContext,
   args: { id?: number; input: ProductInput },
 ): Promise<SaveResult> {
   const { id, input } = args;
-  const rawUrls = input.imageUrls.filter(isRawUrl);
-  const existingUrls = input.imageUrls.filter((u) => !isRawUrl(u));
+  const imageUrls = input.imageUrls;
 
   // Current state for an update: keep the existing slug and, when no rule
   // matches, the existing price and visibility.
   let current: CurrentRow | null = null;
   if (id) {
     const [rows] = await pool().execute<CurrentRow[]>(
-      "SELECT slug, price, is_active FROM products WHERE id = ? LIMIT 1",
+      `SELECT p.slug, p.sku, p.price, p.is_active,
+              (SELECT COUNT(*) FROM product_images pi WHERE pi.product_id = p.id) AS photo_count
+         FROM products p WHERE p.id = ? LIMIT 1`,
       [id],
     );
     current = rows[0] ?? null;
     if (!current) throw new ProductValidationError("Product not found.", "name");
+
+    /**
+     * The SKU lock.
+     *
+     * The SKU is burned into every photo of this product, so changing it while
+     * photos exist puts a code on the image that disagrees with the record —
+     * wrong data in a file nobody thinks to re-check, discovered eventually by
+     * a customer. The originals are not kept (a 4 MB photo per shot on shared
+     * hosting was not worth it), so there is nothing to re-stamp from either.
+     *
+     * The editor disables the field, which is where an operator actually meets
+     * this rule. This is the boundary that makes it true.
+     */
+    if (Number(current.photo_count) > 0 && input.sku !== current.sku) {
+      throw new ProductValidationError(
+        "This product's photos are stamped with its SKU, so the SKU can't be changed. Remove the photos first.",
+        "sku",
+      );
+    }
   }
 
   // Base (MRP) pricing. On CREATE the matching rule derives it from the piece's
@@ -304,11 +334,9 @@ export async function saveProduct(
       : current!.price
     : await resolveBasePrice(input, input.salePrice);
   const description = autoDescription(input);
-  // New products publish by default; an edit keeps its visibility. Raw photos
-  // force draft either way, restored by the job.
-  const desiredActive = id ? current!.is_active === 1 : true;
-  const activeNow = rawUrls.length > 0 ? 0 : desiredActive ? 1 : 0;
-  const primaryImage = rawUrls.length > 0 ? null : (existingUrls[0] ?? null);
+  // New products publish by default; an edit keeps whatever visibility it had.
+  const activeNow = (id ? current!.is_active === 1 : true) ? 1 : 0;
+  const primaryImage = imageUrls[0] ?? null;
 
   try {
     const savedId = await transaction(async (conn) => {
@@ -320,14 +348,14 @@ export async function saveProduct(
           `UPDATE products SET name=?, slug=?, sku=?, description=?, material=?, purity=?, stone_type=?,
                  gross_weight=?, net_weight=?, diamond_weight=?, stone_weight=?,
                  price=?, sale_price=?, always_available=?, is_active=?,
-                 image_url=COALESCE(?, image_url)
+                 image_url=?
              WHERE id=?`,
           [
             input.name, slug, input.sku, description, input.material || null, input.purity || null,
             input.stoneType || null, input.grossWeight || null, input.netWeight || null,
             input.diamondWeight || null, input.stoneWeight || null, price, input.salePrice,
             input.alwaysAvailable ? 1 : 0, activeNow,
-            rawUrls.length > 0 ? null : primaryImage, id,
+            primaryImage, id,
           ],
         );
         productId = id;
@@ -351,29 +379,27 @@ export async function saveProduct(
 
       await writeJoins(conn, productId, input);
 
-      if (rawUrls.length > 0) {
-        await enqueueImageJob(conn, { productId, sku: input.sku, rawUrls, desiredActive });
-      } else {
-        // Reconcile product_images with the kept URLs.
-        await conn.execute("DELETE FROM product_images WHERE product_id = ?", [productId]);
-        for (let i = 0; i < existingUrls.length; i += 1) {
-          await conn.execute("INSERT INTO product_images (product_id, image_url, sort_order) VALUES (?, ?, ?)", [
-            productId, existingUrls[i], i + 1,
-          ]);
-        }
+      // Reconcile product_images with the submitted list. Rewritten wholesale
+      // rather than diffed: the list carries its own order, and `sort_order`
+      // IS the gallery order, so position 1 is the cover.
+      await conn.execute("DELETE FROM product_images WHERE product_id = ?", [productId]);
+      for (let i = 0; i < imageUrls.length; i += 1) {
+        await conn.execute("INSERT INTO product_images (product_id, image_url, sort_order) VALUES (?, ?, ?)", [
+          productId, imageUrls[i], i + 1,
+        ]);
       }
 
       await recordAdminAction(conn, admin, {
         action: id ? "product.update" : "product.create",
         resourceType: "product",
         resourceId: productId,
-        metadata: { sku: input.sku, name: input.name, raw_images: rawUrls.length },
+        metadata: { sku: input.sku, name: input.name, images: imageUrls.length },
       });
 
       return productId;
     });
 
-    return { id: savedId, processing: rawUrls.length > 0 };
+    return { id: savedId };
   } catch (error) {
     if (error instanceof ProductValidationError) throw error;
     const code = (error as { code?: string }).code;

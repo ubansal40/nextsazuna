@@ -27,10 +27,56 @@ export type AutoField = (typeof AUTO_FIELDS)[number];
  */
 export type Origin = "empty" | "auto" | "typed";
 
+/**
+ * One photo tile.
+ *
+ * `url` is a local `blob:` preview while the file is being processed and the
+ * served `/uploads/products/...` URL once it is done — so the tile shows the
+ * operator's own photograph immediately and visibly becomes the stamped
+ * catalogue image about two seconds later. `id` exists because the URL changes
+ * underneath it and React needs an identity that does not.
+ *
+ * A `failed` photo keeps its tile on purpose. Dropping it and showing a toast
+ * tells the operator that *something* failed among five files; keeping it says
+ * which one, next to the picture, with the reason.
+ */
 export interface CardPhoto {
+  id: string;
   url: string;
-  /** A freshly-uploaded original, still to go through the image pipeline. */
-  raw: boolean;
+  status: "uploading" | "ready" | "failed";
+  error: string | null;
+}
+
+let photoSeq = 0;
+export function nextPhotoId(): string {
+  photoSeq += 1;
+  return `photo-${photoSeq}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function readyPhoto(url: string): CardPhoto {
+  return { id: nextPhotoId(), url, status: "ready", error: null };
+}
+
+/** The URLs a save may write — never a blob: preview, never a failed upload. */
+export function readyPhotoUrls(card: EditorCard): string[] {
+  return card.photos.filter((p) => p.status === "ready").map((p) => p.url);
+}
+
+/** True while any photo is still being processed by the upload route. */
+export function hasUploadingPhotos(card: EditorCard): boolean {
+  return card.photos.some((p) => p.status === "uploading");
+}
+
+/**
+ * Whether this card's SKU may still be edited.
+ *
+ * The SKU is stamped into every photo, and the originals are not kept, so a SKU
+ * change with photos attached would leave the wrong code burned into the image
+ * with no way to re-render it. Removing the photos is the way out, and it is the
+ * honest one — the photographs genuinely do have to be redone.
+ */
+export function skuLocked(card: EditorCard): boolean {
+  return card.photos.length > 0;
 }
 
 export type CardStatus = "editing" | "saving" | "saved" | "failed";
@@ -139,7 +185,7 @@ export function cardFromProduct(product: AdminProductDetail): EditorCard {
     stone: product.stoneWeight,
     categoryIds: product.categoryIds.map(String),
     tagIds: product.tagIds.map(String),
-    photos: product.imageUrls.map((url) => ({ url, raw: false })),
+    photos: product.imageUrls.map(readyPhoto),
     alwaysAvailable: product.alwaysAvailable,
     origin: {
       purity: origin(product.purity),

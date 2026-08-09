@@ -20,9 +20,14 @@ import {
   duplicateCard,
   effectiveName,
   hasAnyWeight,
+  hasUploadingPhotos,
+  nextPhotoId,
   priceSignature,
+  readyPhotoUrls,
+  type CardPhoto,
   type EditorCard,
 } from "./editor-model";
+import { MAX_PHOTO_BYTES, MAX_PRODUCT_PHOTOS, photoSizeLimitMessage } from "@/lib/admin/product-limits";
 
 /**
  * The shared product-card editor from Sazuna Admin Products.dc.html, in two of
@@ -70,7 +75,6 @@ export function ProductEditor({
 
   const [cards, setCards] = useState<EditorCard[]>(() => [product ? cardFromProduct(product) : blankCard()]);
   const [sheet, setSheet] = useState(sheetStatus);
-  const [uploading, setUploading] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [banner, setBanner] = useState<Banner>({ kind: "none" });
@@ -178,35 +182,94 @@ export function ProductEditor({
 
   /* --- photos -------------------------------------------------------------- */
 
+  /**
+   * Upload and process photos — one request per file.
+   *
+   * Each file gets its tile immediately, showing the operator's own photograph
+   * from a local blob URL, and that tile is replaced by the stamped 1000×1000
+   * AVIF when its own request returns. So the watermark, the crop and the SKU
+   * are all confirmed on screen BEFORE the product is saved, rather than
+   * discovered afterwards on the storefront.
+   *
+   * Two at a time, matching the server's own gate. The browser would happily
+   * open six connections; six concurrent sharp pipelines on shared hosting is
+   * how the process gets OOM-killed, and the request that waits for a slot is
+   * still holding its uploaded bytes in memory while it waits.
+   */
   const uploadPhotos = useCallback(
     async (key: string, files: FileList | null) => {
       if (!files || files.length === 0) return;
       const card = cardsRef.current.find((c) => c.key === key);
-      setUploading((current) => new Set(current).add(key));
-      try {
-        const body = new FormData();
-        body.set("sku", card?.sku.trim() || "product");
-        for (const file of Array.from(files)) body.append("images", file);
-        const response = await fetch("/admin/products/upload", { method: "POST", body });
-        const data = (await response.json()) as { urls?: string[]; error?: string };
-        if (!response.ok || !data.urls) {
-          toast("error", data.error ?? "Upload failed.");
-          return;
-        }
-        const urls = data.urls;
-        setTouched(true);
-        setCards((current) =>
-          current.map((c) => (c.key === key ? { ...c, photos: [...c.photos, ...urls.map((url) => ({ url, raw: true }))] } : c)),
-        );
-      } catch {
-        toast("error", "Upload failed.");
-      } finally {
-        setUploading((current) => {
-          const next = new Set(current);
-          next.delete(key);
-          return next;
-        });
+      if (!card) return;
+
+      const sku = card.sku.trim();
+      if (!sku) {
+        toast("error", "Enter the SKU first — it gets stamped onto the photo.");
+        return;
       }
+
+      const room = MAX_PRODUCT_PHOTOS - card.photos.length;
+      if (room <= 0) {
+        toast("error", `That's the limit of ${MAX_PRODUCT_PHOTOS} photos.`);
+        return;
+      }
+
+      const chosen = Array.from(files);
+      const accepted = chosen.slice(0, room);
+      if (chosen.length > accepted.length) {
+        toast("info", `Only ${accepted.length} of ${chosen.length} added — the limit is ${MAX_PRODUCT_PHOTOS}.`);
+      }
+
+      const oversize = accepted.filter((f) => f.size > MAX_PHOTO_BYTES);
+      const usable = accepted.filter((f) => f.size <= MAX_PHOTO_BYTES);
+      if (oversize.length > 0) toast("error", photoSizeLimitMessage());
+      if (usable.length === 0) return;
+
+      // Tiles first, upload second: the point of doing this per file is that the
+      // operator sees the photo land instantly.
+      const tiles = usable.map((file) => ({
+        file,
+        photo: { id: nextPhotoId(), url: URL.createObjectURL(file), status: "uploading" as const, error: null },
+      }));
+      setTouched(true);
+      setCards((current) =>
+        current.map((c) => (c.key === key ? { ...c, photos: [...c.photos, ...tiles.map((t) => t.photo)] } : c)),
+      );
+
+      const settle = (id: string, next: Partial<CardPhoto>, revoke: string | null) => {
+        if (revoke) URL.revokeObjectURL(revoke);
+        setCards((current) =>
+          current.map((c) =>
+            c.key === key ? { ...c, photos: c.photos.map((p) => (p.id === id ? { ...p, ...next } : p)) } : c,
+          ),
+        );
+      };
+
+      let next = 0;
+      const worker = async (): Promise<void> => {
+        for (;;) {
+          const index = next;
+          next += 1;
+          if (index >= tiles.length) return;
+          const { file, photo } = tiles[index];
+          try {
+            const body = new FormData();
+            body.set("sku", sku);
+            body.append("image", file);
+            const response = await fetch("/admin/products/upload", { method: "POST", body });
+            const data = (await response.json()) as { url?: string; error?: string };
+            if (!response.ok || !data.url) {
+              settle(photo.id, { status: "failed", error: data.error ?? "That photo couldn't be processed." }, null);
+              continue;
+            }
+            settle(photo.id, { status: "ready", url: data.url, error: null }, photo.url);
+          } catch {
+            settle(photo.id, { status: "failed", error: "Upload failed — check your connection." }, null);
+          }
+        }
+      };
+
+      await Promise.all([worker(), worker()]);
     },
     [toast],
   );
@@ -279,21 +342,34 @@ export function ProductEditor({
         setCards((current) => current.filter((c) => c.key !== card.key));
       },
       addPhotos: (files) => void uploadPhotos(card.key, files),
-      setCover: (index) => {
+      /** Reorder by drag or by arrow key. Position 0 IS the cover — one
+       *  interaction does both jobs, as it does everywhere else. */
+      movePhoto: (from, to) => {
         setTouched(true);
         setCards((current) =>
           current.map((c) => {
-            if (c.key !== card.key || index === 0) return c;
+            if (c.key !== card.key) return c;
+            if (from === to || from < 0 || from >= c.photos.length) return c;
+            const target = Math.max(0, Math.min(c.photos.length - 1, to));
             const photos = [...c.photos];
-            const [moved] = photos.splice(index, 1);
-            return { ...c, photos: [moved, ...photos] };
+            const [moved] = photos.splice(from, 1);
+            photos.splice(target, 0, moved);
+            return { ...c, photos };
           }),
         );
       },
       removePhoto: (index) => {
         setTouched(true);
         setCards((current) =>
-          current.map((c) => (c.key === card.key ? { ...c, photos: c.photos.filter((_, i) => i !== index) } : c)),
+          current.map((c) => {
+            if (c.key !== card.key) return c;
+            const gone = c.photos[index];
+            // A tile that never finished still holds an object URL; dropping the
+            // reference without revoking leaks the whole file for the life of
+            // the page, and these are 25 MB photographs.
+            if (gone && gone.status !== "ready") URL.revokeObjectURL(gone.url);
+            return { ...c, photos: c.photos.filter((_, i) => i !== index) };
+          }),
         );
       },
     }),
@@ -350,6 +426,14 @@ export function ProductEditor({
       return;
     }
 
+    // A photo mid-conversion has no served URL yet, so saving now would write
+    // the product without it and silently lose the picture. Two seconds is
+    // worth waiting; a missing photograph discovered later is not.
+    if (work.some(hasUploadingPhotos)) {
+      toast("error", "Hold on — photos are still being processed.");
+      return;
+    }
+
     const marks = new Map<string, Record<string, string>>();
     for (const card of work) {
       const errors = validate(card);
@@ -388,7 +472,6 @@ export function ProductEditor({
 
     let saved = 0;
     let failed = 0;
-    let processing = 0;
     // One at a time. The image work no longer happens in the save, so this is
     // no longer about sharp — it is so a card that fails to validate marks
     // itself while the rest keep going, and so the progress counter means
@@ -410,13 +493,12 @@ export function ProductEditor({
         stoneWeight: card.stone,
         categoryIds: card.categoryIds.map(Number),
         tagIds: card.tagIds.map(Number),
-        imageUrls: card.photos.map((p) => p.url),
+        imageUrls: readyPhotoUrls(card),
         alwaysAvailable: card.alwaysAvailable,
       });
 
       if (result.ok) {
         saved += 1;
-        if (result.processing) processing += 1;
         setCards((current) =>
           current.map((c) =>
             c.key === card.key ? { ...c, status: "saved", savedId: result.id, errors: {}, failure: null } : c,
@@ -449,17 +531,8 @@ export function ProductEditor({
 
     setTouched(false);
 
-    // Say what is still happening. The save returns before the photos are
-    // encoded, so a product with new photos is genuinely saved but genuinely
-    // not finished — and a bare "created" would have the operator wondering why
-    // the list shows no image and a Draft chip.
-    const photoNote =
-      processing > 0
-        ? ` Photos are processing — ${processing === 1 ? "the product goes" : "they go"} live once they're ready.`
-        : "";
-
     if (mode === "edit") {
-      toast("success", `Product updated.${photoNote}`);
+      toast("success", "Product updated.");
       router.push("/admin/products");
       router.refresh();
       return;
@@ -467,7 +540,7 @@ export function ProductEditor({
     setBanner({ kind: "done", text: `${saved} product${saved === 1 ? "" : "s"} created` });
     toast(
       "success",
-      `${saved} product${saved === 1 ? "" : "s"} created.${photoNote || " Add more below, or head to the products list."}`,
+      `${saved} product${saved === 1 ? "" : "s"} created. Add more below, or head to the products list.`,
     );
     router.refresh();
   }
@@ -543,7 +616,6 @@ export function ProductEditor({
               index={index}
               mode={mode}
               options={options}
-              uploading={uploading.has(card.key)}
               handlers={handlersFor(card)}
             />
           ))}

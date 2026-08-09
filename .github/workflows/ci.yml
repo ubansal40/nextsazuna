@@ -63,9 +63,11 @@ jobs:
       - name: Journal renderer checks
         run: npm run check:blog
 
-      # Runs the real sharp pipeline on a generated image and asserts the output
-      # is a 1000×1000 AVIF — the product image handling must match the reference,
-      # and the output is a binary no reviewer reads by eye.
+      # Runs the real sharp pipeline on generated images. Beyond "it made an
+      # AVIF": a blank SKU stamp is not an exception — pango returns a
+      # transparent bitmap when no mono font is installed — so the same photo
+      # stamped with two SKUs must differ, and the concurrency gate that keeps
+      # sharp from OOM-killing the box is exercised here too.
       - name: Product image pipeline checks
         run: npm run check:images
 
@@ -91,12 +93,6 @@ jobs:
       # column detected one position out prices jewellery from the wrong number.
       - name: SKU sheet parsing checks
         run: npm run check:sku-sheet
-
-      # The image queue decides whether a product's photos ever appear. Its
-      # claim/retry/supersede logic is pure and is exercised here; a stranded
-      # job is invisible until a customer sees a product with no picture.
-      - name: Image queue checks
-        run: npm run check:image-queue
 
       - name: Typecheck
         run: npm run typecheck

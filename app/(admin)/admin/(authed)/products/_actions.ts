@@ -1,8 +1,6 @@
 "use server";
 
-import { after } from "next/server";
 import { requireSection } from "@/lib/admin/require";
-import { drainImageJobs, getImageJobStates, retryImageJob, type ImageJobState } from "@/lib/admin/image-jobs";
 import {
   listAdminProducts,
   setProductsVisibility,
@@ -115,67 +113,6 @@ export async function applyBulkEdit(ids: number[], changes: BulkProductChanges):
     if (error instanceof BulkEditError) return { ok: false, error: error.message };
     console.error("[admin] bulk edit failed", error);
     return { ok: false, error: "That didn't save. Nothing was changed." };
-  }
-}
-
-/* --- image queue ----------------------------------------------------------- */
-
-/**
- * Ask the queue what it is doing about the products currently on screen.
- *
- * The list polls this while any loaded row is processing, and each poll is also
- * a trigger: with no daemon, an operator watching the screen is the most
- * reliable crank there is.
- *
- * It reads the state FIRST and drains in `after()`, rather than draining and
- * then reading. Draining first would be more satisfying — the poll would report
- * the work it just did — but it would also make every poll last as long as a
- * job, so a 4-second interval would stack up requests that all block on the
- * same encode. Reading first keeps the poll instant; the drain it kicks off is
- * reported by the next one.
- */
-export async function pollImageJobs(productIds: number[]): Promise<ImageJobState[]> {
-  await requireSection("products");
-  const states = await getImageJobStates(productIds);
-  after(async () => {
-    await drainImageJobs();
-  });
-  return states;
-}
-
-export type RetryImagesResult = { ok: true } | { ok: false; error: string };
-
-/**
- * Re-queue a product whose photos failed.
- *
- * The recovery path the inline pipeline had no answer for: before this, a
- * failed encode left the product in Draft with no images and the only way out
- * was re-uploading photos the operator may no longer have. The raw originals
- * are kept until a job succeeds precisely so this button has something to work
- * with.
- */
-export async function retryProductImages(productId: number): Promise<RetryImagesResult> {
-  const admin = await requireSection("products");
-  try {
-    const outcome = await retryImageJob(admin, productId);
-    if (!outcome.ok) {
-      return {
-        ok: false,
-        error:
-          outcome.reason === "no_raw_files"
-            ? "The original photos are no longer on the server — upload them again."
-            : outcome.reason === "not_failed"
-              ? "There's nothing to retry for this product."
-              : "This product has no photo job to retry.",
-      };
-    }
-    after(async () => {
-      await drainImageJobs();
-    });
-    return { ok: true };
-  } catch (error) {
-    console.error("[admin] retry product images failed", error);
-    return { ok: false, error: "Couldn't restart that. Please try again." };
   }
 }
 

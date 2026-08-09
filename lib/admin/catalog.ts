@@ -144,20 +144,12 @@ export async function listAdminProducts(filters: AdminProductFilters): Promise<A
             ${EFFECTIVE_PRICE} AS effective_price,
             p.is_active, p.always_available, p.material, p.purity,
             GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ', ') AS category_names,
-            GROUP_CONCAT(DISTINCT t.name ORDER BY t.name SEPARATOR ', ') AS tag_names,
-            latest_job.status AS image_processing_status,
-            latest_job.error_message AS image_processing_error
+            GROUP_CONCAT(DISTINCT t.name ORDER BY t.name SEPARATOR ', ') AS tag_names
        FROM products p
        LEFT JOIN product_categories pc ON pc.product_id = p.id
        LEFT JOIN categories c ON c.id = pc.category_id
        LEFT JOIN product_tags pt ON pt.product_id = p.id
        LEFT JOIN tags t ON t.id = pt.tag_id
-       LEFT JOIN (
-         SELECT j.product_id, j.status, j.error_message
-         FROM product_image_jobs j
-         JOIN (SELECT product_id, MAX(id) AS latest FROM product_image_jobs GROUP BY product_id) g
-           ON g.product_id = j.product_id AND g.latest = j.id
-       ) latest_job ON latest_job.product_id = p.id
        ${whereClause}
        GROUP BY p.id
        ORDER BY ${orderBy}

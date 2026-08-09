@@ -1,30 +1,33 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp, { type OverlayOptions } from "sharp";
-import { PermanentImageError } from "./image-queue";
 
 /**
- * The product image pipeline — matched to sazuna-unik 2's, as instructed.
+ * The product image pipeline.
  *
  * Every raw photo becomes a 1000×1000 AVIF with the Sazuna logo composited
  * top-centre and the SKU stamped bottom-left on a translucent rounded label.
  * The constants (size, logo width/top, SKU font/left/bottom, AVIF quality) are
- * the reference's verbatim, so a product photographed for the old shop and one
+ * sazuna-unik 2's verbatim, so a product photographed for the old shop and one
  * uploaded here come out identical.
  *
- * Two deliberate differences from the reference, both invisible in the output:
+ * Processing happens **inside the upload request**, one photo at a time. It used
+ * to happen in a database-backed job queue with claim tokens, retry backoff and
+ * a cron to turn the crank — all of which existed to solve one problem: a save
+ * carrying twelve photos took longer than a request may live. Uploading one
+ * photo per request makes that problem disappear, and with it the queue, the
+ * `product_image_jobs` table, the stranded-job recovery, and the class of bug
+ * where a product sits "Processing" forever because nothing triggered a drain.
+ * What replaces the queue's memory ceiling is `image-limit.ts`.
  *
- *   - The SKU label uses the system monospace font by default rather than a
- *     bundled Menlo.ttf (an Apple font this repo won't redistribute). Set
- *     `PRODUCT_IMAGE_SKU_FONT_PATH` to a .ttf/.otf to pin the exact glyphs;
- *     otherwise pango falls back to the platform mono (Menlo on macOS, DejaVu
- *     Sans Mono on the Hostinger box). The label is a functional watermark, so
- *     near-equivalent mono glyphs are fine.
- *   - There is no background worker (`output: standalone` has none), so the
- *     queue in `image-jobs.ts` drains from request-shaped triggers instead of a
- *     daemon. This module is the processing half; the queue is its caller.
+ * One deliberate difference from the reference, invisible in the output: the SKU
+ * label uses the system monospace font by default rather than a bundled Menlo.ttf
+ * (an Apple font this repo won't redistribute). Set `PRODUCT_IMAGE_SKU_FONT_PATH`
+ * to a .ttf/.otf to pin the exact glyphs; otherwise pango falls back to the
+ * platform mono. The stamp is verified to have actually rendered — see
+ * `assertRendered` — because a silently blank label ships an unstamped photo.
  */
 
 const SIZE = 1000;
@@ -35,23 +38,21 @@ const SKU_LEFT = 24;
 const SKU_BOTTOM = 20;
 const AVIF_QUALITY = 75;
 
-/** The reference's SKU watermark colour. A named constant so it can be swapped
- *  for the ceremony maroon if the brand wants the stamp on-brand rather than
- *  identical to the old shop's. */
+/** The reference's SKU watermark colour. */
 const SKU_COLOUR = "#d51b40";
 
 export const PRODUCT_IMAGE_URL_BASE = "/uploads/products/";
-export const RAW_SUBDIR = "raw";
 
 /** Taxonomy artwork lives beside the product images, under the same
- *  `/uploads/*` alias, so one LiteSpeed rule serves both. */
+ *  `/uploads/*` alias, so one serving rule covers both. */
 export const TAXONOMY_IMAGE_URL_BASE = "/uploads/taxonomy/";
 
 /**
- * Where processed and raw files are written. Env-overridable and absolute in
+ * Where processed files are written. Env-overridable and absolute in
  * production — it points at the Hostinger `sazuna-storage` directory so images
- * survive a deploy, served by a LiteSpeed `/uploads/*` alias (files never enter
- * Node). In development it defaults under `public/` so `next dev` serves them.
+ * survive a deploy (anything inside the app directory is destroyed when
+ * `hbuilds/current` is repointed). In development it defaults under `public/` so
+ * `next dev` serves them.
  */
 export const PRODUCT_IMAGE_UPLOAD_DIR =
   process.env.PRODUCT_IMAGE_UPLOAD_DIR || path.join(process.cwd(), "public/uploads/products");
@@ -68,6 +69,23 @@ export const TAXONOMY_IMAGE_UPLOAD_DIR =
 
 const LOGO_PATH = process.env.PRODUCT_IMAGE_LOGO_PATH || path.join(process.cwd(), "public/sazuna-logo.webp");
 const SKU_FONT_PATH = process.env.PRODUCT_IMAGE_SKU_FONT_PATH;
+
+/**
+ * A failure that retrying cannot fix — an unreadable file, a HEIC on a build
+ * without libheif, an empty upload.
+ *
+ * The queue used this to decide between four more attempts and giving up. With
+ * the queue gone it still earns its place: the upload route answers 400 for a
+ * permanent failure (the operator must do something about the file) and 500 for
+ * anything else (ours to fix), and that distinction is the difference between a
+ * useful error message and "upload failed".
+ */
+export class PermanentImageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PermanentImageError";
+  }
+}
 
 /**
  * The logo overlay and its centred x-offset are invariant across every image, so
@@ -88,15 +106,48 @@ async function getLogoOverlay(): Promise<{ buffer: Buffer; left: number }> {
   return globalThis.__sazunaLogoOverlay;
 }
 
-/** Uppercase, strip anything that isn't a SKU character, cap length. */
-function normaliseSku(sku: string): string {
+/**
+ * Uppercase, strip anything that isn't a SKU character, cap length.
+ *
+ * The allowlist has to stay narrow because this string is interpolated into
+ * pango markup, where `<`, `>`, `&` and `"` would be parsed rather than drawn.
+ * But it must not be so narrow that it silently rewrites the code it is meant to
+ * record: `.` is here because a SKU like `DLR10102-22KT-YG-0.75CT` was being
+ * stamped as `…YG-075CT`, which is a different, wrong, entirely plausible-looking
+ * SKU burned into a photograph nobody would think to re-read.
+ */
+export function normaliseSku(sku: string): string {
   return (
     String(sku ?? "")
       .trim()
       .toUpperCase()
-      .replace(/[^A-Z0-9_/\- ]/g, "")
+      .replace(/[^A-Z0-9_./\- ]/g, "")
       .slice(0, 64) || "SKU"
   );
+}
+
+/**
+ * Assert that a rendered layer actually contains something.
+ *
+ * The failure this exists for: if fontconfig has no usable monospace face,
+ * pango does not error — it returns a correctly-sized, completely transparent
+ * bitmap. Composite that and you get a photo with no SKU on it, published, with
+ * nothing in any log. It looks like the stamp was never asked for.
+ *
+ * Checking the alpha channel's maximum is the cheapest honest test: a blank
+ * render is uniformly transparent, and any glyph at all puts an opaque pixel
+ * somewhere.
+ */
+async function assertRendered(layer: Buffer, what: string): Promise<void> {
+  const stats = await sharp(layer).stats();
+  const alpha = stats.channels[3];
+  const visible = alpha ? alpha.max > 0 : stats.channels.some((c) => c.max > 0);
+  if (!visible) {
+    throw new Error(
+      `The ${what} rendered blank — this server has no usable monospace font for the SKU stamp. ` +
+        "Install one, or set PRODUCT_IMAGE_SKU_FONT_PATH to a .ttf/.otf.",
+    );
+  }
 }
 
 /** The bottom-left SKU label: maroon mono text on a white 85% rounded rect. */
@@ -121,6 +172,10 @@ async function buildSkuLabel(sku: string): Promise<OverlayOptions> {
   })
     .png()
     .toBuffer();
+
+  // Before it is composited, not after: an unstamped photo must never reach
+  // disk, and the operator must be told why rather than discovering it later.
+  await assertRendered(textBuffer, "SKU stamp");
 
   const textMeta = await sharp(textBuffer).metadata();
   const renderedWidth = Math.max(1, Number(textMeta.width) || maxTextWidth);
@@ -191,8 +246,7 @@ export function sniffImageFormat(buffer: Buffer): string {
 /** Whether this sharp build can DECODE a format `sniffImageFormat` named. */
 export function canDecode(format: string): boolean {
   if (format === "avif" || format === "heic") return Boolean(sharp.format.heif?.input?.buffer);
-  const key = format === "svg or html" ? "svg" : format;
-  const entry = (sharp.format as unknown as Record<string, { input?: { buffer?: boolean } }>)[key];
+  const entry = (sharp.format as unknown as Record<string, { input?: { buffer?: boolean } }>)[format];
   return Boolean(entry?.input?.buffer);
 }
 
@@ -208,9 +262,6 @@ export function canDecode(format: string): boolean {
 function assertDecodable(source: Buffer): void {
   const format = sniffImageFormat(source);
   if (canDecode(format)) return;
-  // PermanentImageError, not Error: no number of retries turns a HEIC into
-  // something a build without libheif can read, and the queue must not spend
-  // four more attempts and several minutes discovering that.
   if (format === "heic") {
     throw new PermanentImageError(
       "That looks like an iPhone HEIC photo, which this server's image library can't read. " +
@@ -221,42 +272,16 @@ function assertDecodable(source: Buffer): void {
 }
 
 /**
- * The per-job overlays: the shared logo, and the SKU label for one SKU.
- *
- * Built once per job and reused across that job's photos, as the reference
- * does. The logo is invariant and memoized globally; the SKU label is a pango
- * text render plus an SVG composite, and rebuilding it for every photo of the
- * same product was pure waste.
- */
-export interface ImageOverlays {
-  logo: { buffer: Buffer; left: number };
-  skuLabel: OverlayOptions;
-}
-
-export async function buildImageOverlays(sku: string): Promise<ImageOverlays> {
-  const [logo, skuLabel] = await Promise.all([getLogoOverlay(), buildSkuLabel(sku)]);
-  return { logo, skuLabel };
-}
-
-/**
  * Process one raw photo into the final AVIF. `rotate()` honours the EXIF
  * orientation before the square crop, so a portrait phone photo is not stored
  * sideways. Cover-crop from the centre matches the reference; nothing is
  * letterboxed.
- *
- * `overlays` is optional so a single call site (the check script, a one-off)
- * need not build them — but a job passes its own, so a 12-photo product renders
- * the SKU label once rather than twelve times.
  */
-export async function processProductImage(
-  source: Buffer,
-  sku: string,
-  overlays?: ImageOverlays,
-): Promise<Buffer> {
+export async function processProductImage(source: Buffer, sku: string): Promise<Buffer> {
   if (!source?.length) throw new PermanentImageError("Image file is required.");
   assertDecodable(source);
 
-  const { logo, skuLabel } = overlays ?? (await buildImageOverlays(sku));
+  const [logo, skuLabel] = await Promise.all([getLogoOverlay(), buildSkuLabel(sku)]);
 
   return sharp(source)
     .rotate()
@@ -291,170 +316,47 @@ function sanitiseForFilename(value: string): string {
   return (String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "product");
 }
 
-/** A raw-upload URL, e.g. /uploads/products/raw/saz-ring-001-ab12cd.jpg. */
-export function rawUrl(filename: string): string {
-  return `${PRODUCT_IMAGE_URL_BASE}${RAW_SUBDIR}/${filename}`;
-}
-
-/** A processed-image URL, e.g. /uploads/products/saz-ring-001-0.avif. */
+/** A processed-image URL, e.g. /uploads/products/saz-ring-001-ab12cd34.avif. */
 export function finalUrl(filename: string): string {
   return `${PRODUCT_IMAGE_URL_BASE}${filename}`;
 }
 
-export function isRawUrl(url: string): boolean {
-  return typeof url === "string" && url.startsWith(`${PRODUCT_IMAGE_URL_BASE}${RAW_SUBDIR}/`);
-}
-
-/** Map a raw/final URL back to its absolute path on disk. */
+/** Map a processed URL back to its absolute path on disk. */
 export function pathForUrl(url: string): string | null {
   if (typeof url !== "string" || !url.startsWith(PRODUCT_IMAGE_URL_BASE)) return null;
   const relative = url.slice(PRODUCT_IMAGE_URL_BASE.length);
   // Defence in depth against traversal — the URL is app-generated, but this is
   // the boundary where a string becomes a filesystem path.
-  if (relative.includes("..")) return null;
+  if (!relative || relative.includes("..")) return null;
   return path.join(PRODUCT_IMAGE_UPLOAD_DIR, relative);
 }
 
-/** Persist a raw upload and return its URL. Filenames are content-addressed so
- *  the same bytes never collide and a re-upload is idempotent. */
-export async function storeRawUpload(buffer: Buffer, sku: string, extension: string): Promise<string> {
-  const dir = path.join(PRODUCT_IMAGE_UPLOAD_DIR, RAW_SUBDIR);
-  await mkdir(dir, { recursive: true });
-  const digest = createHash("sha256").update(buffer).digest("hex").slice(0, 10);
-  const ext = extension.replace(/[^a-z0-9]/gi, "").toLowerCase() || "jpg";
-  const filename = `${sanitiseForFilename(sku)}-${digest}.${ext}`;
-  await writeFile(path.join(dir, filename), buffer);
-  return rawUrl(filename);
-}
-
-/** Write a processed AVIF for a product's Nth image and return its URL. */
-export async function storeProcessedImage(buffer: Buffer, sku: string, index: number): Promise<string> {
+/**
+ * Process a photo and store it, returning the URL the product will point at.
+ *
+ * The whole of the upload path in one call: nothing intermediate is written, so
+ * there is no raw directory to serve, no staging directory to publish from, and
+ * no originals accumulating on the storage volume. A 4 MB phone photo becomes a
+ * ~60 KB AVIF and the 4 MB never touches the disk.
+ *
+ * Filenames are content-addressed over the *processed* bytes, so re-uploading
+ * the same photo for the same SKU overwrites one file instead of accumulating
+ * near-duplicates — which is what makes a discarded upload cheap.
+ */
+export async function storeProductImage(source: Buffer, sku: string): Promise<string> {
+  const processed = await processProductImage(source, sku);
   await mkdir(PRODUCT_IMAGE_UPLOAD_DIR, { recursive: true });
-  const filename = processedFilename(buffer, sku, index);
-  await writeFile(path.join(PRODUCT_IMAGE_UPLOAD_DIR, filename), buffer);
+  const digest = createHash("sha256").update(processed).digest("hex").slice(0, 8);
+  const filename = `${sanitiseForFilename(sku)}-${digest}.avif`;
+  await writeFile(path.join(PRODUCT_IMAGE_UPLOAD_DIR, filename), processed);
   return finalUrl(filename);
 }
 
-function processedFilename(buffer: Buffer, sku: string, index: number): string {
-  const digest = createHash("sha256").update(buffer).digest("hex").slice(0, 8);
-  return `${sanitiseForFilename(sku)}-${index}-${digest}.avif`;
-}
-
-/* --- staged publish -------------------------------------------------------- */
-
 /**
- * Encoded output lands in a per-job staging directory and only moves into place
- * as part of the database transaction that references it, following the
- * reference app.
- *
- * The reason is the same there and here: the moment a file appears under
- * `/uploads/products/` it is servable, so publishing before the commit means a
- * job that is then cancelled — superseded by a newer upload, or whose claim was
- * stolen — has already scattered files nothing points at. Staging keeps "the
- * bytes exist" and "the product uses them" a single decision.
- *
- * `rename` rather than the reference's `copyFile`: staging sits inside the
- * upload root, so it is the same filesystem, and a rename is atomic and does
- * not read a 60 KB file back through the process for every photo.
- */
-export interface StagedImage {
-  /** Where the file is now. */
-  stagedPath: string;
-  /** Where it goes on publish. */
-  finalPath: string;
-  /** The URL it will be served at. */
-  url: string;
-}
-
-export async function createStagingDir(jobId: number): Promise<string> {
-  const suffix = createHash("sha256")
-    .update(`${jobId}:${Date.now()}:${Math.random()}`)
-    .digest("hex")
-    .slice(0, 8);
-  const dir = path.join(PRODUCT_IMAGE_UPLOAD_DIR, ".staging", `job-${jobId}-${suffix}`);
-  await mkdir(dir, { recursive: true });
-  return dir;
-}
-
-export async function stageProcessedImage(
-  stagingDir: string,
-  buffer: Buffer,
-  sku: string,
-  index: number,
-): Promise<StagedImage> {
-  const filename = processedFilename(buffer, sku, index);
-  const stagedPath = path.join(stagingDir, filename);
-  await writeFile(stagedPath, buffer);
-  return {
-    stagedPath,
-    finalPath: path.join(PRODUCT_IMAGE_UPLOAD_DIR, filename),
-    url: finalUrl(filename),
-  };
-}
-
-/** Move staged files into the served directory. Call inside the transaction. */
-export async function publishStagedImages(staged: readonly StagedImage[]): Promise<void> {
-  await mkdir(PRODUCT_IMAGE_UPLOAD_DIR, { recursive: true });
-  for (const item of staged) {
-    await rename(item.stagedPath, item.finalPath);
-  }
-}
-
-/** Discard a staging directory and everything in it. Never throws. */
-export async function discardStagingDir(stagingDir: string): Promise<void> {
-  if (!stagingDir) return;
-  await rm(stagingDir, { recursive: true, force: true }).catch(() => {
-    // Cleanup is best effort — a leftover staging directory is inert.
-  });
-}
-
-/**
- * Delete files, tolerating the ones already gone.
- *
- * Used for two things: the raw originals once a job has succeeded (the
- * reference does the same — a raw 4 MB JPEG has no purpose once its 60 KB AVIF
- * exists, and on the Hostinger storage volume they would otherwise accumulate
- * forever), and rolling back a publish whose transaction then failed.
- */
-export async function removeFiles(paths: readonly string[]): Promise<number> {
-  let removed = 0;
-  await Promise.all(
-    paths.map(async (filePath) => {
-      if (!filePath) return;
-      try {
-        await unlink(filePath);
-        removed += 1;
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        // ENOENT means somebody got there first, which is the desired state.
-        if (code !== "ENOENT") {
-          console.warn(`[admin] could not remove ${filePath}: ${code ?? "unknown error"}`);
-        }
-      }
-    }),
-  );
-  return removed;
-}
-
-/** Resolve a list of image URLs to absolute paths, dropping ones outside the root. */
-export function pathsForUrls(urls: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const url of urls) {
-    const filePath = pathForUrl(url);
-    if (!filePath || seen.has(filePath)) continue;
-    seen.add(filePath);
-    out.push(filePath);
-  }
-  return out;
-}
-
-/**
- * Process and store a taxonomy image in one step, returning its URL. There is
- * no raw/processed split here: a category has exactly one image, replacing it
- * is the only edit, and nothing reprocesses later, so keeping the original
- * would only accumulate orphans. `slugBase` names the file readably; the
- * content digest keeps a re-upload idempotent and two categories' images apart.
+ * Process and store a taxonomy image in one step, returning its URL. A category
+ * has exactly one image, replacing it is the only edit, and nothing reprocesses
+ * later. `slugBase` names the file readably; the content digest keeps a
+ * re-upload idempotent and two categories' images apart.
  */
 export async function storeSquareImage(source: Buffer, slugBase: string): Promise<string> {
   const processed = await processSquareImage(source);

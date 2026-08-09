@@ -1,13 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Icon } from "@/components/ui";
 import { MultiSelect } from "@/components/admin/multi-select";
 import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
+import { MAX_PRODUCT_PHOTOS } from "@/lib/admin/product-limits";
 import type { ProductEditorOptions } from "@/lib/admin/catalog";
-import type { EditorCard } from "./editor-model";
+import { skuLocked, type CardPhoto, type EditorCard } from "./editor-model";
 
 /**
  * One product card — the shared card from Sazuna Admin Products.dc.html.
@@ -46,7 +47,7 @@ export interface CardHandlers {
   duplicate: () => void;
   remove: () => void;
   addPhotos: (files: FileList | null) => void;
-  setCover: (index: number) => void;
+  movePhoto: (from: number, to: number) => void;
   removePhoto: (index: number) => void;
 }
 
@@ -55,20 +56,25 @@ export function ProductCardForm({
   index,
   mode,
   options,
-  uploading,
   handlers,
 }: {
   card: EditorCard;
   index: number;
   mode: EditorMode;
   options: ProductEditorOptions;
-  uploading: boolean;
   handlers: CardHandlers;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
   const materialOptions = unique([card.material, ...options.materials]);
   const purityOptions = unique([card.purity, ...options.purities]);
   const locked = card.status === "saved" || card.status === "saving";
+
+  const hasSku = card.sku.trim().length > 0;
+  const photosFull = card.photos.length >= MAX_PRODUCT_PHOTOS;
+  // The SKU is stamped into the photos and the originals are not kept, so it
+  // stops being editable the moment there is a photo to disagree with.
+  const lockSku = locked || skuLocked(card);
 
   const badge = mode === "edit" ? "EDIT" : `#${index + 1}`;
   const removeText = mode === "edit" ? "Reset" : "Remove this card";
@@ -154,66 +160,118 @@ export function ProductCardForm({
       <div className="flex flex-col gap-[13px] p-[13px]">
         {/* Photos */}
         <div>
-          <p className="mb-[7px] font-mono text-[9.5px] font-semibold uppercase tracking-[.11em] text-muted">Photos</p>
-          <div className="flex flex-wrap gap-2">
+          <div className="mb-[7px] flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <p className="font-mono text-[9.5px] font-semibold uppercase tracking-[.11em] text-muted">Photos</p>
+            {card.photos.length > 1 && (
+              <p className="text-[10px] text-muted">Drag to reorder — the first is the cover.</p>
+            )}
+          </div>
+          <div role="list" className="flex flex-wrap gap-2">
             {card.photos.map((photo, i) => (
               <div
-                key={photo.url}
-                className="relative size-[70px] shrink-0 overflow-hidden rounded-lg border-[1.5px] border-line bg-[radial-gradient(120%_120%_at_30%_25%,var(--sz-surface-raised),var(--sz-accent-soft))]"
+                key={photo.id}
+                role="listitem"
+                tabIndex={locked ? -1 : 0}
+                draggable={!locked}
+                onDragStart={(e) => {
+                  setDragFrom(i);
+                  e.dataTransfer.effectAllowed = "move";
+                  // Firefox refuses to start a drag without payload.
+                  e.dataTransfer.setData("text/plain", String(i));
+                }}
+                onDragOver={(e) => {
+                  if (dragFrom === null) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragFrom !== null) handlers.movePhoto(dragFrom, i);
+                  setDragFrom(null);
+                }}
+                onDragEnd={() => setDragFrom(null)}
+                onKeyDown={(e) => {
+                  // Drag-and-drop alone would make the cover unreachable without
+                  // a mouse. Arrow keys do the same job from the keyboard.
+                  if (locked) return;
+                  if (e.key === "ArrowLeft" && i > 0) {
+                    e.preventDefault();
+                    handlers.movePhoto(i, i - 1);
+                  } else if (e.key === "ArrowRight" && i < card.photos.length - 1) {
+                    e.preventDefault();
+                    handlers.movePhoto(i, i + 1);
+                  }
+                }}
+                aria-label={`Photo ${i + 1} of ${card.photos.length}${i === 0 ? " (cover)" : ""}${
+                  photo.status === "uploading"
+                    ? ", processing"
+                    : photo.status === "failed"
+                      ? ", failed"
+                      : ". Use the left and right arrow keys to reorder."
+                }`}
+                className={cn(
+                  "relative size-[70px] shrink-0 overflow-hidden rounded-lg border-[1.5px] bg-[radial-gradient(120%_120%_at_30%_25%,var(--sz-surface-raised),var(--sz-accent-soft))]",
+                  photo.status === "failed" ? "border-error" : "border-line",
+                  !locked && "cursor-grab",
+                  dragFrom === i && "opacity-50",
+                )}
               >
-                <Image src={photo.url} alt="" width={70} height={70} unoptimized className="size-full object-cover" />
-                {i === 0 && (
+                <Image
+                  src={photo.url}
+                  alt=""
+                  width={70}
+                  height={70}
+                  unoptimized
+                  draggable={false}
+                  className={cn("size-full object-cover", photo.status !== "ready" && "opacity-60")}
+                />
+
+                {photo.status === "uploading" && (
+                  <span className="absolute inset-0 flex items-center justify-center bg-canvas/55">
+                    <span className="size-5 animate-spin rounded-pill border-2 border-line border-t-primary-700" />
+                  </span>
+                )}
+
+                {photo.status === "failed" && (
+                  <span className="absolute inset-x-0 bottom-0 bg-error-soft/95 py-0.5 text-center font-mono text-[7.5px] font-semibold text-error">
+                    FAILED
+                  </span>
+                )}
+
+                {i === 0 && photo.status === "ready" && (
                   <span className="absolute left-[3px] top-[3px] rounded bg-primary-700 px-1 py-0.5 font-mono text-[7.5px] font-semibold tracking-[.1em] text-white">
                     COVER
                   </span>
                 )}
-                {photo.raw && (
-                  <span className="absolute inset-x-0 bottom-0 bg-warning-soft/95 py-0.5 text-center font-mono text-[7.5px] text-[var(--sz-admin-gold-ink)]">
-                    PROCESSING
-                  </span>
-                )}
-                {!locked && !photo.raw && (
-                  <span className="absolute bottom-[3px] right-[3px] flex gap-0.5">
-                    {i !== 0 && (
-                      <button
-                        type="button"
-                        onClick={() => handlers.setCover(i)}
-                        aria-label={`Set photo ${i + 1} as cover`}
-                        title="Set as cover"
-                        className="inline-flex size-[21px] items-center justify-center rounded-[5px] bg-canvas/95 text-primary-700"
-                      >
-                        <Icon name="check" size={13} strokeWidth={2.5} />
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => handlers.removePhoto(i)}
-                      aria-label={`Remove photo ${i + 1}`}
-                      title="Remove photo"
-                      className="inline-flex size-[21px] items-center justify-center rounded-[5px] bg-canvas/95 text-error"
-                    >
-                      <Icon name="trash" size={13} />
-                    </button>
-                  </span>
+
+                {!locked && (
+                  <button
+                    type="button"
+                    onClick={() => handlers.removePhoto(i)}
+                    aria-label={`Remove photo ${i + 1}`}
+                    title="Remove photo"
+                    className="absolute bottom-[3px] right-[3px] inline-flex size-[21px] items-center justify-center rounded-[5px] bg-canvas/95 text-error"
+                  >
+                    <Icon name="trash" size={13} />
+                  </button>
                 )}
               </div>
             ))}
-            {!locked && (
+
+            {!locked && !photosFull && (
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                disabled={uploading}
+                disabled={!hasSku}
                 aria-label={`Add photo to ${label}`}
-                className="flex size-[70px] shrink-0 flex-col items-center justify-center gap-[3px] rounded-lg border-[1.5px] border-dashed border-line bg-canvas text-primary-700 hover:border-primary-700 hover:bg-primary-50 disabled:opacity-[var(--sz-disabled-opacity)]"
+                title={hasSku ? "Add photos" : "Enter the SKU first — it gets stamped onto the photo"}
+                className="flex size-[70px] shrink-0 flex-col items-center justify-center gap-[3px] rounded-lg border-[1.5px] border-dashed border-line bg-canvas text-primary-700 hover:border-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-[var(--sz-disabled-opacity)] disabled:hover:border-line disabled:hover:bg-canvas"
               >
-                {uploading ? (
-                  <span className="size-4 animate-spin rounded-pill border-2 border-line border-t-primary-700" />
-                ) : (
-                  <Icon name="plus" size={17} />
-                )}
-                <span className="text-[9.5px] font-semibold">{uploading ? "…" : "Add"}</span>
+                <Icon name="plus" size={17} />
+                <span className="text-[9.5px] font-semibold">Add</span>
               </button>
             )}
+
             <input
               ref={fileRef}
               type="file"
@@ -226,6 +284,25 @@ export function ProductCardForm({
               }}
             />
           </div>
+
+          {/* Why the Add button is dead, said before it is clicked rather than
+              after. The SKU is burned into the image, so there is nothing to
+              upload until there is one. */}
+          {!locked && !hasSku && (
+            <p className="mt-1.5 text-[10.5px] text-muted">Enter the SKU first — it gets stamped onto every photo.</p>
+          )}
+
+          {card.photos.some((p) => p.status === "failed") && (
+            <ul className="mt-1.5 flex flex-col gap-0.5">
+              {card.photos.map((photo, i) =>
+                photo.status === "failed" ? (
+                  <li key={photo.id} role="alert" className="text-[10.5px] text-error">
+                    Photo {i + 1}: {photo.error}
+                  </li>
+                ) : null,
+              )}
+            </ul>
+          )}
         </div>
 
         {/* Name. The spec hides this when adding; here it stays, optional — a
@@ -248,12 +325,24 @@ export function ProductCardForm({
             <Fw label="SKU *" required error={card.errors.sku}>
               <input
                 value={card.sku}
-                disabled={locked}
+                disabled={lockSku}
+                readOnly={lockSku}
                 onChange={(e) => handlers.onSkuChange(e.target.value)}
                 aria-invalid={!!card.errors.sku}
-                className={cn(fieldClass, "font-mono", card.errors.sku && "border-error")}
+                aria-describedby={lockSku && !locked ? `sku-lock-${card.key}` : undefined}
+                className={cn(
+                  fieldClass,
+                  "font-mono",
+                  lockSku && "disabled:opacity-[var(--sz-disabled-opacity)]",
+                  card.errors.sku && "border-error",
+                )}
               />
             </Fw>
+            {lockSku && !locked && (
+              <p id={`sku-lock-${card.key}`} className="mt-1 text-[10px] text-muted">
+                Stamped onto the photos — remove them to change it.
+              </p>
+            )}
             {card.sheetRow && !locked && (
               <p className="mt-1 flex flex-wrap items-center gap-1 text-[10px] text-success">
                 <Icon name="check" size={11} strokeWidth={2.5} />

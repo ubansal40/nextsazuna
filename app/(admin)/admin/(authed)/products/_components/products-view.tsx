@@ -11,9 +11,6 @@ import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
 import type { AdminProductListItem, ProductStatus } from "@/lib/admin/product-projection";
-// Pure policy — `image-queue` carries no `server-only`, so the sentence the
-// operator reads about a failure is built the same way here and on the server.
-import { operatorFailureMessage } from "@/lib/admin/image-queue";
 import type { AdminProductFilters, AdminProductFilterOptions, AdminProductPage } from "@/lib/admin/catalog";
 import {
   fetchProductsPage,
@@ -21,8 +18,6 @@ import {
   removeProduct,
   setAlwaysAvailable,
   removeProducts,
-  pollImageJobs,
-  retryProductImages,
 } from "../_actions";
 
 /**
@@ -39,8 +34,6 @@ type DrawerFilters = Omit<AdminProductFilters, "q" | "page" | "pageSize">;
 const STATUS_CHIP: Record<ProductStatus, { tone: ChipTone; label: string }> = {
   published: { tone: "success", label: "Published" },
   draft: { tone: "neutral", label: "Draft" },
-  processing: { tone: "warning", label: "Processing" },
-  failed: { tone: "error", label: "Failed" },
 };
 
 const SORT_LABELS: { value: string; label: string }[] = [
@@ -82,80 +75,6 @@ export function ProductsView({
   const menuRef = useRef<HTMLTableSectionElement>(null);
 
   const hasMore = items.length < total;
-
-  /**
-   * Keep the processing rows moving.
-   *
-   * The reference app's admin can be passive here: a daemon does the work and
-   * the next page load shows the result. With no daemon the screen is a
-   * trigger, not just a viewer — each poll drains the queue and then reads
-   * back what changed, so a product whose photos are mid-encode reaches
-   * Published while the operator watches instead of on some later refresh.
-   *
-   * It runs only while something is actually in flight, and stops the moment
-   * nothing is, so an idle products list makes no requests at all.
-   */
-  const processingIds = items.filter((i) => i.status === "processing").map((i) => i.id);
-  const processingKey = processingIds.join(",");
-
-  useEffect(() => {
-    if (!processingKey) return;
-    const ids = processingKey.split(",").map(Number);
-    let cancelled = false;
-
-    async function tick() {
-      let states;
-      try {
-        states = await pollImageJobs(ids);
-      } catch {
-        return; // A missed poll is a slower update, not an error worth showing.
-      }
-      if (cancelled || states.length === 0) return;
-      const byProduct = new Map(states.map((s) => [s.productId, s]));
-      setItems((current) =>
-        current.map((item) => {
-          const state = byProduct.get(item.id);
-          if (!state || state.status === "pending" || state.status === "processing") return item;
-          if (state.status === "failed") {
-            return { ...item, status: "failed", imageError: operatorFailureMessage(state.error) };
-          }
-          if (state.status !== "ready") return item;
-          // "Ready" is about the photos, not about visibility: a job restores
-          // whatever the product was saved with, so an edited draft stays a
-          // draft once its new photos land.
-          return {
-            ...item,
-            status: state.productIsActive ? "published" : "draft",
-            imageError: null,
-            imageUrl: state.images[0] ?? item.imageUrl,
-          };
-        }),
-      );
-    }
-
-    const timer = setInterval(tick, 4000);
-    void tick();
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [processingKey]);
-
-  /** Re-queue a product whose photos failed, using the raw originals on disk. */
-  function retryPhotos(id: number) {
-    setOpenMenu(null);
-    startTransition(async () => {
-      const result = await retryProductImages(id);
-      if (!result.ok) {
-        toast("error", result.error);
-        return;
-      }
-      setItems((current) =>
-        current.map((i) => (i.id === id ? { ...i, status: "processing", imageError: null } : i)),
-      );
-      toast("info", "Processing those photos again.");
-    });
-  }
 
   // Close the open row-menu on any outside pointer-down.
   useEffect(() => {
@@ -438,14 +357,6 @@ export function ProductsView({
                       </td>
                       <td className="px-3.5 py-2.5">
                         <Chip tone={chip.tone}>{chip.label}</Chip>
-                        {/* The reason, not just the verdict. "Failed" alone
-                            leaves the operator guessing whether to retry or to
-                            re-shoot the photo. */}
-                        {item.status === "failed" && item.imageError && (
-                          <p className="mt-1 max-w-[26ch] text-[11px] leading-snug text-muted">
-                            {item.imageError}
-                          </p>
-                        )}
                       </td>
                       <td className="relative px-3.5 py-2.5 text-right">
                         <button
@@ -464,15 +375,6 @@ export function ProductsView({
                             >
                               Edit
                             </Link>
-                            {item.status === "failed" && (
-                              <button
-                                type="button"
-                                onClick={() => retryPhotos(item.id)}
-                                className="flex min-h-9 w-full items-center rounded-lg px-2.5 text-left text-[13px] font-semibold text-primary-700 hover:bg-admin-canvas"
-                              >
-                                Retry photos
-                              </button>
-                            )}
                             <button
                               type="button"
                               onClick={() => publish([item.id], item.status !== "published")}

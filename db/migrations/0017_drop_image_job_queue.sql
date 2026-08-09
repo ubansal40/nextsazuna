@@ -1,0 +1,37 @@
+-- 0017_drop_image_job_queue.sql
+--
+-- Removes the product image job queue.
+--
+-- The queue existed to solve one problem: a product save carrying a dozen
+-- 4000×3000 photographs took longer to encode than a request may live, so the
+-- encoding had to happen somewhere else, later. Everything else about it —
+-- `product_image_jobs`, claim tokens, attempt counts, retry backoff, stale-claim
+-- reclamation, the drain route, the cron entry that route needed, the admin's
+-- Processing and Failed chips, the four-second poll — was machinery in service
+-- of that one constraint.
+--
+-- Photos are now processed inside their own upload request, one per file. A
+-- single photo is roughly two seconds of work, the browser sends them in
+-- parallel, and each tile updates as its own request returns. The constraint is
+-- gone, so the machinery has nothing left to do.
+--
+-- What that buys, concretely:
+--
+--   * A saved product always has its images. There is no window where the row
+--     exists, the photos do not, and the product is forced to draft until
+--     something turns a crank.
+--   * A bad file is reported to the operator who is standing there holding it,
+--     with the reason, instead of being discovered in a status column later.
+--   * Nothing has to run on a schedule. A deploy can no longer strand work,
+--     because there is no work to strand.
+--
+-- Dropped rather than left in place at the owner's explicit instruction. The
+-- table's history is not carried anywhere else: every row it held described an
+-- encode that has already either produced the images a product is currently
+-- using, or failed and been superseded. Nothing reads it, and no code path in
+-- the application references it after this migration.
+--
+-- Irreversible by design — restoring the queue would mean restoring the code
+-- that used it, and this file would not be the hard part.
+
+DROP TABLE IF EXISTS product_image_jobs;
