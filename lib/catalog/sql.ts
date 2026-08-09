@@ -15,9 +15,17 @@
  * `price` is MRP and `sale_price` is the selling price; 3,078 of 3,079 active
  * products carry one, so this branch is the normal path, not an edge case.
  */
-export const EFFECTIVE_PRICE = `
-  CASE WHEN p.sale_price IS NOT NULL THEN p.sale_price ELSE p.price END
-`.trim();
+export const EFFECTIVE_PRICE = effectivePriceFor("p");
+
+/**
+ * The same expression against a different table alias, for the rare query that
+ * needs a second `products` in a subquery. A function rather than a second
+ * constant so there is still exactly one definition of what a customer pays —
+ * `EFFECTIVE_PRICE` is just this applied to the usual alias.
+ */
+export function effectivePriceFor(alias: string): string {
+  return `CASE WHEN ${alias}.sale_price IS NOT NULL THEN ${alias}.sale_price ELSE ${alias}.price END`;
+}
 
 /**
  * A product is purchasable when it is flagged always-available, or has stock.

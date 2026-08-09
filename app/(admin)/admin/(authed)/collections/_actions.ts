@@ -8,9 +8,11 @@ import {
   deleteCollection,
   setCollectionVisibility,
   reorderCollections,
+  searchProductsForPicks,
   type CollectionInput,
   type CollectionRow,
   type CollectionDetail,
+  type CollectionPick,
 } from "@/lib/admin/taxonomy";
 
 /**
@@ -29,6 +31,13 @@ function fail(error: unknown): CollectionResult {
 export async function loadCollection(id: number): Promise<CollectionDetail | null> {
   await requireSection("collections");
   return getCollection(id);
+}
+
+/** Name/SKU search behind the drawer's "Add products" control. Gated like every
+ *  other action here — a product list is catalogue data, not public. */
+export async function searchProductsForPicksAction(term: string): Promise<CollectionPick[]> {
+  await requireSection("collections");
+  return searchProductsForPicks(term);
 }
 
 export async function saveCollectionAction(id: number | null, input: CollectionInput): Promise<CollectionResult> {

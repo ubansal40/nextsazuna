@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { Icon, useToast } from "@/components/ui";
 import { Switch } from "@/components/admin/switch";
+import { ImageField } from "@/components/admin/image-field";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { cn } from "@/lib/cn";
 import type { CategoryInput, CategoryRow, TaxonomyCounts } from "@/lib/admin/taxonomy";
@@ -21,9 +22,6 @@ import {
  * switch, and edit/delete. The entity drawer is the add/edit form. Reordering is
  * within a sibling group, since row order is the storefront order. Uncategorized
  * is protected: it can't be deleted, and stays top-level.
- *
- * (The 1:1 category image the spec also shows is a small follow-up — a shared
- * taxonomy image upload the collections screen will use too.)
  */
 
 const BLANK: CategoryInput = { name: "", slug: "", parentId: null, description: "", imageUrl: null, isVisible: true };
@@ -205,6 +203,13 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
               <Labeled label="Description" hint="Shown on the storefront listing page.">
                 <textarea value={editing.input.description} onChange={(e) => setEditing({ ...editing, input: { ...editing.input, description: e.target.value } })} rows={4} className={cn(fieldClass, "resize-y py-2")} />
               </Labeled>
+              <ImageField
+                kind="categories"
+                slug={editing.input.slug || editing.input.name || "category"}
+                value={editing.input.imageUrl}
+                onChange={(imageUrl) => setEditing({ ...editing, input: { ...editing.input, imageUrl } })}
+                hint="Shown on the storefront category card. Anything not square is centre-cropped."
+              />
               <label className="flex items-center justify-between">
                 <span className="text-[13px] font-semibold text-body">Visible on the storefront</span>
                 <Switch checked={editing.input.isVisible} onChange={(v) => setEditing({ ...editing, input: { ...editing.input, isVisible: v } })} label="Visible" />

@@ -3,6 +3,7 @@ import "server-only";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { query, queryOne, transaction } from "../db";
 import { recordAdminAction } from "./audit";
+import { escapeLike } from "./catalog";
 import type { AdminContext } from "./rbac";
 
 /**
@@ -385,14 +386,23 @@ const COLLECTION_MATCH = `
                 WHERE pt.product_id = p.id AND ct.collection_id = ?)
   )`;
 
+/** A hand-picked product joins regardless of the rules or the price band — that
+ *  is the point of picking it. Param: collectionId. */
+const COLLECTION_MANUAL_MATCH = `
+  p.is_active = 1
+  AND EXISTS (SELECT 1 FROM collection_products cp
+               WHERE cp.product_id = p.id AND cp.collection_id = ?)`;
+
 export interface CollectionRow {
   id: number;
   name: string;
   slug: string;
+  imageUrl: string | null;
   isVisible: boolean;
   sortOrder: number;
   categoryCount: number;
   tagCount: number;
+  manualCount: number;
   priceBandMin: string | null;
   priceBandMax: string | null;
   productCount: number;
@@ -402,27 +412,36 @@ interface CollectionDbRow extends RowDataPacket {
   id: number;
   name: string;
   slug: string;
+  image_url: string | null;
   is_active: number;
   sort_order: number;
   price_band_min: string | null;
   price_band_max: string | null;
   category_count: number;
   tag_count: number;
+  manual_count: number;
   product_count: number;
 }
 
-/** Collections with their rule counts and the live count of products the rules
- *  match (price band applied to the effective price), in stored order. */
+/** Collections with their rule counts and the live count of products they hold,
+ *  in stored order. That count is the union of the rule match (price band
+ *  applied to the effective price) and the hand-picked products — the same
+ *  membership the storefront will read — counted DISTINCT, so a product that is
+ *  both matched and hand-picked is one product, not two. */
 export async function listCollections(): Promise<CollectionRow[]> {
   const rows = await query<CollectionDbRow>(
-    `SELECT col.id, col.name, col.slug, col.is_active, col.sort_order,
+    `SELECT col.id, col.name, col.slug, col.image_url, col.is_active, col.sort_order,
             col.price_band_min, col.price_band_max,
             (SELECT COUNT(*) FROM collection_categories WHERE collection_id = col.id) AS category_count,
             (SELECT COUNT(*) FROM collection_tags WHERE collection_id = col.id)       AS tag_count,
+            (SELECT COUNT(*) FROM collection_products WHERE collection_id = col.id)   AS manual_count,
             (SELECT COUNT(DISTINCT p.id) FROM products p
-               WHERE ${COLLECTION_MATCH.replace(/\?/g, "col.id")}
-                 AND (col.price_band_min IS NULL OR (CASE WHEN p.sale_price IS NOT NULL THEN p.sale_price ELSE p.price END) >= col.price_band_min)
-                 AND (col.price_band_max IS NULL OR (CASE WHEN p.sale_price IS NOT NULL THEN p.sale_price ELSE p.price END) <= col.price_band_max)
+               WHERE (
+                 (${COLLECTION_MATCH.replace(/\?/g, "col.id")}
+                    AND (col.price_band_min IS NULL OR (CASE WHEN p.sale_price IS NOT NULL THEN p.sale_price ELSE p.price END) >= col.price_band_min)
+                    AND (col.price_band_max IS NULL OR (CASE WHEN p.sale_price IS NOT NULL THEN p.sale_price ELSE p.price END) <= col.price_band_max))
+                 OR (${COLLECTION_MANUAL_MATCH.replace(/\?/g, "col.id")})
+               )
             ) AS product_count
        FROM collections col
       ORDER BY col.sort_order, col.name`,
@@ -431,14 +450,25 @@ export async function listCollections(): Promise<CollectionRow[]> {
     id: r.id,
     name: r.name,
     slug: r.slug,
+    imageUrl: r.image_url,
     isVisible: r.is_active === 1,
     sortOrder: r.sort_order,
     categoryCount: Number(r.category_count),
     tagCount: Number(r.tag_count),
+    manualCount: Number(r.manual_count),
     priceBandMin: r.price_band_min,
     priceBandMax: r.price_band_max,
     productCount: Number(r.product_count),
   }));
+}
+
+/** A hand-picked product as the drawer shows it: enough to render the row
+ *  without a second round-trip, nothing more. */
+export interface CollectionPick {
+  id: number;
+  name: string;
+  sku: string;
+  imageUrl: string | null;
 }
 
 export interface CollectionDetail {
@@ -446,33 +476,44 @@ export interface CollectionDetail {
   name: string;
   slug: string;
   description: string;
+  imageUrl: string | null;
   isVisible: boolean;
   categoryIds: number[];
   tagIds: number[];
   priceBandMin: string;
   priceBandMax: string;
+  manualProducts: CollectionPick[];
 }
 
 export async function getCollection(id: number): Promise<CollectionDetail | null> {
-  const row = await queryOne<RowDataPacket & { name: string; slug: string; description: string | null; is_active: number; price_band_min: string | null; price_band_max: string | null }>(
-    "SELECT name, slug, description, is_active, price_band_min, price_band_max FROM collections WHERE id = ? LIMIT 1",
+  const row = await queryOne<RowDataPacket & { name: string; slug: string; description: string | null; image_url: string | null; is_active: number; price_band_min: string | null; price_band_max: string | null }>(
+    "SELECT name, slug, description, image_url, is_active, price_band_min, price_band_max FROM collections WHERE id = ? LIMIT 1",
     [id],
   );
   if (!row) return null;
-  const [cats, tags] = await Promise.all([
+  const [cats, tags, picks] = await Promise.all([
     query<RowDataPacket & { category_id: number }>("SELECT category_id FROM collection_categories WHERE collection_id = ?", [id]),
     query<RowDataPacket & { tag_id: number }>("SELECT tag_id FROM collection_tags WHERE collection_id = ?", [id]),
+    query<RowDataPacket & { id: number; name: string; sku: string; image_url: string | null }>(
+      `SELECT p.id, p.name, p.sku, p.image_url
+         FROM collection_products cp JOIN products p ON p.id = cp.product_id
+        WHERE cp.collection_id = ?
+        ORDER BY cp.position, p.name`,
+      [id],
+    ),
   ]);
   return {
     id,
     name: row.name,
     slug: row.slug,
     description: row.description ?? "",
+    imageUrl: row.image_url,
     isVisible: row.is_active === 1,
     categoryIds: cats.map((c) => c.category_id),
     tagIds: tags.map((t) => t.tag_id),
     priceBandMin: row.price_band_min ?? "",
     priceBandMax: row.price_band_max ?? "",
+    manualProducts: picks.map((p) => ({ id: p.id, name: p.name, sku: p.sku, imageUrl: p.image_url })),
   };
 }
 
@@ -480,11 +521,14 @@ export interface CollectionInput {
   name: string;
   slug: string;
   description: string;
+  imageUrl: string | null;
   isVisible: boolean;
   categoryIds: number[];
   tagIds: number[];
   priceBandMin: string;
   priceBandMax: string;
+  /** Hand-picked products, in the order they should appear. */
+  manualProductIds: number[];
 }
 
 function priceBand(value: string): string | null {
@@ -502,6 +546,25 @@ async function writeCollectionRules(conn: import("mysql2/promise").PoolConnectio
   await conn.execute("DELETE FROM collection_tags WHERE collection_id = ?", [collectionId]);
   for (const id of [...new Set(input.tagIds)]) {
     await conn.execute("INSERT INTO collection_tags (collection_id, tag_id) VALUES (?, ?)", [collectionId, id]);
+  }
+}
+
+/**
+ * Replace the hand-picked products with the given list, `position` following
+ * the array order — the drawer's up/down buttons ARE this order, so it is
+ * stored rather than derived. Replace-in-full (not a diff) because the drawer
+ * always submits the whole list; a partial write would leave a removed pick
+ * behind. De-duplicated, since `collection_products` is keyed on the pair and a
+ * repeat would otherwise abort the transaction.
+ */
+async function writeCollectionPicks(conn: import("mysql2/promise").PoolConnection, collectionId: number, productIds: number[]) {
+  await conn.execute("DELETE FROM collection_products WHERE collection_id = ?", [collectionId]);
+  const ids = [...new Set(productIds.filter((n) => Number.isInteger(n) && n > 0))];
+  for (let i = 0; i < ids.length; i += 1) {
+    await conn.execute(
+      "INSERT INTO collection_products (collection_id, product_id, position) VALUES (?, ?, ?)",
+      [collectionId, ids[i], i + 1],
+    );
   }
 }
 
@@ -529,24 +592,45 @@ export async function saveCollection(admin: AdminContext, id: number | null, inp
     if (id) {
       const slug = await uniqueCollectionSlug(conn, slugify(input.slug || name), id);
       await conn.execute(
-        `UPDATE collections SET name = ?, slug = ?, description = ?, is_active = ?, price_band_min = ?, price_band_max = ? WHERE id = ?`,
-        [name, slug, input.description.trim() || null, input.isVisible ? 1 : 0, min, max, id],
+        `UPDATE collections SET name = ?, slug = ?, description = ?, image_url = ?, is_active = ?, price_band_min = ?, price_band_max = ? WHERE id = ?`,
+        [name, slug, input.description.trim() || null, input.imageUrl || null, input.isVisible ? 1 : 0, min, max, id],
       );
       collectionId = id;
     } else {
       const slug = await uniqueCollectionSlug(conn, slugify(input.slug || name), null);
       const [[maxRow]] = await conn.execute<(RowDataPacket & { next: number })[]>("SELECT COALESCE(MAX(sort_order),0)+1 AS next FROM collections");
       const [result] = await conn.execute<ResultSetHeader>(
-        `INSERT INTO collections (name, slug, description, is_active, sort_order, price_band_min, price_band_max)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [name, slug, input.description.trim() || null, input.isVisible ? 1 : 0, maxRow.next, min, max],
+        `INSERT INTO collections (name, slug, description, image_url, is_active, sort_order, price_band_min, price_band_max)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [name, slug, input.description.trim() || null, input.imageUrl || null, input.isVisible ? 1 : 0, maxRow.next, min, max],
       );
       collectionId = result.insertId;
     }
     await writeCollectionRules(conn, collectionId, input);
+    await writeCollectionPicks(conn, collectionId, input.manualProductIds);
     await recordAdminAction(conn, admin, { action: id ? "collections.update" : "collections.create", resourceType: "collections", resourceId: collectionId, metadata: { name } });
     return collectionId;
   });
+}
+
+/**
+ * Products matching a name or SKU search, for the collections drawer's "Add
+ * products" control. A short capped list rather than the full picker: the
+ * drawer is 452px and the task is "find this one piece and add it", not
+ * "browse". `%` and `_` are escaped so a search for "_" means an underscore,
+ * not every product.
+ */
+export async function searchProductsForPicks(term: string, limit = 12): Promise<CollectionPick[]> {
+  const q = term.trim();
+  if (q.length < 2) return [];
+  const like = `%${escapeLike(q)}%`;
+  const rows = await query<RowDataPacket & { id: number; name: string; sku: string; image_url: string | null }>(
+    `SELECT id, name, sku, image_url FROM products
+      WHERE (name LIKE ? ESCAPE '\\\\' OR sku LIKE ? ESCAPE '\\\\')
+      ORDER BY name LIMIT ?`,
+    [like, like, Math.min(Math.max(1, limit), 50)],
+  );
+  return rows.map((r) => ({ id: r.id, name: r.name, sku: r.sku, imageUrl: r.image_url }));
 }
 
 export async function deleteCollection(admin: AdminContext, id: number): Promise<void> {

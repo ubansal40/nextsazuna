@@ -4,7 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { query, queryOne, type SqlParam } from "@/lib/db";
 import { formatPrice } from "@/lib/format";
 import { jewelleryUrl } from "@/lib/navigation";
-import { EFFECTIVE_PRICE, IN_STOCK, IS_VISIBLE, PRODUCT_COLUMNS, SORT_SQL } from "./sql";
+import { EFFECTIVE_PRICE, IN_STOCK, IS_VISIBLE, PRODUCT_COLUMNS, SORT_SQL, effectivePriceFor } from "./sql";
 import type {
   CountRow,
   ListingQuery,
@@ -75,6 +75,42 @@ function resolveSort(sort: SortKey | undefined): string {
 }
 
 /**
+ * "Is this product in the collection(s) `predicate` selects?" — the storefront
+ * twin of `COLLECTION_MATCH` in `lib/admin/taxonomy.ts`, and it must stay in
+ * step with it: what the admin counts on the collections screen is what the shop
+ * must show. A product qualifies three ways, matching the drawer's two sections:
+ *
+ *   1. it sits in one of the collection's rule categories, or
+ *   2. it carries one of its rule tags — both then narrowed by the sale-price
+ *      band when one is set, or
+ *   3. it was hand-picked, which is unconditional. Picking a piece by hand is an
+ *      explicit override, so a band must not silently drop it back out.
+ *
+ * `predicate` is a fragment over the aliased `collections col`, and its own
+ * placeholders are bound by the caller in the same order.
+ */
+function collectionMembership(predicate: string): string {
+  return `p.id IN (
+    SELECT p5.id FROM products p5
+    JOIN collections col ON ${predicate}
+    WHERE (
+      (
+        (EXISTS (SELECT 1 FROM product_categories pc5
+                  JOIN collection_categories cc5 ON cc5.category_id = pc5.category_id
+                 WHERE pc5.product_id = p5.id AND cc5.collection_id = col.id)
+         OR EXISTS (SELECT 1 FROM product_tags pt5
+                     JOIN collection_tags ct5 ON ct5.tag_id = pt5.tag_id
+                    WHERE pt5.product_id = p5.id AND ct5.collection_id = col.id))
+        AND (col.price_band_min IS NULL OR ${effectivePriceFor("p5")} >= col.price_band_min)
+        AND (col.price_band_max IS NULL OR ${effectivePriceFor("p5")} <= col.price_band_max)
+      )
+      OR EXISTS (SELECT 1 FROM collection_products cp5
+                  WHERE cp5.product_id = p5.id AND cp5.collection_id = col.id)
+    )
+  )`;
+}
+
+/**
  * Build the shared WHERE clause and its parameters.
  *
  * Every value is bound, never interpolated. The only interpolated fragments are
@@ -106,13 +142,7 @@ function buildFilters(input: ListingQuery): { where: string; params: SqlParam[];
 
   if (input.collectionIds?.length) {
     const placeholders = input.collectionIds.map(() => "?").join(", ");
-    clauses.push(
-      `p.id IN (
-         SELECT pc2.product_id FROM product_categories pc2
-         JOIN collection_categories cc ON cc.category_id = pc2.category_id
-         WHERE cc.collection_id IN (${placeholders})
-       )`,
-    );
+    clauses.push(collectionMembership(`col.id IN (${placeholders})`));
     params.push(...input.collectionIds);
   }
 
@@ -135,12 +165,7 @@ function buildFilters(input: ListingQuery): { where: string; params: SqlParam[];
 
   if (input.collectionSlugs?.length) {
     const placeholders = input.collectionSlugs.map(() => "?").join(", ");
-    clauses.push(
-      `p.id IN (SELECT pc4.product_id FROM product_categories pc4
-                  JOIN collection_categories cc2 ON cc2.category_id = pc4.category_id
-                  JOIN collections co2 ON co2.id = cc2.collection_id
-                 WHERE co2.slug IN (${placeholders}) AND co2.is_active = 1)`,
-    );
+    clauses.push(collectionMembership(`col.slug IN (${placeholders}) AND col.is_active = 1`));
     params.push(...input.collectionSlugs);
   }
 
