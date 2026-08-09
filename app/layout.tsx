@@ -56,26 +56,34 @@ export const metadata: Metadata = {
  * without taking zoom away from anyone.
  */
 /**
- * Zoom stays available.
+ * Zoom is disabled on every page, by owner decision.
  *
- * The owner asked for pinch-zoom to be disabled. It is deliberately NOT done
- * here, for three reasons that only became clear once checked:
+ * Recorded here because the trade-offs are real and a future reader will
+ * otherwise assume it was an oversight:
  *
- *   1. iOS Safari has ignored `user-scalable=no` and `maximum-scale` since
- *      iOS 10, so the setting would do nothing on iPhone — it would only make
- *      Android behave differently from iOS.
- *   2. It fails WCAG 2.1 SC 1.4.4 (Resize Text), which hits exactly the
- *      customers who most need to read a price.
- *   3. Tanishq — the benchmark the owner named — ships
- *      `width=device-width, initial-scale=1.0` and allows zoom.
+ *   - It fails WCAG 2.1 SC 1.4.4 (Resize Text), which asks that text scale to
+ *     200%. Low-vision customers feel this most.
+ *   - iOS Safari has ignored `user-scalable=no` and `maximum-scale` since
+ *     iOS 10, so PINCH-zoom still works on iPhone regardless of this setting.
+ *     It takes effect on Android and on desktop touch.
+ *   - For comparison, Tanishq ships `initial-scale=1.0` and allows zoom;
+ *     CaratLane and BlueStone both block it, as here.
  *
- * The actual complaint (the page lurching when a field is tapped) was iOS
- * auto-zoom on focus, which fires for any control under 16px. That is fixed at
- * its cause in `app/globals.css` under `@media (pointer: coarse)`.
+ * `touch-action: manipulation` in globals.css is the other half: it removes
+ * double-tap-to-zoom, which iOS DOES honour. Together they are the most that
+ * can actually be suppressed on the web.
+ *
+ * Separately, the 16px control floor in globals.css stays. iOS auto-zoom on
+ * focus is a different mechanism that fires for controls under 16px and is not
+ * governed by this setting at all — that floor is what stops the page lurching
+ * when a field is tapped.
  */
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  maximumScale: 1,
+  minimumScale: 1,
+  userScalable: false,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

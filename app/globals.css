@@ -844,3 +844,18 @@
     font-size: max(16px, 1em);
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Double-tap-to-zoom off, everywhere.
+ *
+ * The viewport flags in app/layout.tsx cover pinch-zoom on Android; iOS ignores
+ * them. `touch-action: manipulation` is the part iOS DOES honour — it drops the
+ * double-tap gesture (and with it the 300ms tap delay). Applied to the document
+ * so it reaches every page, admin and storefront alike.
+ *
+ * `pan-x pan-y` rather than `none`: scrolling must still work. Only the
+ * double-tap zoom gesture is removed.
+ * ------------------------------------------------------------------------- */
+html {
+  touch-action: pan-x pan-y;
+}
