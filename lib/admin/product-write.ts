@@ -4,7 +4,7 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { pool, transaction } from "../db";
 import { recordAdminAction } from "./audit";
 import { computeRulePrice, type PricingRuleCondition } from "./pricing";
-import { enqueueImageJob, runImageJob } from "./image-jobs";
+import { enqueueImageJob } from "./image-jobs";
 import { isRawUrl } from "./images";
 import type { AdminContext } from "./rbac";
 
@@ -261,9 +261,15 @@ export interface SaveResult {
 
 /**
  * Create (no id) or update (id) a product. Raw photos force the product to draft
- * and run through the image pipeline; a save with only already-processed images
+ * and are handed to the image queue; a save with only already-processed images
  * keeps its intended visibility. Everything writes in one transaction with its
- * audit line; the image job then runs inline after the commit.
+ * audit line.
+ *
+ * This function does NOT process images. It used to, and that was the flaw
+ * worth naming: a 4000×3000 photo takes seconds to encode, several take longer
+ * than a request should live, and any failure left the product a draft with no
+ * route back. Saving now returns as soon as the row and its job are committed;
+ * `drainImageJobs` does the work, triggered by whoever gets there first.
  */
 export async function saveProduct(
   admin: AdminContext,
@@ -366,16 +372,6 @@ export async function saveProduct(
 
       return productId;
     });
-
-    // Process the photos after the product + job are committed. It runs its own
-    // transaction and restores the intended visibility on success.
-    if (rawUrls.length > 0) {
-      const [jobRows] = await pool().execute<(RowDataPacket & { id: number })[]>(
-        "SELECT id FROM product_image_jobs WHERE product_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1",
-        [savedId],
-      );
-      if (jobRows[0]) await runImageJob(jobRows[0].id);
-    }
 
     return { id: savedId, processing: rawUrls.length > 0 };
   } catch (error) {

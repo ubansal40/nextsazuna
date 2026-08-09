@@ -388,8 +388,11 @@ export function ProductEditor({
 
     let saved = 0;
     let failed = 0;
-    // One at a time: `saveProduct` runs the image pipeline inline, and firing
-    // them together would have several sharp encodes competing for the process.
+    let processing = 0;
+    // One at a time. The image work no longer happens in the save, so this is
+    // no longer about sharp — it is so a card that fails to validate marks
+    // itself while the rest keep going, and so the progress counter means
+    // something.
     for (let i = 0; i < work.length; i += 1) {
       const card = work[i];
       setProgress(`${i + 1} / ${work.length}`);
@@ -413,6 +416,7 @@ export function ProductEditor({
 
       if (result.ok) {
         saved += 1;
+        if (result.processing) processing += 1;
         setCards((current) =>
           current.map((c) =>
             c.key === card.key ? { ...c, status: "saved", savedId: result.id, errors: {}, failure: null } : c,
@@ -444,14 +448,27 @@ export function ProductEditor({
     }
 
     setTouched(false);
+
+    // Say what is still happening. The save returns before the photos are
+    // encoded, so a product with new photos is genuinely saved but genuinely
+    // not finished — and a bare "created" would have the operator wondering why
+    // the list shows no image and a Draft chip.
+    const photoNote =
+      processing > 0
+        ? ` Photos are processing — ${processing === 1 ? "the product goes" : "they go"} live once they're ready.`
+        : "";
+
     if (mode === "edit") {
-      toast("success", "Product updated.");
+      toast("success", `Product updated.${photoNote}`);
       router.push("/admin/products");
       router.refresh();
       return;
     }
     setBanner({ kind: "done", text: `${saved} product${saved === 1 ? "" : "s"} created` });
-    toast("success", `${saved} product${saved === 1 ? "" : "s"} created. Add more below, or head to the products list.`);
+    toast(
+      "success",
+      `${saved} product${saved === 1 ? "" : "s"} created.${photoNote || " Add more below, or head to the products list."}`,
+    );
     router.refresh();
   }
 

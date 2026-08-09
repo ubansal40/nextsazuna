@@ -92,6 +92,12 @@ jobs:
       - name: SKU sheet parsing checks
         run: npm run check:sku-sheet
 
+      # The image queue decides whether a product's photos ever appear. Its
+      # claim/retry/supersede logic is pure and is exercised here; a stranded
+      # job is invisible until a customer sees a product with no picture.
+      - name: Image queue checks
+        run: npm run check:image-queue
+
       - name: Typecheck
         run: npm run typecheck
 

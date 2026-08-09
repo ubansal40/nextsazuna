@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp, { type OverlayOptions } from "sharp";
+import { PermanentImageError } from "./image-queue";
 
 /**
  * The product image pipeline — matched to sazuna-unik 2's, as instructed.
@@ -21,9 +22,9 @@ import sharp, { type OverlayOptions } from "sharp";
  *     otherwise pango falls back to the platform mono (Menlo on macOS, DejaVu
  *     Sans Mono on the Hostinger box). The label is a functional watermark, so
  *     near-equivalent mono glyphs are fine.
- *   - There is no background worker (`output: standalone` has none) — the upload
- *     route processes the job inline. This module is the processing half; the
- *     job queue and route are its callers.
+ *   - There is no background worker (`output: standalone` has none), so the
+ *     queue in `image-jobs.ts` drains from request-shaped triggers instead of a
+ *     daemon. This module is the processing half; the queue is its caller.
  */
 
 const SIZE = 1000;
@@ -207,13 +208,34 @@ export function canDecode(format: string): boolean {
 function assertDecodable(source: Buffer): void {
   const format = sniffImageFormat(source);
   if (canDecode(format)) return;
+  // PermanentImageError, not Error: no number of retries turns a HEIC into
+  // something a build without libheif can read, and the queue must not spend
+  // four more attempts and several minutes discovering that.
   if (format === "heic") {
-    throw new Error(
+    throw new PermanentImageError(
       "That looks like an iPhone HEIC photo, which this server's image library can't read. " +
         "Set the iPhone camera to \"Most Compatible\" (Settings > Camera > Formats), or export as JPEG first.",
     );
   }
-  throw new Error(`That file isn't a readable image (detected: ${format}).`);
+  throw new PermanentImageError(`That file isn't a readable image (detected: ${format}).`);
+}
+
+/**
+ * The per-job overlays: the shared logo, and the SKU label for one SKU.
+ *
+ * Built once per job and reused across that job's photos, as the reference
+ * does. The logo is invariant and memoized globally; the SKU label is a pango
+ * text render plus an SVG composite, and rebuilding it for every photo of the
+ * same product was pure waste.
+ */
+export interface ImageOverlays {
+  logo: { buffer: Buffer; left: number };
+  skuLabel: OverlayOptions;
+}
+
+export async function buildImageOverlays(sku: string): Promise<ImageOverlays> {
+  const [logo, skuLabel] = await Promise.all([getLogoOverlay(), buildSkuLabel(sku)]);
+  return { logo, skuLabel };
 }
 
 /**
@@ -221,12 +243,20 @@ function assertDecodable(source: Buffer): void {
  * orientation before the square crop, so a portrait phone photo is not stored
  * sideways. Cover-crop from the centre matches the reference; nothing is
  * letterboxed.
+ *
+ * `overlays` is optional so a single call site (the check script, a one-off)
+ * need not build them — but a job passes its own, so a 12-photo product renders
+ * the SKU label once rather than twelve times.
  */
-export async function processProductImage(source: Buffer, sku: string): Promise<Buffer> {
-  if (!source?.length) throw new Error("Image file is required.");
+export async function processProductImage(
+  source: Buffer,
+  sku: string,
+  overlays?: ImageOverlays,
+): Promise<Buffer> {
+  if (!source?.length) throw new PermanentImageError("Image file is required.");
   assertDecodable(source);
 
-  const [logo, skuLabel] = await Promise.all([getLogoOverlay(), buildSkuLabel(sku)]);
+  const { logo, skuLabel } = overlays ?? (await buildImageOverlays(sku));
 
   return sharp(source)
     .rotate()
@@ -246,7 +276,7 @@ export async function processProductImage(source: Buffer, sku: string): Promise<
  * the two sit together without a visible difference in treatment.
  */
 export async function processSquareImage(source: Buffer): Promise<Buffer> {
-  if (!source?.length) throw new Error("Image file is required.");
+  if (!source?.length) throw new PermanentImageError("Image file is required.");
   assertDecodable(source);
   return sharp(source)
     .rotate()
@@ -300,10 +330,123 @@ export async function storeRawUpload(buffer: Buffer, sku: string, extension: str
 /** Write a processed AVIF for a product's Nth image and return its URL. */
 export async function storeProcessedImage(buffer: Buffer, sku: string, index: number): Promise<string> {
   await mkdir(PRODUCT_IMAGE_UPLOAD_DIR, { recursive: true });
-  const digest = createHash("sha256").update(buffer).digest("hex").slice(0, 8);
-  const filename = `${sanitiseForFilename(sku)}-${index}-${digest}.avif`;
+  const filename = processedFilename(buffer, sku, index);
   await writeFile(path.join(PRODUCT_IMAGE_UPLOAD_DIR, filename), buffer);
   return finalUrl(filename);
+}
+
+function processedFilename(buffer: Buffer, sku: string, index: number): string {
+  const digest = createHash("sha256").update(buffer).digest("hex").slice(0, 8);
+  return `${sanitiseForFilename(sku)}-${index}-${digest}.avif`;
+}
+
+/* --- staged publish -------------------------------------------------------- */
+
+/**
+ * Encoded output lands in a per-job staging directory and only moves into place
+ * as part of the database transaction that references it, following the
+ * reference app.
+ *
+ * The reason is the same there and here: the moment a file appears under
+ * `/uploads/products/` it is servable, so publishing before the commit means a
+ * job that is then cancelled — superseded by a newer upload, or whose claim was
+ * stolen — has already scattered files nothing points at. Staging keeps "the
+ * bytes exist" and "the product uses them" a single decision.
+ *
+ * `rename` rather than the reference's `copyFile`: staging sits inside the
+ * upload root, so it is the same filesystem, and a rename is atomic and does
+ * not read a 60 KB file back through the process for every photo.
+ */
+export interface StagedImage {
+  /** Where the file is now. */
+  stagedPath: string;
+  /** Where it goes on publish. */
+  finalPath: string;
+  /** The URL it will be served at. */
+  url: string;
+}
+
+export async function createStagingDir(jobId: number): Promise<string> {
+  const suffix = createHash("sha256")
+    .update(`${jobId}:${Date.now()}:${Math.random()}`)
+    .digest("hex")
+    .slice(0, 8);
+  const dir = path.join(PRODUCT_IMAGE_UPLOAD_DIR, ".staging", `job-${jobId}-${suffix}`);
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+export async function stageProcessedImage(
+  stagingDir: string,
+  buffer: Buffer,
+  sku: string,
+  index: number,
+): Promise<StagedImage> {
+  const filename = processedFilename(buffer, sku, index);
+  const stagedPath = path.join(stagingDir, filename);
+  await writeFile(stagedPath, buffer);
+  return {
+    stagedPath,
+    finalPath: path.join(PRODUCT_IMAGE_UPLOAD_DIR, filename),
+    url: finalUrl(filename),
+  };
+}
+
+/** Move staged files into the served directory. Call inside the transaction. */
+export async function publishStagedImages(staged: readonly StagedImage[]): Promise<void> {
+  await mkdir(PRODUCT_IMAGE_UPLOAD_DIR, { recursive: true });
+  for (const item of staged) {
+    await rename(item.stagedPath, item.finalPath);
+  }
+}
+
+/** Discard a staging directory and everything in it. Never throws. */
+export async function discardStagingDir(stagingDir: string): Promise<void> {
+  if (!stagingDir) return;
+  await rm(stagingDir, { recursive: true, force: true }).catch(() => {
+    // Cleanup is best effort — a leftover staging directory is inert.
+  });
+}
+
+/**
+ * Delete files, tolerating the ones already gone.
+ *
+ * Used for two things: the raw originals once a job has succeeded (the
+ * reference does the same — a raw 4 MB JPEG has no purpose once its 60 KB AVIF
+ * exists, and on the Hostinger storage volume they would otherwise accumulate
+ * forever), and rolling back a publish whose transaction then failed.
+ */
+export async function removeFiles(paths: readonly string[]): Promise<number> {
+  let removed = 0;
+  await Promise.all(
+    paths.map(async (filePath) => {
+      if (!filePath) return;
+      try {
+        await unlink(filePath);
+        removed += 1;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        // ENOENT means somebody got there first, which is the desired state.
+        if (code !== "ENOENT") {
+          console.warn(`[admin] could not remove ${filePath}: ${code ?? "unknown error"}`);
+        }
+      }
+    }),
+  );
+  return removed;
+}
+
+/** Resolve a list of image URLs to absolute paths, dropping ones outside the root. */
+export function pathsForUrls(urls: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const url of urls) {
+    const filePath = pathForUrl(url);
+    if (!filePath || seen.has(filePath)) continue;
+    seen.add(filePath);
+    out.push(filePath);
+  }
+  return out;
 }
 
 /**

@@ -7,6 +7,8 @@
  * never parsed to a float on the way to the screen (ADR 0003).
  */
 
+import { operatorFailureMessage } from "./image-queue";
+
 /** A row from the admin product list query (draft-visible — no IS_VISIBLE gate). */
 export interface AdminProductRow {
   id: number;
@@ -53,6 +55,16 @@ export interface AdminProductListItem {
   material: string | null;
   purity: string | null;
   categoryNames: string;
+  /**
+   * Why the photos failed, in a sentence, or null when they did not.
+   *
+   * A "Failed" chip with no reason is the worst of both worlds: it tells the
+   * operator something is wrong and nothing about what, so the only move left is
+   * to guess. The stored message already says whether the file was a HEIC or the
+   * server ran out of room — carrying it to the screen is what makes the retry
+   * button a decision rather than a coin flip.
+   */
+  imageError: string | null;
 }
 
 /**
@@ -93,5 +105,9 @@ export function toAdminProductListItem(row: AdminProductRow): AdminProductListIt
     material: row.material,
     purity: row.purity,
     categoryNames: row.category_names ?? "",
+    imageError:
+      row.image_processing_status === "failed"
+        ? operatorFailureMessage(row.image_processing_error)
+        : null,
   };
 }

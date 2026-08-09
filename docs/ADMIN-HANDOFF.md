@@ -113,6 +113,27 @@ decision: `…Coupons`, `…Loyalty`, and the Orders spec's **Order Desk (POS)**
    a grant a staffer can be given. ADR 0009 (route group + session model) and
    ADR 0010 (taxonomy and statuses as tables).
 
+## Image queue (replaces the inline pipeline)
+
+Product photos are no longer processed inside the save request. `lib/admin/
+image-jobs.ts` is a port of the reference's `image-worker.js` + `image-jobs.js`:
+enqueue-and-supersede, `SELECT … FOR UPDATE` claim, bounded retries with
+backoff, stale-claim reclaim, raw-file cleanup on success. Policy that deserves
+testing is in `lib/admin/image-queue.ts` (no `server-only`, 51 checks in
+`scripts/check-image-queue.mts` — **not yet wired into `verify`/CI**).
+
+- **There is no daemon.** `drainImageJobs()` is triggered by `after()` on a save,
+  by the products list while it shows a Processing row, and by
+  `POST /admin/products/image-jobs`. **A cron on that route is a real deploy
+  requirement** — without it, a job stranded by a deploy waits until somebody
+  opens the admin. See `IMAGE_JOB_DRAIN_TOKEN` in `.env.example`.
+- **Migration 0016** adds `claim_token` (closes a finalize race the reference
+  has) and `next_attempt_at` (backoff). Next free number: **0017**.
+- A failure that can never succeed (unreadable file) is terminal on attempt 1
+  rather than after five — `PermanentImageError`. Only transient failures retry.
+- Raw originals are deleted only on success, so the list's **Retry photos**
+  action has something to work from.
+
 ## Still open at cutover
 
 Deferred within B: product editor **multi-card batch add + Excel autofill**
