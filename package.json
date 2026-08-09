@@ -23,7 +23,8 @@
     "check:pricing": "tsx scripts/check-pricing.mts",
     "check:stock": "tsx scripts/check-stock.mts",
     "check:order-money": "tsx scripts/check-order-money.mts",
-    "check:sku-sheet": "tsx scripts/check-sku-sheet.mts"
+    "check:sku-sheet": "tsx scripts/check-sku-sheet.mts",
+    "check:sharp": "tsx scripts/check-sharp.mts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
