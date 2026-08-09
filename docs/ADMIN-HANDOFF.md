@@ -53,11 +53,20 @@ Picker`, `…Taxonomy`. Still to read: `Sazuna Admin Orders.dc.html`,
    collections by category rules alone — the live collection showed 906 products
    against the admin's 953. `collectionMembership()` there is now the twin of
    `COLLECTION_MATCH`; keep the two in step.
-2. **Phase D — stock management.** `Sazuna Admin Stock Management.dc.html`.
-   Excel/CSV upload → **dry-run** (returns publish/draft/exempt/unmatched counts
-   + the unmatched-SKU list for CSV, changing nothing) → **Apply** (the
-   reference's atomic `is_active` CASE update, `always_available` exempt). Needs
-   an xlsx parser (add a dep) + an upload route. Gate `products_stock`.
+2. ~~**Phase D — stock management.**~~ **DONE** (`2cd9a16`).
+   `lib/admin/stock-parse.ts` (pure, no `server-only`, 31 checks in
+   `check:stock`) + `lib/admin/stock.ts` + `POST /admin/stock/sync?mode=dry|apply`
+   + the screen. Dep added: `read-excel-file` (use `readSheet`, NOT the default
+   export — v9's default returns every sheet wrapped in `{sheet, data}`). CSV is
+   parsed in-repo; only column A is needed.
+   - **Do not** reuse the reference's SKU-weights parser here: it drops rows
+     with no weight/purity, so a one-column stock list parses to nothing.
+   - A minimal `.xlsx` lacking `styles.xml`/`sharedStrings.xml` makes
+     `read-excel-file` throw an opaque error; the route already turns that into
+     "That spreadsheet could not be read." Real Excel exports always include both.
+   - **No product in this catalogue has `always_available = 1`**, so the
+     exemption has no live coverage — it was proven by setting the flag on one
+     product and restoring. Keep that in mind before trusting it at cutover.
 3. **Phase E — orders (the big one).** New migration **0013**: `order_statuses`
    (system + custom, colour, customer-timeline visibility, order, default),
    `orders.deleted_at` (soft delete), `order_activity` feed; migrate
@@ -98,6 +107,12 @@ built yet — fix it there once, not per screen.
 **Two admin specs are in the design project but in neither the plan nor this
 file:** `Sazuna Admin Coupons.dc.html` and `Sazuna Admin Loyalty.dc.html`. Owner
 decision needed on whether they are in scope for cutover.
+
+**Open security advisory (pre-existing).** `npm audit` reports one high-severity
+issue: nodemailer ≤9.0.0, where a message-level `raw` option bypasses
+`disableFileAccess`/`disableUrlAccess` (GHSA-p6gq-j5cr-w38f). This app sends
+order email through nodemailer. The fix is a major bump to 9.0.5+, so it wants
+its own change with the order-email checks re-run — not a drive-by upgrade.
 
 ## Storefront integration — STILL PENDING (admin changes don't reach the shop yet)
 
