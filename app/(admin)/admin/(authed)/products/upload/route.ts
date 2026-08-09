@@ -15,7 +15,14 @@ import { storeRawUpload } from "@/lib/admin/images";
 
 const MAX_FILES = 20;
 const MAX_BYTES = 15 * 1024 * 1024;
-const ALLOWED = /^image\/(jpeg|png|webp|avif|gif)$/;
+/**
+ * Any `image/*`, as sazuna-unik 2 does. A narrower allowlist rejected files
+ * this pipeline can actually process, and browsers report HEIC inconsistently
+ * (often `application/octet-stream`), so the declared type is a poor gate.
+ * `processProductImage` sniffs the real format and refuses what it cannot read,
+ * with a message naming the format — that is the honest boundary.
+ */
+const ALLOWED = /^image\//;
 
 export async function POST(request: Request): Promise<Response> {
   const admin = await currentAdmin();

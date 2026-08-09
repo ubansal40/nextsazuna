@@ -147,6 +147,76 @@ async function buildSkuLabel(sku: string): Promise<OverlayOptions> {
 }
 
 /**
+ * Identify an image from its magic bytes.
+ *
+ * `sharp` reports every unreadable input as the same
+ * "Input buffer contains unsupported image format", which names neither the
+ * format nor the reason — so a production failure tells you nothing about
+ * whether the file was a HEIC from someone's iPhone, a decoder this build
+ * lacks, or a truncated upload. Sniffing first turns that into a sentence a
+ * person can act on.
+ *
+ * Deliberately independent of the declared MIME type: browsers send
+ * `application/octet-stream` for HEIC often enough that the header is the only
+ * honest source.
+ */
+export function sniffImageFormat(buffer: Buffer): string {
+  if (buffer.length < 12) return "empty or truncated file";
+  const ascii = buffer.subarray(0, 12).toString("latin1");
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) return "jpeg";
+  if (ascii.startsWith("\x89PNG")) return "png";
+  if (ascii.startsWith("GIF8")) return "gif";
+  if (ascii.startsWith("RIFF") && ascii.slice(8, 12) === "WEBP") return "webp";
+  if (ascii.startsWith("II*\0") || ascii.startsWith("MM\0*")) return "tiff";
+  if (ascii.startsWith("BM")) return "bmp";
+  if (ascii.trimStart().startsWith("<")) {
+    // SVG is a real image sharp can read; an HTML error page is not. Lumping
+    // them together let a fetched 404 page pass the decodable check and fail
+    // later with sharp's opaque message — the exact thing this exists to stop.
+    const head = buffer.subarray(0, 512).toString("latin1").toLowerCase();
+    if (head.includes("<svg")) return "svg";
+    return "html (not an image)";
+  }
+  // ISO-BMFF: the brand at bytes 8-12 separates AVIF from HEIC.
+  if (ascii.slice(4, 8) === "ftyp") {
+    const brand = ascii.slice(8, 12);
+    if (brand.startsWith("avif") || brand.startsWith("avis")) return "avif";
+    if (brand.startsWith("heic") || brand.startsWith("heix") || brand.startsWith("mif1")) return "heic";
+    return `iso-bmff (${brand.trim()})`;
+  }
+  return "unrecognised";
+}
+
+/** Whether this sharp build can DECODE a format `sniffImageFormat` named. */
+export function canDecode(format: string): boolean {
+  if (format === "avif" || format === "heic") return Boolean(sharp.format.heif?.input?.buffer);
+  const key = format === "svg or html" ? "svg" : format;
+  const entry = (sharp.format as unknown as Record<string, { input?: { buffer?: boolean } }>)[key];
+  return Boolean(entry?.input?.buffer);
+}
+
+/**
+ * Refuse an image this build cannot read, with a message that says why.
+ *
+ * HEIC is the case that matters: it is what an iPhone produces by default, and
+ * whether it can be read depends on whether the deployed `sharp` was built with
+ * libheif — which differs between a laptop and shared hosting. Failing here
+ * names the format and tells the admin what to do instead of leaving
+ * "unsupported image format" in a log nobody can act on.
+ */
+function assertDecodable(source: Buffer): void {
+  const format = sniffImageFormat(source);
+  if (canDecode(format)) return;
+  if (format === "heic") {
+    throw new Error(
+      "That looks like an iPhone HEIC photo, which this server's image library can't read. " +
+        "Set the iPhone camera to \"Most Compatible\" (Settings > Camera > Formats), or export as JPEG first.",
+    );
+  }
+  throw new Error(`That file isn't a readable image (detected: ${format}).`);
+}
+
+/**
  * Process one raw photo into the final AVIF. `rotate()` honours the EXIF
  * orientation before the square crop, so a portrait phone photo is not stored
  * sideways. Cover-crop from the centre matches the reference; nothing is
@@ -154,6 +224,7 @@ async function buildSkuLabel(sku: string): Promise<OverlayOptions> {
  */
 export async function processProductImage(source: Buffer, sku: string): Promise<Buffer> {
   if (!source?.length) throw new Error("Image file is required.");
+  assertDecodable(source);
 
   const [logo, skuLabel] = await Promise.all([getLogoOverlay(), buildSkuLabel(sku)]);
 
@@ -176,6 +247,7 @@ export async function processProductImage(source: Buffer, sku: string): Promise<
  */
 export async function processSquareImage(source: Buffer): Promise<Buffer> {
   if (!source?.length) throw new Error("Image file is required.");
+  assertDecodable(source);
   return sharp(source)
     .rotate()
     .resize(SIZE, SIZE, { fit: "cover", position: "centre" })

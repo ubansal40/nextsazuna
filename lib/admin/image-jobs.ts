@@ -1,10 +1,12 @@
 import "server-only";
 
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { pool, transaction } from "../db";
 import {
   processProductImage,
+  sniffImageFormat,
   storeProcessedImage,
   pathForUrl,
   isRawUrl,
@@ -98,7 +100,16 @@ export async function runImageJob(jobId: number): Promise<{ ok: boolean; images?
       const filePath = pathForUrl(rawUrls[i]);
       if (!filePath) throw new Error(`Unresolvable raw url: ${rawUrls[i]}`);
       const source = await readFile(filePath);
-      const avif = await processProductImage(source, job.sku);
+      // Name the file and its real format on the way in. When a job fails in
+      // production the log is all there is, and "unsupported image format" on
+      // its own says nothing about which file or why.
+      let avif: Buffer;
+      try {
+        avif = await processProductImage(source, job.sku);
+      } catch (error) {
+        const detail = `${path.basename(filePath)} (${source.length} bytes, detected ${sniffImageFormat(source)})`;
+        throw new Error(`${error instanceof Error ? error.message : "Image processing failed."} [${detail}]`);
+      }
       finalUrls.push(await storeProcessedImage(avif, job.sku, i));
     }
 
