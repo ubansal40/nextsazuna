@@ -53,10 +53,27 @@ const items: OrderItemRowLike[] = [
   { product_name: "Petal Drop Earrings", product_sku: "DGE-1180", quantity: 1, line_total: "78500.00" },
 ];
 
-const guest = toBuyerSafeView(order, items);
-const receipt = toReceiptView(order, items);
-const cancelled = buildTimeline({ ...order, status: "cancelled" });
-const shipped = buildTimeline(order);
+/**
+ * The seeded `order_statuses` ladder from migration 0013, as the timeline sees
+ * it. The steps are now the admin's own statuses rather than a hardcoded
+ * placed/confirmed/shipped/delivered — "shipped" and "delivered" were never
+ * values this system could hold.
+ */
+const STATUSES = [
+  { key: "pending_payment", label: "Pending payment", customerVisible: false, isTerminal: false },
+  { key: "payment_failed", label: "Payment failed", customerVisible: false, isTerminal: true },
+  { key: "placed", label: "Placed", customerVisible: true, isTerminal: false },
+  { key: "confirmed", label: "Confirmed", customerVisible: true, isTerminal: false },
+  { key: "billed", label: "Billed", customerVisible: true, isTerminal: false },
+  { key: "processing", label: "Processing", customerVisible: false, isTerminal: false },
+  { key: "completed", label: "Completed", customerVisible: true, isTerminal: true },
+  { key: "cancelled", label: "Cancelled", customerVisible: true, isTerminal: true },
+];
+
+const guest = toBuyerSafeView(order, items, STATUSES);
+const receipt = toReceiptView(order, items, STATUSES);
+const cancelled = buildTimeline({ ...order, status: "cancelled" }, STATUSES);
+const billed = buildTimeline({ ...order, status: "billed" }, STATUSES);
 
 resetRateLimits();
 const burst = Array.from({ length: 6 }, () => rateLimit("ip:1.2.3.4", { limit: 5, windowMs: 60_000 }));
@@ -99,12 +116,30 @@ const checks: [string, boolean][] = [
   ["maskPhone refuses a short number", maskPhone("98039") === ""],
 
   // --- timeline ------------------------------------------------------------
-  ["shipped marks the first three steps done", shipped.filter((s) => s.done).length === 3],
-  ["shipped is the current step", shipped.find((s) => s.current)?.key === "shipped"],
-  ["delivered is not claimed", shipped.at(-1)?.done === false],
-  ["only placed and the current step carry a time", shipped.filter((s) => s.at).length === 2],
+  ["the ladder is the customer-visible statuses, in the admin's order", billed.map((s) => s.key).join(">") === "placed>confirmed>billed>completed"],
+  [
+    "an alternative exit after the happy path is not drawn as a future step",
+    !billed.some((s) => s.key === "cancelled"),
+  ],
+  ["a hidden status never appears as a step", !billed.some((s) => ["pending_payment", "payment_failed", "processing"].includes(s.key))],
+  ["billed marks the first three steps done", billed.filter((s) => s.done).length === 3],
+  ["billed is the current step", billed.find((s) => s.current)?.key === "billed"],
+  ["a later step is not claimed", billed.at(-1)?.done === false],
+  ["only the first and current steps carry a time", billed.filter((s) => s.at).length === 2],
+  ["steps carry the admin's label, not a capitalised key", billed[0].label === "Placed"],
   ["cancelled collapses to one step", cancelled.length === 1 && cancelled[0].key === "cancelled"],
-  ["an unknown status falls back to placed", buildTimeline({ ...order, status: "??" })[0].current],
+  ["a terminal status does not draw a ladder behind it", cancelled[0].current && cancelled[0].done],
+  ["an unknown status falls back to the first step", buildTimeline({ ...order, status: "??" }, STATUSES)[0].current],
+  [
+    "an order on a customer-hidden status shows no invented progress",
+    buildTimeline({ ...order, status: "pending_payment" }, STATUSES).filter((s) => s.done).length === 1,
+  ],
+  ["no statuses at all yields no timeline rather than a fake one", buildTimeline(order, []).length === 0],
+  [
+    "a renamed status renames the step",
+    buildTimeline({ ...order, status: "billed" }, STATUSES.map((s) => (s.key === "billed" ? { ...s, label: "Invoice raised" } : s)))
+      .find((s) => s.current)?.label === "Invoice raised",
+  ],
 
   // --- rate limit ----------------------------------------------------------
   ["five attempts pass", burst.slice(0, 5).every((r) => r.ok)],

@@ -132,14 +132,20 @@ export interface TimelineStep {
   at: string | null;
 }
 
-const LADDER = ["placed", "confirmed", "shipped", "delivered"];
-const STATUS_TO_STEP: Record<string, number> = {
-  new: 0, placed: 0, pending: 0,
-  confirmed: 1, packed: 1, paid: 1,
-  shipped: 2, dispatched: 2, out_for_delivery: 2,
-  delivered: 3, completed: 3,
-};
-const TERMINAL = new Set(["cancelled", "refunded", "returned"]);
+/**
+ * A status as the timeline needs it — the customer-facing subset of an
+ * `order_statuses` row (migration 0013).
+ *
+ * Passed in rather than queried here, because this module is pure so that
+ * `scripts/check-order-lookup.mts` can exercise the access rules directly. The
+ * caller loads them; `lib/orders.ts` does that once per lookup.
+ */
+export interface TimelineStatus {
+  key: string;
+  label: string;
+  customerVisible: boolean;
+  isTerminal: boolean;
+}
 
 function iso(value: Date | string | null | undefined): string | null {
   if (!value) return null;
@@ -150,35 +156,57 @@ function iso(value: Date | string | null | undefined): string | null {
 /**
  * The status ladder the storefront draws as a timeline.
  *
- * `done` comes from position, so an order that skipped a step still shows the
- * earlier ones complete rather than leaving gaps. A cancelled order gets its
- * own single-step ladder — walking it through "Shipped" would be a lie.
+ * Built from the admin's own `order_statuses` (migration 0013), not a hardcoded
+ * list. The previous ladder was `placed → confirmed → shipped → delivered`,
+ * and neither "shipped" nor "delivered" was ever a status this system could
+ * hold — so customers watched for a step that could never arrive while the real
+ * `Billed` state was invisible to them. Now the steps ARE the statuses the admin
+ * marked customer-visible, in the order they arranged.
  *
- * Only `created_at` and `updated_at` are ever claimed. Deriving a "shipped at"
- * from `updated_at` for every step would print four identical times and read as
+ * `done` comes from position, so an order that skipped a step still shows the
+ * earlier ones complete rather than leaving gaps.
+ *
+ * Only `created_at` and `updated_at` are ever claimed. Deriving a per-step time
+ * from `updated_at` would print the same timestamp on every row and read as
  * fabricated tracking.
  */
-export function buildTimeline(order: OrderRowLike): TimelineStep[] {
+export function buildTimeline(order: OrderRowLike, statuses: readonly TimelineStatus[] = []): TimelineStep[] {
   const status = String(order.status ?? "").toLowerCase();
+  const current = statuses.find((s) => s.key === status);
 
-  if (TERMINAL.has(status)) {
-    return [
-      {
-        key: status,
-        label: status.charAt(0).toUpperCase() + status.slice(1),
-        done: true,
-        current: true,
-        at: iso(order.updated_at),
-      },
-    ];
+  // A terminal status gets its own single step. Walking a cancelled order
+  // through "Confirmed" would be a lie, and the label is the admin's wording.
+  if (current?.isTerminal) {
+    return [{ key: current.key, label: current.label, done: true, current: true, at: iso(order.updated_at) }];
   }
 
-  const reached = STATUS_TO_STEP[status];
-  const index = Number.isInteger(reached) ? reached : 0;
+  const visible = statuses.filter((s) => s.customerVisible);
 
-  return LADDER.map((key, i) => ({
-    key,
-    label: key.charAt(0).toUpperCase() + key.slice(1),
+  /**
+   * Cut the ladder at the first terminal status.
+   *
+   * Terminal statuses that sit *after* it are alternative exits, not later
+   * steps: with the seeded set, "Completed" ends the happy path and "Cancelled"
+   * follows it in the admin's ordering. Drawing both would promise every
+   * customer their order is on its way to being cancelled. An order actually on
+   * one of those exits never reaches here — it returned its own single step
+   * above.
+   */
+  const firstTerminal = visible.findIndex((s) => s.isTerminal);
+  const ladder = firstTerminal >= 0 ? visible.slice(0, firstTerminal + 1) : visible;
+  if (ladder.length === 0) return [];
+
+  /**
+   * Where the order sits on the ladder. A status that is hidden from customers
+   * (a gateway-incomplete one) or that no longer exists has no position, so the
+   * order shows at the first step rather than inventing progress it hasn't made.
+   */
+  const reached = ladder.findIndex((s) => s.key === status);
+  const index = reached >= 0 ? reached : 0;
+
+  return ladder.map((step, i) => ({
+    key: step.key,
+    label: step.label,
     done: i <= index,
     current: i === index,
     at: i === 0 ? iso(order.created_at) : i === index ? iso(order.updated_at) : null,
@@ -239,7 +267,7 @@ function positive(value: string): string | null {
   return Number(value) > 0 ? money(value) : null;
 }
 
-function shared(order: OrderRowLike, items: OrderItemRowLike[]) {
+function shared(order: OrderRowLike, items: OrderItemRowLike[], statuses: readonly TimelineStatus[]) {
   return {
     orderNumber: order.order_number,
     status: order.status,
@@ -259,7 +287,7 @@ function shared(order: OrderRowLike, items: OrderItemRowLike[]) {
       extras: positive(order.shipping_amount),
       total: money(order.total_amount),
     },
-    timeline: buildTimeline(order),
+    timeline: buildTimeline(order, statuses),
     placedAt: iso(order.created_at),
   };
 }
@@ -270,8 +298,12 @@ function shared(order: OrderRowLike, items: OrderItemRowLike[]) {
  * The reader already proved they hold the HMAC minted for this order at
  * checkout, so this may carry the full phone.
  */
-export function toReceiptView(order: OrderRowLike, items: OrderItemRowLike[]): OrderView {
-  return { ...shared(order, items), phone: String(order.phone ?? "") };
+export function toReceiptView(
+  order: OrderRowLike,
+  items: OrderItemRowLike[],
+  statuses: readonly TimelineStatus[] = [],
+): OrderView {
+  return { ...shared(order, items, statuses), phone: String(order.phone ?? "") };
 }
 
 /**
@@ -281,6 +313,10 @@ export function toReceiptView(order: OrderRowLike, items: OrderItemRowLike[]): O
  * cannot leak through by accident. Email is omitted entirely and the phone is
  * masked; see rule 2 at the top of this file.
  */
-export function toBuyerSafeView(order: OrderRowLike, items: OrderItemRowLike[]): OrderView {
-  return { ...shared(order, items), phone: maskPhone(order.phone) };
+export function toBuyerSafeView(
+  order: OrderRowLike,
+  items: OrderItemRowLike[],
+  statuses: readonly TimelineStatus[] = [],
+): OrderView {
+  return { ...shared(order, items, statuses), phone: maskPhone(order.phone) };
 }

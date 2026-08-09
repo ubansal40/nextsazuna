@@ -9,6 +9,7 @@ import {
   isVisibleStatus,
   toBuyerSafeView,
   toReceiptView,
+  type TimelineStatus,
   type OrderItemRowLike,
   type OrderRowLike,
   type OrderView,
@@ -217,6 +218,25 @@ export interface OrderSummary {
  * the guest path this does NOT filter on status: someone holding the token for
  * an order still awaiting its gateway is entitled to see that it is pending.
  */
+/**
+ * The customer-facing status ladder, from the admin's `order_statuses`.
+ *
+ * Loaded here rather than inside `lib/order-lookup.ts`, which is deliberately
+ * pure so the check script can exercise the access rules without a database.
+ * Ordered by the admin's own arrangement — that order IS the timeline.
+ */
+async function loadTimelineStatuses(): Promise<TimelineStatus[]> {
+  const rows = await query<RowDataPacket & { key: string; label: string; customer_visible: number; is_terminal: number }>(
+    "SELECT `key`, label, customer_visible, is_terminal FROM order_statuses ORDER BY sort_order, id",
+  );
+  return rows.map((r) => ({
+    key: r.key,
+    label: r.label,
+    customerVisible: r.customer_visible === 1,
+    isTerminal: r.is_terminal === 1,
+  }));
+}
+
 export async function loadOrderReceipt(
   orderNumber: string,
   token: string | undefined,
@@ -229,7 +249,8 @@ export async function loadOrderReceipt(
   );
   if (!row) return null;
 
-  return toReceiptView(row, await loadItems(row.order_number));
+  const [items, statuses] = await Promise.all([loadItems(row.order_number), loadTimelineStatuses()]);
+  return toReceiptView(row, items, statuses);
 }
 
 /**
@@ -257,7 +278,8 @@ export async function lookupOrderByContact(
   );
   if (!row || !isVisibleStatus(row.status) || !contactMatches(row, contact)) return null;
 
-  return toBuyerSafeView(row, await loadItems(row.order_number));
+  const [items, statuses] = await Promise.all([loadItems(row.order_number), loadTimelineStatuses()]);
+  return toBuyerSafeView(row, items, statuses);
 }
 
 /**
@@ -292,7 +314,8 @@ export async function loadOrderForCustomer(
   if (!row || !isVisibleStatus(row.status)) return null;
 
   // Their own order, so the full phone is theirs to see.
-  return toReceiptView(row, await loadItems(row.order_number));
+  const [items, statuses] = await Promise.all([loadItems(row.order_number), loadTimelineStatuses()]);
+  return toReceiptView(row, items, statuses);
 }
 
 /**

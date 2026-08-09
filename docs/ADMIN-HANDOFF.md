@@ -67,17 +67,26 @@ Picker`, `…Taxonomy`. Still to read: `Sazuna Admin Orders.dc.html`,
    - **No product in this catalogue has `always_available = 1`**, so the
      exemption has no live coverage — it was proven by setting the flag on one
      product and restoring. Keep that in mind before trusting it at cutover.
-3. **Phase E — orders (the big one).** New migration **0013**: `order_statuses`
-   (system + custom, colour, customer-timeline visibility, order, default),
-   `orders.deleted_at` (soft delete), `order_activity` feed; migrate
-   `orders.status` ENUM → VARCHAR referencing `order_statuses`. Configurable
-   status system + "Manage statuses" drawer; orders list (tabs, inline + bulk
-   status, escaped search); order **detail editing** (line items, customer &
-   delivery, discount + promo, notes/activity, notify SMS/WhatsApp/Email). Soft
-   delete only, per-section RBAC on **every** route, audit-in-transaction.
-   **Wire the storefront timeline** (`lib/order-lookup.ts` buildTimeline +
-   `/order-status` + `/account/orders/[id]`) to read `order_statuses` labels +
-   `customer_visible`. Gate `orders`.
+3. ~~**Phase E — orders.**~~ **DONE** (`c8f7565`, `c2f1cc2`, `65eb97e`, + timeline).
+   Migration 0013; `lib/admin/{order-statuses,orders,order-detail,order-money,
+   order-status-colours}.ts`; the list, the manage-statuses drawer and the
+   detail screen. `check:order-money` (31 checks) is in verify + CI.
+   - **`customer_visible` is not the lookup gate.** `HIDDEN_ORDER_STATUSES` in
+     `lib/order-lookup.ts` stays code-level: it is an enumeration boundary, and
+     an admin toggling a switch must not expose gateway-incomplete orders.
+   - **Storefront timeline is wired.** `buildTimeline(order, statuses)` now
+     builds from `order_statuses`. The old ladder was
+     `placed→confirmed→shipped→delivered`, and neither "shipped" nor "delivered"
+     was ever a status this system could hold. The ladder is cut at the FIRST
+     terminal status, so "Cancelled" (terminal, and after "Completed" in the
+     admin's order) is not drawn as a future step on every order.
+   - `lib/order-lookup.ts` stays pure — statuses are passed in, loaded by
+     `loadTimelineStatuses()` in `lib/orders.ts`.
+   - **Not built:** the spec's notify (SMS/WhatsApp/Email) modal, and the
+     result-panel "N products couldn't be updated" branch (our apply is one
+     atomic statement, so no partial state exists). Notify is the real gap —
+     `AAKASH_SMS_TOKEN` and SMTP are unset, so it would "skip" anyway.
+
 4. **Phase F — customers CRM** (no design spec — shared data-table + profile
    drawer; reference `admin-customers.js`). Columns Name/Phone(mono)/Email/
    Orders/Lifetime spend/Joined; profile = contact, address, dob/anniversary,
