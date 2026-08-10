@@ -64,9 +64,11 @@ export function PickerTray({
             onClick={onOpenDrawer}
             className="flex min-h-10 min-w-0 flex-1 items-center gap-[7px] px-0.5 text-left text-[13.5px] font-semibold text-white"
           >
-            <span className="whitespace-nowrap">
-              {count} selected
-            </span>
+            {/* `min-w-0 truncate`, not `whitespace-nowrap`: this is the only
+                flexible item in the bar and every sibling is `shrink-0`, so at
+                375px there are about 62px for the label — a nowrap span kept
+                its full width and painted straight over the Share button. */}
+            <span className="min-w-0 truncate">{count} selected</span>
             <Icon name="chevron-up" size={15} />
           </button>
 
@@ -341,7 +343,7 @@ export function SelectionDrawer({
               "rounded-[9px] border px-[11px] py-2 text-[11.5px] leading-[1.5]",
               feedback.tone === "error"
                 ? "border-error/25 bg-error-soft text-error"
-                : "border-success/25 bg-success-soft text-success",
+                : "border-success/25 bg-success-soft text-success-ink",
             )}
           >
             {feedback.message}

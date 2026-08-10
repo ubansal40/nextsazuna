@@ -71,9 +71,6 @@ export function PricingRulesScreen({
   const [editing, setEditing] = useState<{ id: number | null; input: PricingRuleInput } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<PricingRuleRow | null>(null);
   const [dragId, setDragId] = useState<number | null>(null);
-  const [test, setTest] = useState<RuleTestResult | null>(null);
-  const [testSku, setTestSku] = useState("");
-  const [testWeights, setTestWeights] = useState({ gross: "", net: "", diamond: "", stone: "" });
   const [busy, startTransition] = useTransition();
 
   function handle(result: RulesResult, ok?: string) {
@@ -98,8 +95,23 @@ export function PricingRulesScreen({
     const next = [...rules];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
+
+    // Roll the list straight back if the write is refused. Here that matters
+    // more than tidiness: the displayed order IS the evaluation priority, so a
+    // screen left ahead of the database claims prices are derived by a rule
+    // ladder the pricing engine is not using.
+    const before = rules;
     setRules(next);
-    run(() => reorderRulesAction(next.map((r) => r.id)));
+    startTransition(async () => {
+      const result = await reorderRulesAction(next.map((r) => r.id));
+      if (result.ok) {
+        setRules(result.rules);
+        setUnpriced(result.unpriced);
+      } else {
+        setRules(before);
+        toast("error", result.error);
+      }
+    });
   }
 
   const setInput = (patch: Partial<PricingRuleInput>) =>
@@ -389,67 +401,11 @@ export function PricingRulesScreen({
               <p className="font-mono text-[10.5px] text-muted">Operators: + − * / ( )</p>
 
               <p className={sectionLabel}>Test this rule</p>
-              <div className="rounded-[10px] border border-line-soft bg-canvas p-2.5">
-                <div className="flex gap-2">
-                  <input
-                    value={testSku}
-                    onChange={(e) => setTestSku(e.target.value.toUpperCase())}
-                    placeholder="DGR-1000"
-                    aria-label="Test by SKU"
-                    className={cn(fieldClass, "font-mono uppercase")}
-                  />
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() =>
-                      startTransition(async () =>
-                        setTest(await testRuleAction(editing.input.formula, { sku: testSku, ...testWeights })),
-                      )
-                    }
-                    className="min-h-11 shrink-0 rounded-lg bg-body px-4 text-[13px] font-semibold text-canvas hover:bg-heading"
-                  >
-                    Test
-                  </button>
-                </div>
-                <div className="mt-2 grid grid-cols-4 gap-1.5">
-                  {(["gross", "net", "diamond", "stone"] as const).map((k) => (
-                    <label key={k} className="block">
-                      <span className="mb-0.5 block font-mono text-[9px] uppercase tracking-[0.06em] text-muted">{k}</span>
-                      <input
-                        value={testWeights[k]}
-                        onChange={(e) => setTestWeights({ ...testWeights, [k]: e.target.value })}
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        aria-label={`Test ${k} weight`}
-                        className={cn(fieldClass, "font-mono")}
-                      />
-                    </label>
-                  ))}
-                </div>
-                <p className="mt-1.5 text-[10.5px] text-muted">
-                  A SKU wins over typed weights. This tests the formula, not which rule would win.
-                </p>
-                {test && (
-                  <p
-                    role="status"
-                    className={cn(
-                      "mt-2 rounded-lg px-2.5 py-2 text-[12.5px]",
-                      test.ok ? "bg-success-soft text-success" : "bg-error-soft text-error",
-                    )}
-                  >
-                    {test.ok ? (
-                      <>
-                        <strong className="font-mono">{formatPrice(test.price ?? "0") ?? "—"}</strong>{" "}
-                        <span className="font-mono text-[10.5px] opacity-80">
-                          (net {test.weights.net}, dia {test.weights.diamond})
-                        </span>
-                      </>
-                    ) : (
-                      test.message
-                    )}
-                  </p>
-                )}
-              </div>
+              {/* Keyed on the rule: the tester owns its SKU, its weights and its
+                  result, and keying it means opening a different rule gets a
+                  fresh instance rather than a price computed from the previous
+                  rule's formula sitting under this rule's heading. */}
+              <RuleTester key={editing.id ?? "new"} formula={editing.input.formula} />
             </div>
 
             <div className="flex gap-2.5 border-t border-line px-4 py-3.5">
@@ -498,6 +454,84 @@ export function PricingRulesScreen({
           )
         }
       />
+    </div>
+  );
+}
+
+/**
+ * The drawer's "Test this rule" panel.
+ *
+ * Its own component so the SKU, the weights and the result belong to the rule
+ * being edited rather than to the screen — the caller keys it on the rule id, so
+ * there is no state left over to reset and no way for a result to outlive the
+ * formula that produced it.
+ *
+ * It also runs its own transition: a formula test is not a save, and disabling
+ * it while an unrelated reorder is in flight served no purpose.
+ */
+function RuleTester({ formula }: { formula: string }) {
+  const [result, setResult] = useState<RuleTestResult | null>(null);
+  const [sku, setSku] = useState("");
+  const [weights, setWeights] = useState({ gross: "", net: "", diamond: "", stone: "" });
+  const [testing, startTest] = useTransition();
+
+  return (
+    <div className="rounded-[10px] border border-line-soft bg-canvas p-2.5">
+      <div className="flex gap-2">
+        <input
+          value={sku}
+          onChange={(e) => setSku(e.target.value.toUpperCase())}
+          placeholder="DGR-1000"
+          aria-label="Test by SKU"
+          className={cn(fieldClass, "font-mono uppercase")}
+        />
+        <button
+          type="button"
+          disabled={testing}
+          onClick={() => startTest(async () => setResult(await testRuleAction(formula, { sku, ...weights })))}
+          className="min-h-11 shrink-0 rounded-lg bg-body px-4 text-[13px] font-semibold text-canvas hover:bg-heading disabled:opacity-50"
+        >
+          Test
+        </button>
+      </div>
+      <div className="mt-2 grid grid-cols-4 gap-1.5">
+        {(["gross", "net", "diamond", "stone"] as const).map((k) => (
+          <label key={k} className="block">
+            <span className="mb-0.5 block font-mono text-[9px] uppercase tracking-[0.06em] text-muted">{k}</span>
+            <input
+              value={weights[k]}
+              onChange={(e) => setWeights({ ...weights, [k]: e.target.value })}
+              inputMode="decimal"
+              placeholder="0.00"
+              aria-label={`Test ${k} weight`}
+              className={cn(fieldClass, "font-mono")}
+            />
+          </label>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[10.5px] text-muted">
+        A SKU wins over typed weights. This tests the formula, not which rule would win.
+      </p>
+      {result && (
+        <p
+          role="status"
+          className={cn(
+            "mt-2 rounded-lg px-2.5 py-2 text-[12.5px]",
+            result.ok ? "bg-success-soft text-success-ink" : "bg-error-soft text-error",
+          )}
+        >
+          {result.ok ? (
+            <>
+              <strong className="font-mono">{formatPrice(result.price ?? "0") ?? "—"}</strong>{" "}
+              <span className="font-mono text-[10.5px] opacity-80">
+                (net {result.weights.net}, dia {result.weights.diamond})
+              </span>
+            </>
+          ) : (
+            result.message
+          )}
+        </p>
+      )}
     </div>
   );
 }

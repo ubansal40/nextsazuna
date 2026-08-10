@@ -22,14 +22,16 @@ import { adminSignIn, type SignInResult } from "../../_actions";
 
 type Failure = Extract<SignInResult, { ok: false }>;
 
+// No focus ring of its own. The soft ring this used to paint on focus measured
+// 1.31:1 against the card behind it — invisible — and CLAUDE.md is explicit that
+// components never restyle their own focus ring. Removing the override lets the
+// global `:focus-visible` rule apply, which is the visible one.
 const field = (invalid: boolean) =>
   cn(
     "w-full min-h-11 rounded-[var(--sz-admin-radius-control)] border bg-raised px-[13px]",
     "text-[13px] text-body placeholder:text-muted outline-none",
     "transition-[border-color,box-shadow] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)]",
-    invalid
-      ? "border-error shadow-[var(--sz-ring-error)]"
-      : "border-line focus-visible:border-primary-700 focus-visible:shadow-[var(--sz-ring-focus-soft)]",
+    invalid ? "border-error shadow-[var(--sz-ring-error)]" : "border-line focus-visible:border-primary-700",
   );
 
 const label = "mb-[5px] block text-xs font-semibold text-body";

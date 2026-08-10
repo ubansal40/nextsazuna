@@ -1,10 +1,18 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { Icon, useToast } from "@/components/ui";
+import { Icon, useDialog, useToast } from "@/components/ui";
 import { Switch } from "@/components/admin/switch";
 import { ImageField } from "@/components/admin/image-field";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import {
+  StackedBody,
+  StackedCell,
+  StackedHead,
+  StackedRow,
+  StackedTable,
+  StackedTh,
+} from "@/components/admin/stacked-table";
 import { cn } from "@/lib/cn";
 import type { CategoryInput, CategoryRow, TaxonomyCounts } from "@/lib/admin/taxonomy";
 import { TaxonomyTabs } from "@/components/admin/taxonomy/taxonomy-tabs";
@@ -19,10 +27,25 @@ import {
 /**
  * Categories — the two-level tree from Sazuna Admin Taxonomy.dc.html. Parents
  * expand to their children; each row carries a live product count, a visibility
- * switch, and edit/delete. The entity drawer is the add/edit form. Reordering is
- * within a sibling group, since row order is the storefront order. Uncategorized
- * is protected: it can't be deleted, and stays top-level.
+ * switch, move up/down, and edit/delete. The entity drawer is the add/edit form.
+ * Reordering is within a sibling group, since row order is the storefront order.
+ * Uncategorized is protected: it can't be deleted, and stays top-level.
+ *
+ * **Reordering is by button, not only by drag.** HTML5 `draggable` never fires
+ * on a touch device, and this admin is used on a phone — so the up/down controls
+ * are the real interface and the drag is a desktop shortcut on top of them. Both
+ * move within the sibling group, because that is the only order the storefront
+ * reads.
  */
+
+/** Move one entry from `from` to `to`. The buttons and the drop share it, so a
+ *  keyboard move and a drag of the same distance cannot disagree. */
+function moveItem<T>(list: T[], from: number, to: number): T[] {
+  const next = [...list];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
 
 const BLANK: CategoryInput = { name: "", slug: "", parentId: null, description: "", imageUrl: null, isVisible: true };
 
@@ -34,7 +57,12 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
   const [confirm, setConfirm] = useState<CategoryRow | null>(null);
   const [busyDelete, setBusyDelete] = useState(false);
   const [dragId, setDragId] = useState<number | null>(null);
-  const [, startTransition] = useTransition();
+  // The pending flag is kept, not discarded: it is what disables Save for the
+  // length of the round trip, and two taps inside that window used to create two
+  // identical categories.
+  const [busy, startTransition] = useTransition();
+
+  const { ref: drawerRef, onBackdropClick } = useDialog(editing !== null, () => setEditing(null));
 
   const topLevel = useMemo(() => rows.filter((r) => r.parentId == null), [rows]);
   const childrenOf = (id: number) => rows.filter((r) => r.parentId === id);
@@ -50,7 +78,7 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
   }
 
   function save() {
-    if (!editing) return;
+    if (!editing || busy) return;
     const { id, input } = editing;
     if (!input.name.trim()) {
       toast("error", "A name is required.");
@@ -87,10 +115,24 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
     const siblings = rows.filter((r) => r.parentId === target.parentId);
     const from = siblings.findIndex((r) => r.id === dragged.id);
     const to = siblings.findIndex((r) => r.id === target.id);
-    const next = [...siblings];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
-    startTransition(async () => handle(await reorderCategoriesAction(next.map((r) => r.id))));
+    if (from < 0 || to < 0) return;
+    reorder(moveItem(siblings, from, to));
+  }
+
+  /** One step up or down within the row's own sibling group — the touch and
+   *  keyboard path to the same write the drag performs. */
+  function move(row: CategoryRow, delta: number) {
+    const siblings = rows.filter((r) => r.parentId === row.parentId);
+    const from = siblings.findIndex((r) => r.id === row.id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= siblings.length) return;
+    reorder(moveItem(siblings, from, to));
+  }
+
+  /** The action returns the whole refreshed tree, so nothing is applied
+   *  optimistically here — the list can never be left ahead of the database. */
+  function reorder(siblings: CategoryRow[]) {
+    startTransition(async () => handle(await reorderCategoriesAction(siblings.map((r) => r.id))));
   }
 
   return (
@@ -107,75 +149,86 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
       </div>
       <TaxonomyTabs counts={{ ...counts, categories: rows.length }} />
 
-      <div className="overflow-hidden rounded-[var(--sz-admin-radius-card)] border border-line bg-raised">
-        <table className="w-full text-[13px]">
-          <thead>
-            <tr className="border-b border-line-soft text-left text-xs text-muted">
-              <th className="px-4 py-2.5 font-medium">Name</th>
-              <th className="px-4 py-2.5 font-medium">Slug</th>
-              <th className="px-4 py-2.5 font-medium">Products</th>
-              <th className="px-4 py-2.5 font-medium">Visible</th>
-              <th className="w-20 px-4 py-2.5" />
-            </tr>
-          </thead>
-          <tbody>
-            {topLevel.map((parent) => {
-              const kids = childrenOf(parent.id);
-              const open = expanded.has(parent.id);
-              return (
-                <FragmentRows key={parent.id}>
-                  <CategoryTr
-                    row={parent}
-                    depth={0}
-                    hasKids={kids.length > 0}
-                    open={open}
-                    onToggleOpen={() =>
-                      setExpanded((s) => {
-                        const n = new Set(s);
-                        if (n.has(parent.id)) n.delete(parent.id);
-                        else n.add(parent.id);
-                        return n;
-                      })
-                    }
-                    onEdit={() => setEditing({ id: parent.id, input: toInput(parent) })}
-                    onDelete={() => setConfirm(parent)}
-                    onVisible={() => toggleVisible(parent)}
-                    dragId={dragId}
-                    setDragId={setDragId}
-                    onDrop={() => onDrop(parent)}
-                  />
-                  {open &&
-                    kids.map((kid) => (
-                      <CategoryTr
-                        key={kid.id}
-                        row={kid}
-                        depth={1}
-                        hasKids={false}
-                        open={false}
-                        onEdit={() => setEditing({ id: kid.id, input: toInput(kid) })}
-                        onDelete={() => setConfirm(kid)}
-                        onVisible={() => toggleVisible(kid)}
-                        dragId={dragId}
-                        setDragId={setDragId}
-                        onDrop={() => onDrop(kid)}
-                      />
-                    ))}
-                </FragmentRows>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <p className="mt-2 font-mono text-[11px] text-muted">Row order is the storefront order · drag a row to reorder it within its parent.</p>
+      <StackedTable label="Categories" tableClassName="min-[761px]:min-w-[720px]">
+        <StackedHead>
+          <StackedTh>Name</StackedTh>
+          <StackedTh>Slug</StackedTh>
+          <StackedTh>Products</StackedTh>
+          <StackedTh>Visible</StackedTh>
+          <StackedTh className="w-[172px]" />
+        </StackedHead>
+        <StackedBody>
+          {topLevel.map((parent, parentIndex) => {
+            const kids = childrenOf(parent.id);
+            const open = expanded.has(parent.id);
+            return (
+              <FragmentRows key={parent.id}>
+                <CategoryTr
+                  row={parent}
+                  depth={0}
+                  hasKids={kids.length > 0}
+                  open={open}
+                  onToggleOpen={() =>
+                    setExpanded((s) => {
+                      const n = new Set(s);
+                      if (n.has(parent.id)) n.delete(parent.id);
+                      else n.add(parent.id);
+                      return n;
+                    })
+                  }
+                  onEdit={() => setEditing({ id: parent.id, input: toInput(parent) })}
+                  onDelete={() => setConfirm(parent)}
+                  onVisible={() => toggleVisible(parent)}
+                  onMove={(delta) => move(parent, delta)}
+                  canUp={parentIndex > 0}
+                  canDown={parentIndex < topLevel.length - 1}
+                  dragId={dragId}
+                  setDragId={setDragId}
+                  onDrop={() => onDrop(parent)}
+                />
+                {open &&
+                  kids.map((kid, kidIndex) => (
+                    <CategoryTr
+                      key={kid.id}
+                      row={kid}
+                      depth={1}
+                      hasKids={false}
+                      open={false}
+                      onEdit={() => setEditing({ id: kid.id, input: toInput(kid) })}
+                      onDelete={() => setConfirm(kid)}
+                      onVisible={() => toggleVisible(kid)}
+                      onMove={(delta) => move(kid, delta)}
+                      canUp={kidIndex > 0}
+                      canDown={kidIndex < kids.length - 1}
+                      dragId={dragId}
+                      setDragId={setDragId}
+                      onDrop={() => onDrop(kid)}
+                    />
+                  ))}
+              </FragmentRows>
+            );
+          })}
+        </StackedBody>
+      </StackedTable>
+      <p className="mt-2 font-mono text-[11px] text-muted">
+        Row order is the storefront order · use a row&rsquo;s up/down arrows to move it within its parent, or drag it.
+      </p>
 
-      {/* Entity drawer */}
-      {editing && (
-        <>
-          <button type="button" aria-label="Close" onClick={() => setEditing(null)} className="fixed inset-0 z-40 bg-[var(--sz-overlay)]" />
-          <aside className="fixed inset-y-0 right-0 z-50 flex w-[min(452px,100vw)] flex-col bg-raised shadow-[var(--sz-shadow-drawer)]">
+      {/* Entity drawer — a native modal <dialog>, so Escape, the focus trap, the
+          backdrop and focus restore on close all come from the platform. It
+          stays mounted and is driven by `open`, because a dialog unmounted while
+          open never gets to hand focus back to whatever opened it. */}
+      <dialog
+        ref={drawerRef}
+        onClick={onBackdropClick}
+        aria-label={editing?.id ? "Edit category" : "New category"}
+        className={drawerClass}
+      >
+        {editing && (
+          <div className="flex h-full flex-col">
             <div className="flex items-center justify-between border-b border-line px-4 py-3.5">
               <h3 className="font-display text-md font-medium text-heading">{editing.id ? "Edit category" : "New category"}</h3>
-              <button type="button" onClick={() => setEditing(null)} aria-label="Close" className="inline-flex size-8 items-center justify-center rounded-[7px] text-muted hover:bg-admin-canvas">
+              <button type="button" onClick={() => setEditing(null)} aria-label="Close" className="inline-flex size-10 items-center justify-center rounded-[7px] text-muted hover:bg-admin-canvas">
                 <Icon name="close" size={18} />
               </button>
             </div>
@@ -216,12 +269,12 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
               </label>
             </div>
             <div className="flex gap-2.5 border-t border-line px-4 py-3.5">
-              <button type="button" onClick={() => setEditing(null)} className="min-h-11 flex-1 rounded-[var(--sz-admin-radius-control)] border border-line text-[13px] font-semibold text-body hover:border-primary-700">Cancel</button>
-              <button type="button" onClick={save} className="min-h-11 flex-1 rounded-[var(--sz-admin-radius-control)] bg-primary-700 text-[13px] font-semibold text-white hover:bg-primary-800">Save</button>
+              <button type="button" onClick={() => setEditing(null)} disabled={busy} className="min-h-11 flex-1 rounded-[var(--sz-admin-radius-control)] border border-line text-[13px] font-semibold text-body hover:border-primary-700 disabled:opacity-[var(--sz-disabled-opacity)]">Cancel</button>
+              <button type="button" onClick={save} disabled={busy} aria-busy={busy || undefined} className="min-h-11 flex-1 rounded-[var(--sz-admin-radius-control)] bg-primary-700 text-[13px] font-semibold text-white hover:bg-primary-800 disabled:cursor-progress disabled:opacity-[var(--sz-disabled-opacity)]">Save</button>
             </div>
-          </aside>
-        </>
-      )}
+          </div>
+        )}
+      </dialog>
 
       <ConfirmDialog
         open={confirm !== null}
@@ -239,6 +292,22 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
 
 const fieldClass =
   "min-h-10 w-full rounded-[var(--sz-admin-radius-control)] border border-line bg-admin-canvas px-2.5 text-[13px] text-body outline-none placeholder:text-muted focus-visible:border-primary-700";
+
+/**
+ * The 452px right-hand drawer on a native <dialog>.
+ *
+ * The UA centres a modal dialog and caps it at `calc(100% - 12px)` in both axes,
+ * so the margins pin it to the trailing edge and the size pair overrides that
+ * cap. Everything else — the focus trap, Escape, the backdrop, inertness of the
+ * page behind — is what `showModal()` gives for free.
+ */
+const drawerClass =
+  "m-0 ml-auto h-dvh max-h-none w-[min(452px,100vw)] max-w-none border-l border-line bg-raised p-0 text-body shadow-[var(--sz-shadow-drawer)] backdrop:bg-[var(--sz-overlay)]";
+
+/** 32px on desktop, 44px below 760 — the spec's own touch-target bump, and what
+ *  lets four controls share a row once it collapses into a card. */
+const rowAction =
+  "inline-flex size-8 max-[760px]:size-11 shrink-0 items-center justify-center rounded-[7px] text-muted hover:bg-admin-canvas hover:text-body disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted";
 
 function toInput(row: CategoryRow): CategoryInput {
   return { name: row.name, slug: row.slug, parentId: row.parentId, description: row.description, imageUrl: row.imageUrl, isVisible: row.isVisible };
@@ -267,6 +336,9 @@ function CategoryTr({
   onEdit,
   onDelete,
   onVisible,
+  onMove,
+  canUp,
+  canDown,
   dragId,
   setDragId,
   onDrop,
@@ -279,20 +351,24 @@ function CategoryTr({
   onEdit: () => void;
   onDelete: () => void;
   onVisible: () => void;
+  onMove: (delta: number) => void;
+  /** Whether the row has a sibling above / below it to trade places with. */
+  canUp: boolean;
+  canDown: boolean;
   dragId: number | null;
   setDragId: (id: number | null) => void;
   onDrop: () => void;
 }) {
   return (
-    <tr
+    <StackedRow
       draggable
       onDragStart={() => setDragId(row.id)}
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
       onDragEnd={() => setDragId(null)}
-      className={cn("border-b border-line-soft last:border-0", dragId === row.id && "opacity-50")}
+      className={cn(dragId === row.id && "opacity-50")}
     >
-      <td className="px-4 py-2.5">
+      <StackedCell label="Name">
         <span className="flex items-center gap-1.5" style={{ paddingLeft: depth * 22 }}>
           {hasKids ? (
             <button type="button" onClick={onToggleOpen} aria-expanded={open} aria-label={open ? "Collapse" : "Expand"} className="inline-flex size-6 items-center justify-center rounded text-muted hover:bg-admin-canvas">
@@ -304,25 +380,30 @@ function CategoryTr({
           <span className="font-medium text-heading">{row.name}</span>
           {hasKids && <span className="rounded-pill bg-surface px-1.5 font-mono text-[10px] text-muted">{row.childCount}</span>}
         </span>
-      </td>
-      <td className="whitespace-nowrap px-4 py-2.5 font-mono text-muted">{row.slug}</td>
-      <td className="px-4 py-2.5 font-mono text-body">{row.productCount.toLocaleString("en-IN")}</td>
-      <td className="px-4 py-2.5">
+      </StackedCell>
+      <StackedCell label="Slug" className="whitespace-nowrap font-mono text-muted">{row.slug}</StackedCell>
+      <StackedCell label="Products" className="font-mono text-body">{row.productCount.toLocaleString("en-IN")}</StackedCell>
+      <StackedCell label="Visible">
         <Switch checked={row.isVisible} onChange={onVisible} label={`Toggle ${row.name} visibility`} />
-      </td>
-      <td className="px-4 py-2.5">
+      </StackedCell>
+      <StackedCell label="">
         <span className="flex items-center justify-end gap-0.5">
-          <span className="cursor-grab px-1 text-muted" title="Drag to reorder" aria-hidden="true"><Icon name="sort" size={15} /></span>
-          <button type="button" onClick={onEdit} aria-label={`Edit ${row.name}`} className="inline-flex size-8 items-center justify-center rounded-[7px] text-muted hover:bg-admin-canvas hover:text-body">
+          <button type="button" onClick={() => onMove(-1)} disabled={!canUp} aria-label={`Move ${row.name} up`} title="Move up" className={rowAction}>
+            <Icon name="chevron-up" size={15} />
+          </button>
+          <button type="button" onClick={() => onMove(1)} disabled={!canDown} aria-label={`Move ${row.name} down`} title="Move down" className={rowAction}>
+            <Icon name="chevron-down" size={15} />
+          </button>
+          <button type="button" onClick={onEdit} aria-label={`Edit ${row.name}`} title="Edit" className={rowAction}>
             <Icon name="wrench" size={15} />
           </button>
           {!row.isProtected && (
-            <button type="button" onClick={onDelete} aria-label={`Delete ${row.name}`} className="inline-flex size-8 items-center justify-center rounded-[7px] text-muted hover:bg-error-soft hover:text-error">
+            <button type="button" onClick={onDelete} aria-label={`Delete ${row.name}`} title="Delete" className={cn(rowAction, "hover:bg-error-soft hover:text-error")}>
               <Icon name="trash" size={15} />
             </button>
           )}
         </span>
-      </td>
-    </tr>
+      </StackedCell>
+    </StackedRow>
   );
 }

@@ -28,7 +28,7 @@ type Phase =
   | { kind: "idle" }
   | { kind: "chosen"; file: File }
   | { kind: "fileError"; title: string; body: string }
-  | { kind: "busy"; file: File; step: string }
+  | { kind: "busy"; file: File; mode: "dry" | "apply"; step: string }
   | { kind: "preview"; file: File; plan: StockPlan }
   | { kind: "result"; fileName: string; plan: StockPlan }
   | { kind: "syncError"; file: File | null };
@@ -64,7 +64,12 @@ export function StockScreen() {
   }
 
   async function run(file: File, mode: "dry" | "apply") {
-    setPhase({ kind: "busy", file, step: mode === "dry" ? "Reading the file and comparing it with the catalogue…" : "Applying the changes…" });
+    setPhase({
+      kind: "busy",
+      file,
+      mode,
+      step: mode === "dry" ? "Reading the file and comparing it with the catalogue…" : "Applying the changes…",
+    });
     try {
       const body = new FormData();
       body.append("file", file);
@@ -225,7 +230,13 @@ export function StockScreen() {
           <div className="flex items-center gap-[11px]">
             <span className="size-[34px] shrink-0 animate-spin rounded-pill border-[2.5px] border-line border-t-primary-700" />
             <span className="min-w-0">
-              <span className="block text-sm font-semibold text-heading">Checking the file</span>
+              {/* Both phases used this one heading, so the prominent line said
+                  "Checking the file" while the file was in fact being applied —
+                  the single destructive operation on this screen, claiming to
+                  still be a dry run. */}
+              <span className="block text-sm font-semibold text-heading">
+                {phase.mode === "dry" ? "Checking the file" : "Applying the file"}
+              </span>
               <span className="mt-0.5 block truncate font-mono text-[11px] text-muted">{phase.file.name}</span>
             </span>
           </div>

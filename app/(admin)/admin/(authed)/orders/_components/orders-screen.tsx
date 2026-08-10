@@ -35,20 +35,45 @@ import {
  *
  * Deleting is a soft delete: an order is a seven-year tax record, so the row is
  * hidden, never removed.
+ *
+ * The filters live in the query string as well as in state. A row links to the
+ * order with a plain anchor, so this screen unmounts and comes back from a fresh
+ * server render — the URL is the only thing that survives that, and without it
+ * an admin working a filtered queue landed back on an unfiltered page one every
+ * time they opened an order.
  */
+
+/**
+ * The filters, as the URL carries them. Defaults are omitted rather than
+ * written, so the common case is a bare `/admin/orders` and the query string
+ * only ever names what was actually chosen.
+ */
+function queryOf(filters: AdminOrderFilters): string {
+  const params = new URLSearchParams();
+  if (filters.status && filters.status !== "all") params.set("status", filters.status);
+  if (filters.search) params.set("q", filters.search);
+  if (filters.paymentStatus && filters.paymentStatus !== "all") params.set("payment", filters.paymentStatus);
+  if (filters.sort && filters.sort !== "newest") params.set("sort", filters.sort);
+  if (filters.page && filters.page > 1) params.set("page", String(filters.page));
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
 
 export function OrdersScreen({
   initialPage,
   initialStatuses,
+  initialFilters,
 }: {
   initialPage: AdminOrderPage;
   initialStatuses: OrderStatusRow[];
+  /** What the server rendered this page for — read back out of the URL. */
+  initialFilters: AdminOrderFilters;
 }) {
   const { toast } = useToast();
   const [page, setPage] = useState(initialPage);
   const [statuses, setStatuses] = useState(initialStatuses);
-  const [filters, setFilters] = useState<AdminOrderFilters>({});
-  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<AdminOrderFilters>(initialFilters);
+  const [search, setSearch] = useState(initialFilters.search ?? "");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkTo, setBulkTo] = useState("");
   const [confirmBulk, setConfirmBulk] = useState(false);
@@ -65,12 +90,26 @@ export function OrdersScreen({
     }
   }
 
-  /** Every list change goes through here, so the filters the server sees and the
-   *  ones the UI shows can never drift apart. */
+  /**
+   * Every list change goes through here, so the filters the server sees, the
+   * ones the UI shows and the ones the URL carries can never drift apart.
+   *
+   * The search box's live value is folded in on every apply: changing the sort
+   * or the payment filter with a term typed used to drop that term from the
+   * query while leaving it sitting in the input, which reads as a search that
+   * simply stopped working.
+   *
+   * The URL is written with `replaceState` rather than a router navigation: it
+   * costs no fetch (the list is already being loaded by the action below), and
+   * it keeps Back pointing at wherever the admin came from instead of stacking
+   * one history entry per filter change.
+   */
   function apply(next: AdminOrderFilters) {
-    setFilters(next);
+    const merged: AdminOrderFilters = { ...next, search: search.trim() || undefined };
+    setFilters(merged);
     setSelected(new Set());
-    startTransition(async () => handle(await loadOrdersAction(next)));
+    window.history.replaceState(null, "", `${window.location.pathname}${queryOf(merged)}`);
+    startTransition(async () => handle(await loadOrdersAction(merged)));
   }
 
   function toggle(id: number) {
@@ -101,7 +140,17 @@ export function OrdersScreen({
   const activeTab = filters.status ?? "all";
 
   return (
-    <div className="mx-auto max-w-[1180px]">
+    <div
+      className={cn(
+        "mx-auto max-w-[1180px]",
+        // The bulk bar is fixed to the viewport and wraps to about 110px on a
+        // 375px screen; the shell contributes 56px of its own. Reserving the
+        // difference only while the bar is up is what lets the pager below be
+        // scrolled clear of it — without it, Previous/Next sit permanently
+        // underneath, and site-wide zoom is disabled so there is no way out.
+        selected.size > 0 && "pb-32 min-[761px]:pb-16",
+      )}
+    >
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-2xl font-medium text-heading">Orders</h2>
         <button
@@ -264,8 +313,14 @@ export function OrdersScreen({
           aria-label="Bulk actions"
           /* Edge-to-edge by default — a centred bar this wide runs off both sides
            * of a phone — and centred again above the same 761px boundary the
-           * table uses, so the two never disagree about what "small" means. */
-          className="fixed inset-x-3 bottom-5 z-[900] flex flex-wrap items-center gap-2.5 rounded-[13px] bg-body px-3 py-2.5 shadow-[var(--sz-shadow-modal)] min-[761px]:left-1/2 min-[761px]:right-auto min-[761px]:-translate-x-1/2"
+           * table uses, so the two never disagree about what "small" means.
+           *
+           * Below the toast layer's z-[200], deliberately. The bar only clears
+           * itself on a successful bulk change, so a refused one leaves the bar
+           * up and puts its own error toast behind it; sitting under the toasts
+           * is what makes the failure legible. It is still above the shell's
+           * header and sidebar, which is all it needs. */
+          className="fixed inset-x-3 bottom-5 z-[190] flex flex-wrap items-center gap-2.5 rounded-[13px] bg-body px-3 py-2.5 shadow-[var(--sz-shadow-modal)] min-[761px]:left-1/2 min-[761px]:right-auto min-[761px]:-translate-x-1/2"
         >
           <span className="px-1 font-mono text-xs font-semibold text-canvas">{selected.size} selected</span>
           <select
@@ -426,7 +481,7 @@ function OrderTr({
         </span>
       </StackedCell>
       <StackedCell label="Total" className="whitespace-nowrap">
-        <span className="font-mono text-[13px] font-semibold text-heading">{formatPrice(row.total)}</span>
+        <span className="font-mono text-[13px] font-semibold text-heading">{money(row.total)}</span>
       </StackedCell>
       <StackedCell label="Status">
         <select
@@ -473,3 +528,8 @@ function OrderTr({
 
 const pagerButton =
   "inline-flex min-h-10 items-center rounded-[var(--sz-admin-radius-control)] border border-line bg-raised px-3.5 text-[12.5px] font-semibold text-body hover:border-primary-700 disabled:opacity-40 disabled:hover:border-line";
+
+/** `formatPrice` returns null for an unparseable value; a money cell shows an
+ *  em dash rather than collapsing to an empty column, the same as every other
+ *  money site in the admin. */
+const money = (value: string) => formatPrice(value) ?? "—";

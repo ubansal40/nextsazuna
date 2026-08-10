@@ -276,6 +276,19 @@ export function hasAnyWeight(card: EditorCard): boolean {
 }
 
 /**
+ * The slice of a card autofill owns: the fields the sheet can write, plus its
+ * own bookkeeping.
+ *
+ * Deliberately NOT a whole card. Autofill is asynchronous — the lookup is
+ * debounced and then awaited — so the card it reads is a snapshot, and a photo
+ * upload can finish in the gap. Patching the live card with a whole snapshot
+ * put that settled photo back to `uploading` behind a blob URL that had already
+ * been revoked, and reverted `errors`, `status`, `savedId` and `failure` with
+ * it. A narrow patch cannot reach any of that.
+ */
+export type AutofillPatch = Pick<EditorCard, AutoField | "origin" | "sheetRow" | "sheetFilled">;
+
+/**
  * Apply a sheet row to a card.
  *
  * `force` is the explicit "Use sheet values" button; without it the row only
@@ -285,8 +298,17 @@ export function applyAutofill(
   card: EditorCard,
   row: SkuAutofill,
   { force = false }: { force?: boolean } = {},
-): { card: EditorCard; filled: boolean } {
-  const next = { ...card, origin: { ...card.origin } };
+): { patch: AutofillPatch; filled: boolean } {
+  const next: AutofillPatch = {
+    purity: card.purity,
+    gross: card.gross,
+    net: card.net,
+    diamond: card.diamond,
+    stone: card.stone,
+    origin: { ...card.origin },
+    sheetRow: card.sheetRow,
+    sheetFilled: card.sheetFilled,
+  };
   let filled = false;
 
   const put = (field: AutoField, value: string) => {
@@ -311,7 +333,7 @@ export function applyAutofill(
 
   next.sheetRow = row;
   next.sheetFilled = filled || card.sheetFilled;
-  return { card: next, filled };
+  return { patch: next, filled };
 }
 
 /** Cards that still need saving — an already-saved card is locked. */

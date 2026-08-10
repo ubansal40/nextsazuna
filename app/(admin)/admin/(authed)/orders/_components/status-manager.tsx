@@ -29,7 +29,22 @@ import {
  * Deleting a custom status that orders are sitting on requires somewhere to move
  * them — orders pointing at a key with no row would render as a bare key
  * everywhere the label is joined.
+ *
+ * **Reordering is by button.** The grip used to be a `role="button"` span that
+ * answered only to the arrow keys — so the two keys the role promises, Enter and
+ * Space, did nothing, and a touch device had no path at all. Two real buttons
+ * say what they do, are reachable by finger and by keyboard, and go through the
+ * same move as the drag, which stays as a desktop shortcut on the row.
  */
+
+/** Move one entry from `from` to `to`. The buttons and the drop share it, so the
+ *  two paths cannot drift into different operations. */
+function moveItem<T>(list: T[], from: number, to: number): T[] {
+  const next = [...list];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
 
 export function StatusManager({
   statuses,
@@ -90,29 +105,39 @@ export function StatusManager({
     run(() => updateStatusAction(status.id, { label }), "Status renamed.");
   }
 
+  /** Apply the new order locally, persist it, and put the previous order back
+   *  exactly if the server refuses — this order drives the quick tabs and every
+   *  dropdown, so a list left ahead of the database misinforms every screen that
+   *  reads it until someone happens to reopen the drawer. */
+  function persistOrder(next: OrderStatusRow[]) {
+    const before = statuses;
+    onChanged(next);
+    startTransition(async () => {
+      const result = await reorderStatusesAction(next.map((s) => s.id));
+      if (result.ok) {
+        onChanged(result.statuses);
+      } else {
+        onChanged(before);
+        toast("error", result.error);
+      }
+    });
+  }
+
   function onDrop(target: OrderStatusRow) {
     if (dragId === null || dragId === target.id) return;
     const from = statuses.findIndex((s) => s.id === dragId);
     const to = statuses.findIndex((s) => s.id === target.id);
     setDragId(null);
     if (from < 0 || to < 0) return;
-    const next = [...statuses];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
-    onChanged(next);
-    run(() => reorderStatusesAction(next.map((s) => s.id)));
+    persistOrder(moveItem(statuses, from, to));
   }
 
-  /** Arrow-key reordering, because the spec's grip is focusable and a drag is
-   *  not something every admin can perform. */
-  function nudge(status: OrderStatusRow, delta: number) {
+  /** One step up or down — the same move the drag performs, over one place. */
+  function move(status: OrderStatusRow, delta: number) {
     const from = statuses.findIndex((s) => s.id === status.id);
     const to = from + delta;
-    if (to < 0 || to >= statuses.length) return;
-    const next = [...statuses];
-    [next[from], next[to]] = [next[to], next[from]];
-    onChanged(next);
-    run(() => reorderStatusesAction(next.map((s) => s.id)));
+    if (from < 0 || to < 0 || to >= statuses.length) return;
+    persistOrder(moveItem(statuses, from, to));
   }
 
   const deleteTargets = deleting ? statuses.filter((s) => s.id !== deleting.id) : [];
@@ -145,7 +170,7 @@ export function StatusManager({
 
         <div className="flex-1 overflow-y-auto px-3.5 py-3">
           <ul className="space-y-2">
-            {statuses.map((status) => (
+            {statuses.map((status, index) => (
               <li
                 key={status.id}
                 draggable
@@ -159,25 +184,26 @@ export function StatusManager({
                 )}
               >
                 <div className="flex items-center gap-1.5 p-2">
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Reorder ${status.label}`}
-                    title="Drag, or use arrow keys, to reorder"
-                    onKeyDown={(e) => {
-                      if (e.key === "ArrowUp") {
-                        e.preventDefault();
-                        nudge(status, -1);
-                      }
-                      if (e.key === "ArrowDown") {
-                        e.preventDefault();
-                        nudge(status, 1);
-                      }
-                    }}
-                    className="inline-flex size-8 cursor-grab items-center justify-center rounded text-muted hover:bg-surface"
+                  <button
+                    type="button"
+                    onClick={() => move(status, -1)}
+                    disabled={index === 0}
+                    aria-label={`Move ${status.label} up`}
+                    title="Move up"
+                    className={reorderButton}
                   >
-                    <Icon name="sort" size={14} />
-                  </span>
+                    <Icon name="chevron-up" size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => move(status, 1)}
+                    disabled={index === statuses.length - 1}
+                    aria-label={`Move ${status.label} down`}
+                    title="Move down"
+                    className={reorderButton}
+                  >
+                    <Icon name="chevron-down" size={14} />
+                  </button>
 
                   <button
                     type="button"
@@ -394,6 +420,13 @@ export function StatusManager({
     </>
   );
 }
+
+/** Deliberately 32px rather than the 44px the rest of the admin uses for touch:
+ *  this drawer is 452px wide (375px on a phone) and already carries a switch,
+ *  rename and delete on the same line, so the pair is sized to the drawer's own
+ *  controls instead of pushing the label out of it. */
+const reorderButton =
+  "inline-flex size-8 shrink-0 items-center justify-center rounded text-muted hover:bg-surface disabled:opacity-30 disabled:hover:bg-transparent";
 
 function Pill({ tone, children }: { tone: "gold" | "muted"; children: React.ReactNode }) {
   return (

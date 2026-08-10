@@ -12,8 +12,8 @@ import { cn } from "@/lib/cn";
 export type ChipTone = "success" | "warning" | "error" | "info" | "neutral";
 
 const TONE: Record<ChipTone, string> = {
-  success: "bg-success-soft text-success",
-  warning: "bg-warning-soft text-warning",
+  success: "bg-success-soft text-success-ink",
+  warning: "bg-warning-soft text-warning-ink",
   error: "bg-error-soft text-error",
   info: "bg-info-soft text-info",
   neutral: "bg-surface text-muted",

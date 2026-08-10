@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { Icon, useToast } from "@/components/ui";
 import { Chip, type ChipTone } from "@/components/admin/chip";
@@ -49,6 +49,24 @@ const SORT_LABELS: { value: string; label: string }[] = [
 
 const EMPTY_DRAWER: DrawerFilters = { sort: "id_desc" };
 
+/**
+ * The open row-actions menu: which row, and where to draw it.
+ *
+ * The menu is positioned `fixed` from the kebab's own rect rather than absolute
+ * inside the `<td>`, because the table lives in an `overflow-x-auto` wrapper
+ * inside an `overflow-hidden` card — and a box that scrolls one axis computes
+ * the other to `auto` too, so it clips vertically as well and cut Edit/Publish/
+ * Delete off the bottom rows. `fixed` escapes both without a portal (nothing
+ * between here and the viewport establishes a containing block) and leaves the
+ * horizontal scrolling of the table exactly as it was.
+ */
+type RowMenu = { id: number; right: number; top?: number; bottom?: number };
+
+/** Roughly the menu's height (3 × min-h-9 + p-1.5): only ever used to decide
+ *  whether it would fit below the kebab, never to place it. */
+const ROW_MENU_H = 120;
+const ROW_MENU_GAP = 6;
+
 export function ProductsView({
   initial,
   options,
@@ -68,23 +86,72 @@ export function ProductsView({
   const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [draft, setDraft] = useState<DrawerFilters>(EMPTY_DRAWER);
-  const [openMenu, setOpenMenu] = useState<number | null>(null);
+  const [menu, setMenu] = useState<RowMenu | null>(null);
   const [confirm, setConfirm] = useState<AdminProductListItem | null>(null);
   const [busyDelete, setBusyDelete] = useState(false);
   const [pending, startTransition] = useTransition();
-  const menuRef = useRef<HTMLTableSectionElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  /** The kebab the open menu belongs to — the dismiss check's other half, and
+   *  where focus goes when the menu closes without being clicked through. */
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuId = useId();
 
   const hasMore = items.length < total;
+  const menuOpen = menu !== null;
 
-  // Close the open row-menu on any outside pointer-down.
+  const closeMenu = useCallback((refocus = false) => {
+    setMenu(null);
+    if (refocus) triggerRef.current?.focus();
+  }, []);
+
   useEffect(() => {
-    if (openMenu === null) return;
+    if (!menuOpen) return;
     function onDown(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setOpenMenu(null);
+      const target = event.target as Node;
+      // The kebab counts as inside, so its own click still toggles the menu
+      // shut instead of this closing it and the click reopening it. The old
+      // check was scoped to the `<tbody>`, which meant every other row counted
+      // as inside too and clicking one left the menu open.
+      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      closeMenu();
     }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") closeMenu(true);
+    }
+    // The menu is placed from a rect measured when it opened, so anything that
+    // moves the row out from under it — the page scrolling, the table scrolling
+    // sideways (hence capture), a resize — dismisses it rather than stranding
+    // it mid-air.
+    const onReflow = () => closeMenu();
     document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [openMenu]);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onReflow, true);
+    window.addEventListener("resize", onReflow);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onReflow, true);
+      window.removeEventListener("resize", onReflow);
+    };
+  }, [menuOpen, closeMenu]);
+
+  /** Anchor the menu to the kebab that opened it, flipping above the button
+   *  when the last rows of the table leave no room below. */
+  function openRowMenu(button: HTMLButtonElement, id: number) {
+    if (menu?.id === id) {
+      closeMenu();
+      return;
+    }
+    const rect = button.getBoundingClientRect();
+    const up = window.innerHeight - rect.bottom < ROW_MENU_H + ROW_MENU_GAP;
+    triggerRef.current = button;
+    setMenu({
+      id,
+      right: Math.max(0, window.innerWidth - rect.right),
+      top: up ? undefined : rect.bottom + ROW_MENU_GAP,
+      bottom: up ? window.innerHeight - rect.top + ROW_MENU_GAP : undefined,
+    });
+  }
 
   function load(nextFilters: DrawerFilters, nextQ: string, nextPage: number, append: boolean) {
     startTransition(async () => {
@@ -137,7 +204,7 @@ export function ProductsView({
    *  column, so the page is refetched rather than patched — showing a state the
    *  row cannot display would be worse than a round trip. */
   function alwaysAvailable(ids: number[], value: boolean) {
-    setOpenMenu(null);
+    setMenu(null);
     startTransition(async () => {
       const result = await setAlwaysAvailable(ids, value);
       if (!result.ok) {
@@ -173,7 +240,7 @@ export function ProductsView({
   }
 
   function publish(ids: number[], isActive: boolean) {
-    setOpenMenu(null);
+    setMenu(null);
     startTransition(async () => {
       const result = await setVisibility(ids, isActive);
       if (!result.ok) {
@@ -214,9 +281,15 @@ export function ProductsView({
 
   const activeChips = buildChips(filters, q, options);
   const activeFilterCount = activeChips.length;
+  // Only looked up while a menu is open, so the closed case costs nothing.
+  const menuItem = menu === null ? null : (items.find((i) => i.id === menu.id) ?? null);
 
   return (
-    <div className="mx-auto max-w-[1100px]">
+    /* The bulk bar is `fixed bottom-4`, and at 375px it wraps to three or four
+       rows — without room reserved for it, it sat on top of the last rows and
+       the Load more button. Reserved only while it is on screen, so an unselected
+       list does not end in dead space. */
+    <div className={cn("mx-auto max-w-[1100px]", selected.size > 0 && "pb-52 sm:pb-28")}>
       {/* Header */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -242,7 +315,7 @@ export function ProductsView({
               onChange={(e) => setSearchInput(e.target.value)}
               aria-label="Search products by name or SKU"
               placeholder="Search name or SKU"
-              className="min-h-10 w-full rounded-[var(--sz-admin-radius-control)] border border-line bg-admin-canvas pl-8 pr-3 text-[13px] text-body outline-none placeholder:text-muted focus-visible:border-primary-700 focus-visible:shadow-[var(--sz-ring-focus-soft)]"
+              className="min-h-10 w-full rounded-[var(--sz-admin-radius-control)] border border-line bg-admin-canvas pl-8 pr-3 text-[13px] text-body outline-none placeholder:text-muted focus-visible:border-primary-700"
             />
           </form>
           <button
@@ -313,7 +386,7 @@ export function ProductsView({
                 <th className="w-10 px-3.5 py-2.5" />
               </tr>
             </thead>
-            <tbody ref={menuRef}>
+            <tbody>
               {items.length === 0 && !pending ? (
                 <tr>
                   <td colSpan={8} className="px-4 py-14 text-center">
@@ -358,42 +431,22 @@ export function ProductsView({
                       <td className="px-3.5 py-2.5">
                         <Chip tone={chip.tone}>{chip.label}</Chip>
                       </td>
-                      <td className="relative px-3.5 py-2.5 text-right">
+                      <td className="px-3.5 py-2.5 text-right">
                         <button
                           type="button"
-                          onClick={() => setOpenMenu(openMenu === item.id ? null : item.id)}
+                          onClick={(event) => openRowMenu(event.currentTarget, item.id)}
                           aria-label={`Actions for ${item.name}`}
+                          /* Not `role="menu"` on the popup: without arrow-key
+                             navigation that role would trap a screen reader in
+                             application mode. The three controls stay ordinary
+                             tabbable buttons — same choice as MultiSelect. */
+                          aria-haspopup="true"
+                          aria-expanded={menu?.id === item.id}
+                          aria-controls={menu?.id === item.id ? menuId : undefined}
                           className="inline-flex size-8 items-center justify-center rounded-[7px] text-muted hover:bg-admin-canvas"
                         >
                           <KebabIcon />
                         </button>
-                        {openMenu === item.id && (
-                          <div className="absolute right-3.5 top-11 z-20 w-44 rounded-[10px] border border-line bg-raised p-1.5 text-left shadow-[var(--sz-shadow-dropdown)]">
-                            <Link
-                              href={`/admin/products/${item.id}/edit`}
-                              className="flex min-h-9 items-center rounded-lg px-2.5 text-[13px] text-body no-underline hover:bg-admin-canvas hover:no-underline"
-                            >
-                              Edit
-                            </Link>
-                            <button
-                              type="button"
-                              onClick={() => publish([item.id], item.status !== "published")}
-                              className="flex min-h-9 w-full items-center rounded-lg px-2.5 text-left text-[13px] text-body hover:bg-admin-canvas"
-                            >
-                              {item.status === "published" ? "Unpublish" : "Publish"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenMenu(null);
-                                setConfirm(item);
-                              }}
-                              className="flex min-h-9 w-full items-center rounded-lg px-2.5 text-left text-[13px] text-error hover:bg-error-soft"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        )}
                       </td>
                     </tr>
                   );
@@ -482,6 +535,48 @@ export function ProductsView({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Row actions. Outside the table on purpose — see `RowMenu`. */}
+      {menu && menuItem && (
+        <div
+          id={menuId}
+          ref={menuRef}
+          style={{ right: menu.right, top: menu.top, bottom: menu.bottom }}
+          className="fixed z-50 w-44 rounded-[10px] border border-line bg-raised p-1.5 text-left shadow-[var(--sz-shadow-dropdown)]"
+        >
+          <Link
+            href={`/admin/products/${menuItem.id}/edit`}
+            className="flex min-h-9 items-center rounded-lg px-2.5 text-[13px] text-body no-underline hover:bg-admin-canvas hover:no-underline"
+          >
+            Edit
+          </Link>
+          <button
+            type="button"
+            onClick={() => {
+              // Focus first: the menu is about to unmount under the pointer,
+              // and the kebab is the only thing left that makes sense.
+              closeMenu(true);
+              publish([menuItem.id], menuItem.status !== "published");
+            }}
+            className="flex min-h-9 w-full items-center rounded-lg px-2.5 text-left text-[13px] text-body hover:bg-admin-canvas"
+          >
+            {menuItem.status === "published" ? "Unpublish" : "Publish"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              // The confirm is a native <dialog>: `showModal()` returns focus
+              // to whatever had it, so handing the kebab back here also means
+              // cancelling the dialog lands back on the row's own button.
+              closeMenu(true);
+              setConfirm(menuItem);
+            }}
+            className="flex min-h-9 w-full items-center rounded-lg px-2.5 text-left text-[13px] text-error hover:bg-error-soft"
+          >
+            Delete
+          </button>
         </div>
       )}
 

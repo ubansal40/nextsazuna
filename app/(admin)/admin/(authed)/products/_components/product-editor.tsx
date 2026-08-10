@@ -81,6 +81,9 @@ export function ProductEditor({
   const [banner, setBanner] = useState<Banner>({ kind: "none" });
   const [touched, setTouched] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  /** How many photos failed to upload on the cards a save is about to write —
+   *  set when the save stops to ask, null the rest of the time. */
+  const [confirmDropped, setConfirmDropped] = useState<number | null>(null);
 
   // A mirror of the card list for the debounced callbacks: a timer that fires
   // 300ms after a keystroke must see the card as it is now, not as it was when
@@ -98,6 +101,41 @@ export function ProductEditor({
     return () => {
       for (const handle of map.values()) clearTimeout(handle);
       map.clear();
+    };
+  }, []);
+
+  /**
+   * Every `blob:` preview this editor has minted and not yet revoked.
+   *
+   * A tile can leave a card by six routes — its upload finishing, the tile
+   * being removed, the whole card being removed, Clear all, edit-mode Reset,
+   * and the page navigating away — and each route that forgets to revoke pins
+   * the full-resolution original, up to 25 MB, for the life of the document. A
+   * bulk-add session leaked hundreds of megabytes that way. One owner for the
+   * set means a route only has to say what left, not remember how it was made.
+   */
+  const blobUrls = useRef(new Set<string>());
+
+  /** Revoke one preview. A served `/uploads/...` URL is never in the set, so
+   *  whole photo arrays can be handed over without sorting them first. */
+  const releaseBlob = useCallback((url: string) => {
+    if (blobUrls.current.delete(url)) URL.revokeObjectURL(url);
+  }, []);
+
+  const releaseCards = useCallback(
+    (list: EditorCard[]) => {
+      for (const card of list) for (const photo of card.photos) releaseBlob(photo.url);
+    },
+    [releaseBlob],
+  );
+
+  // Navigating away drops the card list without unwinding it, so the last word
+  // belongs here.
+  useEffect(() => {
+    const urls = blobUrls.current;
+    return () => {
+      for (const url of urls) URL.revokeObjectURL(url);
+      urls.clear();
     };
   }, []);
 
@@ -174,8 +212,11 @@ export function ProductEditor({
         return;
       }
 
-      const { card: filled } = applyAutofill(live, row);
-      patch(key, filled);
+      // Only the fields the sheet owns — see `AutofillPatch`. This used to hand
+      // `patch` a whole card built from `live`, which also wrote back the
+      // photos, status and errors that snapshot happened to hold.
+      const { patch: fill } = applyAutofill(live, row);
+      patch(key, fill);
       schedulePrice(key);
     },
     [patch, schedulePrice],
@@ -228,17 +269,18 @@ export function ProductEditor({
 
       // Tiles first, upload second: the point of doing this per file is that the
       // operator sees the photo land instantly.
-      const tiles = usable.map((file) => ({
-        file,
-        photo: { id: nextPhotoId(), url: URL.createObjectURL(file), status: "uploading" as const, error: null },
-      }));
+      const tiles = usable.map((file) => {
+        const url = URL.createObjectURL(file);
+        blobUrls.current.add(url);
+        return { file, photo: { id: nextPhotoId(), url, status: "uploading" as const, error: null } };
+      });
       setTouched(true);
       setCards((current) =>
         current.map((c) => (c.key === key ? { ...c, photos: [...c.photos, ...tiles.map((t) => t.photo)] } : c)),
       );
 
       const settle = (id: string, next: Partial<CardPhoto>, revoke: string | null) => {
-        if (revoke) URL.revokeObjectURL(revoke);
+        if (revoke) releaseBlob(revoke);
         setCards((current) =>
           current.map((c) =>
             c.key === key ? { ...c, photos: c.photos.map((p) => (p.id === id ? { ...p, ...next } : p)) } : c,
@@ -278,7 +320,7 @@ export function ProductEditor({
 
       await Promise.all([worker(), worker()]);
     },
-    [toast],
+    [toast, releaseBlob],
   );
 
   /* --- per-card handlers --------------------------------------------------- */
@@ -321,8 +363,8 @@ export function ProductEditor({
       useSheetValues: () => {
         if (!card.sheetRow) return;
         setTouched(true);
-        const { card: filled } = applyAutofill(card, card.sheetRow, { force: true });
-        patch(card.key, { ...filled, sheetFilled: true });
+        const { patch: fill } = applyAutofill(card, card.sheetRow, { force: true });
+        patch(card.key, { ...fill, sheetFilled: true });
         schedulePrice(card.key);
       },
       duplicate: () => {
@@ -336,13 +378,16 @@ export function ProductEditor({
       },
       remove: () => {
         if (mode === "edit") {
-          // The spec's "Reset" — back to the product as it was loaded.
+          // The spec's "Reset" — back to the product as it was loaded. Whatever
+          // was uploaded since is thrown away, previews included.
+          releaseCards(cardsRef.current);
           setTouched(false);
           setCards([product ? cardFromProduct(product) : blankCard()]);
           setBanner({ kind: "none" });
           return;
         }
         setTouched(true);
+        releaseCards(cardsRef.current.filter((c) => c.key === card.key));
         // Removing the last card leaves NO cards, which is the spec's `noCards`
         // empty state. Silently re-adding a blank one (as the old admin did)
         // makes the remove button look broken.
@@ -374,13 +419,13 @@ export function ProductEditor({
             // A tile that never finished still holds an object URL; dropping the
             // reference without revoking leaks the whole file for the life of
             // the page, and these are 25 MB photographs.
-            if (gone && gone.status !== "ready") URL.revokeObjectURL(gone.url);
+            if (gone) releaseBlob(gone.url);
             return { ...c, photos: c.photos.filter((_, i) => i !== index) };
           }),
         );
       },
     }),
-    [patch, schedule, schedulePrice, runSkuLookup, uploadPhotos, mode, product],
+    [patch, schedule, schedulePrice, runSkuLookup, uploadPhotos, releaseBlob, releaseCards, mode, product],
   );
 
   /* --- card list ops ------------------------------------------------------- */
@@ -393,6 +438,7 @@ export function ProductEditor({
   function clearAll() {
     for (const handle of timers.current.values()) clearTimeout(handle);
     timers.current.clear();
+    releaseCards(cardsRef.current);
     setCards([blankCard()]);
     setBanner({ kind: "none" });
     setTouched(false);
@@ -420,7 +466,9 @@ export function ProductEditor({
     return errors;
   }
 
-  async function save() {
+  /** `dropFailedPhotos` is the answer to the confirm below — the operator has
+   *  seen what will be lost and said to go anyway. */
+  async function save(dropFailedPhotos = false) {
     if (saving) return;
     setBanner({ kind: "none" });
 
@@ -438,6 +486,17 @@ export function ProductEditor({
     // worth waiting; a missing photograph discovered later is not.
     if (work.some(hasUploadingPhotos)) {
       toast("error", "Hold on — photos are still being processed.");
+      return;
+    }
+
+    // A failed photo has no served URL, so `readyPhotoUrls` drops it — and the
+    // card locks the moment it saves, taking the tile's remove button and the
+    // Add tile with it, so there is no retrying it afterwards either. Reporting
+    // "3 products created" over that loss is the worst of the options; stop and
+    // say what is about to go missing.
+    const failedPhotos = work.reduce((n, c) => n + c.photos.filter((p) => p.status === "failed").length, 0);
+    if (failedPhotos > 0 && !dropFailedPhotos) {
+      setConfirmDropped(failedPhotos);
       return;
     }
 
@@ -538,16 +597,30 @@ export function ProductEditor({
 
     setTouched(false);
 
+    // Nothing here is a failure, but a photo the operator agreed to leave
+    // behind is still worth saying out loud once more.
+    const lost =
+      failedPhotos === 0
+        ? ""
+        : ` ${failedPhotos} photo${failedPhotos === 1 ? "" : "s"} that couldn't be processed ${
+            failedPhotos === 1 ? "was" : "were"
+          } left out.`;
+
     if (mode === "edit") {
-      toast("success", "Product updated.");
+      toast("success", `Product updated.${lost}`);
       router.push("/admin/products");
       router.refresh();
       return;
     }
-    setBanner({ kind: "done", text: `${saved} product${saved === 1 ? "" : "s"} created` });
+    setBanner({
+      kind: "done",
+      text: `${saved} product${saved === 1 ? "" : "s"} created${
+        failedPhotos > 0 ? ` · ${failedPhotos} photo${failedPhotos === 1 ? "" : "s"} not saved` : ""
+      }`,
+    });
     toast(
       "success",
-      `${saved} product${saved === 1 ? "" : "s"} created. Add more below, or head to the products list.`,
+      `${saved} product${saved === 1 ? "" : "s"} created.${lost} Add more below, or head to the products list.`,
     );
     router.refresh();
   }
@@ -598,7 +671,7 @@ export function ProductEditor({
 
       {cards.length === 0 ? (
         /* `noCards` — the spec's empty state, reachable by removing every card */
-        <div className="rounded-[13px] border-[1.5px] border-dashed border-line bg-raised px-5 py-[50px] text-center">
+        <div className="rounded-[var(--sz-admin-radius-card)] border-[1.5px] border-dashed border-line bg-raised px-5 py-[50px] text-center">
           <span className="inline-flex size-11 items-center justify-center rounded-pill bg-admin-canvas text-accent-strong">
             <Icon name="box" size={20} />
           </span>
@@ -634,7 +707,7 @@ export function ProductEditor({
           type="button"
           onClick={addCard}
           disabled={saving}
-          className="mt-3 inline-flex min-h-[56px] w-full items-center justify-center gap-[9px] rounded-[13px] border-[1.5px] border-dashed border-line bg-raised text-[13.5px] font-semibold text-primary-700 hover:border-primary-700 hover:bg-primary-50 disabled:opacity-[var(--sz-disabled-opacity)]"
+          className="mt-3 inline-flex min-h-[56px] w-full items-center justify-center gap-[9px] rounded-[var(--sz-admin-radius-card)] border-[1.5px] border-dashed border-line bg-raised text-[13.5px] font-semibold text-primary-700 hover:border-primary-700 hover:bg-primary-50 disabled:opacity-[var(--sz-disabled-opacity)]"
         >
           <Icon name="plus" size={16} strokeWidth={2} />
           Add another product
@@ -689,6 +762,26 @@ export function ProductEditor({
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmDropped !== null}
+        title={confirmDropped === 1 ? "One photo didn't upload" : `${confirmDropped ?? 0} photos didn't upload`}
+        tone="danger"
+        confirmLabel="Save without them"
+        cancelLabel="Go back"
+        onCancel={() => setConfirmDropped(null)}
+        onConfirm={() => {
+          setConfirmDropped(null);
+          void save(true);
+        }}
+        body={
+          <>
+            The failed tiles are outlined in red above. Saving now writes{" "}
+            <strong className="text-body">without those photographs</strong>, and a saved card locks — so remove the
+            failed tiles and add the pictures again if you would rather keep them.
+          </>
+        }
+      />
 
       <ConfirmDialog
         open={confirmClear}

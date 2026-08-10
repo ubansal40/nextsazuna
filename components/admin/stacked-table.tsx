@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 /**
@@ -121,15 +121,24 @@ export function StackedRow({
   children,
   className,
   selected = false,
+  ...rest
 }: {
   children: ReactNode;
   className?: string;
   /** Tints the row (or, on a phone, the card) the way the spec tints a selection. */
   selected?: boolean;
-}) {
+  /**
+   * Anything else a `<tr>` takes, forwarded verbatim — in practice the HTML5
+   * drag handlers the taxonomy screens put on a row. It is a passthrough rather
+   * than a named `drag` prop because this component has no opinion about why a
+   * row wants a DOM handler, and inventing one prop per use would make the
+   * shared table grow a feature every time a screen needs an attribute.
+   */
+} & Omit<HTMLAttributes<HTMLTableRowElement>, "children" | "className">) {
   return (
     <tr
       role="row"
+      {...rest}
       className={cn(
         // Phone: a card of its own.
         "mb-2.5 block rounded-[11px] border border-line px-[11px] py-[5px]",

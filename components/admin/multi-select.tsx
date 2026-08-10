@@ -15,6 +15,15 @@ export interface MultiSelectOption {
   label: string;
 }
 
+/* The popover's own box, as numbers, so the open direction can be settled
+ * before the list is on screen. */
+const LIST_MAX_H = 256; // the `max-h-64` this replaces
+const LIST_MIN_H = 120; // the shortest list worth showing, and so the flip threshold
+const LIST_GAP = 4; // the 4px offset from the button
+const LIST_PAD = 12; // p-1.5, top and bottom
+const OPTION_H = 36; // min-h-9
+const VIEWPORT_EDGE = 8; // never sit flush against the viewport edge
+
 export function MultiSelect({
   options,
   selected,
@@ -29,7 +38,10 @@ export function MultiSelect({
   ariaLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
+  /** Where the list opened, decided on the click that opened it. */
+  const [placement, setPlacement] = useState({ up: false, maxHeight: LIST_MAX_H });
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -52,11 +64,41 @@ export function MultiSelect({
   const toggle = (value: string) =>
     onChange(selectedSet.has(value) ? selected.filter((v) => v !== value) : [...selected, value]);
 
+  /**
+   * Open the list where there is room for it.
+   *
+   * It used to open downward unconditionally at `z-30` — the same z-index as
+   * the product editor's opaque `fixed bottom-0` save footer, and earlier in
+   * the DOM, so on the lower half of a card the footer painted over the options
+   * and they could not be clicked. The flip handles the viewport edge and the
+   * raised z-index handles the footer; the height is clamped to whatever space
+   * the chosen side actually has.
+   *
+   * Measured once, here, rather than in a layout effect: no extra render, no
+   * resize listener, and nothing to keep in sync while the list is open.
+   */
+  function toggleOpen() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (rect) {
+      const wanted = Math.min(LIST_MAX_H, options.length * OPTION_H + LIST_PAD);
+      const below = window.innerHeight - rect.bottom - LIST_GAP - VIEWPORT_EDGE;
+      const above = rect.top - LIST_GAP - VIEWPORT_EDGE;
+      const up = below < Math.min(wanted, LIST_MIN_H) && above > below;
+      setPlacement({ up, maxHeight: Math.max(LIST_MIN_H, Math.min(wanted, up ? above : below)) });
+    }
+    setOpen(true);
+  }
+
   return (
     <div className="relative" ref={ref}>
       <button
+        ref={buttonRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggleOpen}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
@@ -80,7 +122,11 @@ export function MultiSelect({
         <div
           role="listbox"
           aria-multiselectable="true"
-          className="absolute left-0 top-[calc(100%+4px)] z-30 max-h-64 w-full overflow-y-auto rounded-[10px] border border-line bg-raised p-1.5 shadow-[var(--sz-shadow-dropdown)]"
+          style={{ maxHeight: placement.maxHeight }}
+          className={cn(
+            "absolute left-0 z-40 w-full overflow-y-auto rounded-[10px] border border-line bg-raised p-1.5 shadow-[var(--sz-shadow-dropdown)]",
+            placement.up ? "bottom-[calc(100%+4px)]" : "top-[calc(100%+4px)]",
+          )}
         >
           {options.length === 0 && <p className="px-2.5 py-2 text-[12.5px] text-muted">Nothing to choose.</p>}
           {options.map((o) => {

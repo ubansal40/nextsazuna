@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Icon, useToast } from "@/components/ui";
+import { Icon, useDialog, useToast } from "@/components/ui";
 import { Switch } from "@/components/admin/switch";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { cn } from "@/lib/cn";
@@ -344,43 +344,34 @@ export function TagsScreen({ initial, counts }: { initial: TagsData; counts: Tax
       </p>
 
       {/* Move dialog — the keyboard and touch equivalent of the drag. */}
-      {move && (
-        <MoveDialog
-          source={move.source}
-          groupId={move.groupId}
-          index={move.index}
-          groups={data.groups}
-          tags={data.tags}
-          onGroup={(groupId) =>
-            // Landing at the end is the honest default for a group whose order
-            // this admin has not looked at.
-            setMove({ ...move, groupId, index: tagsIn(data.tags, groupId).filter((t) => t.id !== move.source.id).length })
-          }
-          onIndex={(index) => setMove({ ...move, index })}
-          onCancel={() => setMove(null)}
-          onConfirm={doMove}
-        />
-      )}
+      <MoveDialog
+        move={move}
+        groups={data.groups}
+        tags={data.tags}
+        onGroup={(groupId) =>
+          // Landing at the end is the honest default for a group whose order
+          // this admin has not looked at.
+          move &&
+          setMove({ ...move, groupId, index: tagsIn(data.tags, groupId).filter((t) => t.id !== move.source.id).length })
+        }
+        onIndex={(index) => move && setMove({ ...move, index })}
+        onCancel={() => setMove(null)}
+        onConfirm={doMove}
+      />
 
-      {/* Merge dialog */}
-      {merge && (
-        <>
-          <button type="button" aria-label="Close" onClick={() => setMerge(null)} className="fixed inset-0 z-40 bg-[var(--sz-overlay)]" />
-          <div role="dialog" aria-modal="true" aria-label="Merge tag" className="fixed left-1/2 top-1/2 z-50 w-[min(400px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-[var(--sz-admin-radius-card)] border border-line bg-raised p-5 shadow-[var(--sz-shadow-modal)]">
-            <h3 className="font-display text-lg font-medium text-heading">Merge “{merge.source.name}”</h3>
-            <p className="mt-1 text-[13px] text-muted">Every product tagged <strong className="text-body">{merge.source.name}</strong> ({merge.source.productCount}) gains the destination tag, and “{merge.source.name}” is deleted. This can&rsquo;t be undone.</p>
-            <p className="mb-1.5 mt-4 text-xs font-semibold text-body">Merge into</p>
-            <select value={merge.destId ?? ""} onChange={(e) => setMerge({ ...merge, destId: e.target.value ? Number(e.target.value) : null })} className="min-h-10 w-full rounded-[var(--sz-admin-radius-control)] border border-line bg-admin-canvas px-2.5 text-[13px] text-body outline-none focus-visible:border-primary-700">
-              <option value="">Choose a tag…</option>
-              {mergeTargets.map((t) => (<option key={t.id} value={t.id}>{t.name}</option>))}
-            </select>
-            <div className="mt-5 flex justify-end gap-2.5">
-              <button type="button" onClick={() => setMerge(null)} disabled={busy} className="min-h-11 rounded-[var(--sz-admin-radius-control)] border border-line px-4 text-[13px] font-semibold text-body hover:border-primary-700">Cancel</button>
-              <button type="button" onClick={doMerge} disabled={busy || merge.destId == null} className="min-h-11 rounded-[var(--sz-admin-radius-control)] bg-error px-4 text-[13px] font-semibold text-white hover:bg-danger-hover disabled:opacity-[var(--sz-disabled-opacity)]">Merge</button>
-            </div>
-          </div>
-        </>
-      )}
+      {/* Merge dialog. Both of this screen's dialogs are native <dialog>s driven
+          by `open` rather than mounted and unmounted — `showModal()` brings the
+          focus trap, Escape and the backdrop, and only a dialog still in the
+          document when it closes can hand focus back to the chip that opened
+          it. */}
+      <MergeDialog
+        merge={merge}
+        targets={mergeTargets}
+        busy={busy}
+        onDest={(destId) => merge && setMerge({ ...merge, destId })}
+        onCancel={() => setMerge(null)}
+        onConfirm={doMerge}
+      />
 
       <ConfirmDialog
         open={confirm !== null}
@@ -404,11 +395,13 @@ export function TagsScreen({ initial, counts }: { initial: TagsData; counts: Tax
  * A native `<select>` rather than a custom listbox, so the platform supplies
  * type-ahead, the mobile picker and the screen-reader semantics. Position is
  * offered as plain 1-of-n, which is what an admin can actually see on the card.
+ *
+ * Controlled by `move` being non-null rather than by mounting: the element has
+ * to still be in the document when it closes for the platform to return focus to
+ * the chip's move handle.
  */
 function MoveDialog({
-  source,
-  groupId,
-  index,
+  move,
   groups,
   tags,
   onGroup,
@@ -416,9 +409,7 @@ function MoveDialog({
   onCancel,
   onConfirm,
 }: {
-  source: TagRow;
-  groupId: number | null;
-  index: number;
+  move: { source: TagRow; groupId: number | null; index: number } | null;
   groups: TagsData["groups"];
   tags: TagRow[];
   onGroup: (groupId: number | null) => void;
@@ -426,63 +417,101 @@ function MoveDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { ref, onBackdropClick } = useDialog(move !== null, onCancel);
+
   // Positions are counted with the moved tag already taken out, so "3 of 5"
   // means what it says once the tag is back in.
-  const slots = tagsIn(tags, groupId).filter((t) => t.id !== source.id).length + 1;
-  const at = Math.max(0, Math.min(index, slots - 1));
+  const slots = move ? tagsIn(tags, move.groupId).filter((t) => t.id !== move.source.id).length + 1 : 1;
+  const at = move ? Math.max(0, Math.min(move.index, slots - 1)) : 0;
 
   return (
-    <>
-      <button type="button" aria-label="Close" onClick={onCancel} className="fixed inset-0 z-40 bg-[var(--sz-overlay)]" />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Move ${source.name}`}
-        className="fixed left-1/2 top-1/2 z-50 w-[min(400px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-[var(--sz-admin-radius-card)] border border-line bg-raised p-5 shadow-[var(--sz-shadow-modal)]"
-      >
-        <h3 className="font-display text-lg font-medium text-heading">Move “{source.name}”</h3>
-        <p className="mt-1 text-[13px] text-muted">
-          A tag&rsquo;s group is the storefront filter it appears under; its position is the order within that filter.
-        </p>
+    <dialog ref={ref} onClick={onBackdropClick} aria-label={move ? `Move ${move.source.name}` : "Move tag"} className={modalClass}>
+      {move && (
+        <div className="p-5">
+          <h3 className="font-display text-lg font-medium text-heading">Move “{move.source.name}”</h3>
+          <p className="mt-1 text-[13px] text-muted">
+            A tag&rsquo;s group is the storefront filter it appears under; its position is the order within that filter.
+          </p>
 
-        <label className="mt-4 block">
-          <span className="mb-1.5 block text-xs font-semibold text-body">Group</span>
-          <select
-            autoFocus
-            value={groupId ?? ""}
-            onChange={(e) => onGroup(e.target.value ? Number(e.target.value) : null)}
-            className={moveSelect}
-          >
-            <option value="">Ungrouped</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label className="mt-4 block">
+            <span className="mb-1.5 block text-xs font-semibold text-body">Group</span>
+            <select
+              autoFocus
+              value={move.groupId ?? ""}
+              onChange={(e) => onGroup(e.target.value ? Number(e.target.value) : null)}
+              className={moveSelect}
+            >
+              <option value="">Ungrouped</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="mt-3 block">
-          <span className="mb-1.5 block text-xs font-semibold text-body">Position</span>
-          <select value={at} onChange={(e) => onIndex(Number(e.target.value))} className={moveSelect}>
-            {Array.from({ length: slots }, (_, i) => (
-              <option key={i} value={i}>
-                {i + 1} of {slots}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label className="mt-3 block">
+            <span className="mb-1.5 block text-xs font-semibold text-body">Position</span>
+            <select value={at} onChange={(e) => onIndex(Number(e.target.value))} className={moveSelect}>
+              {Array.from({ length: slots }, (_, i) => (
+                <option key={i} value={i}>
+                  {i + 1} of {slots}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <div className="mt-5 flex justify-end gap-2.5">
-          <button type="button" onClick={onCancel} className="min-h-11 rounded-[var(--sz-admin-radius-control)] border border-line px-4 text-[13px] font-semibold text-body hover:border-primary-700">
-            Cancel
-          </button>
-          <button type="button" onClick={onConfirm} className="min-h-11 rounded-[var(--sz-admin-radius-control)] bg-primary-700 px-4 text-[13px] font-semibold text-white hover:bg-primary-800">
-            Move
-          </button>
+          <div className="mt-5 flex justify-end gap-2.5">
+            <button type="button" onClick={onCancel} className="min-h-11 rounded-[var(--sz-admin-radius-control)] border border-line px-4 text-[13px] font-semibold text-body hover:border-primary-700">
+              Cancel
+            </button>
+            <button type="button" onClick={onConfirm} className="min-h-11 rounded-[var(--sz-admin-radius-control)] bg-primary-700 px-4 text-[13px] font-semibold text-white hover:bg-primary-800">
+              Move
+            </button>
+          </div>
         </div>
-      </div>
-    </>
+      )}
+    </dialog>
+  );
+}
+
+/** Merge is destructive and irreversible, so it names both tags and the count it
+ *  is about to move before it offers the button. */
+function MergeDialog({
+  merge,
+  targets,
+  busy,
+  onDest,
+  onCancel,
+  onConfirm,
+}: {
+  merge: { source: TagRow; destId: number | null } | null;
+  targets: TagRow[];
+  busy: boolean;
+  onDest: (destId: number | null) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { ref, onBackdropClick } = useDialog(merge !== null, onCancel);
+
+  return (
+    <dialog ref={ref} onClick={onBackdropClick} aria-label={merge ? `Merge ${merge.source.name}` : "Merge tag"} className={modalClass}>
+      {merge && (
+        <div className="p-5">
+          <h3 className="font-display text-lg font-medium text-heading">Merge “{merge.source.name}”</h3>
+          <p className="mt-1 text-[13px] text-muted">Every product tagged <strong className="text-body">{merge.source.name}</strong> ({merge.source.productCount}) gains the destination tag, and “{merge.source.name}” is deleted. This can&rsquo;t be undone.</p>
+          <p className="mb-1.5 mt-4 text-xs font-semibold text-body">Merge into</p>
+          <select autoFocus value={merge.destId ?? ""} onChange={(e) => onDest(e.target.value ? Number(e.target.value) : null)} className={moveSelect}>
+            <option value="">Choose a tag…</option>
+            {targets.map((t) => (<option key={t.id} value={t.id}>{t.name}</option>))}
+          </select>
+          <div className="mt-5 flex justify-end gap-2.5">
+            <button type="button" onClick={onCancel} disabled={busy} className="min-h-11 rounded-[var(--sz-admin-radius-control)] border border-line px-4 text-[13px] font-semibold text-body hover:border-primary-700 disabled:opacity-[var(--sz-disabled-opacity)]">Cancel</button>
+            <button type="button" onClick={onConfirm} disabled={busy || merge.destId == null} className="min-h-11 rounded-[var(--sz-admin-radius-control)] bg-error px-4 text-[13px] font-semibold text-white hover:bg-danger-hover disabled:opacity-[var(--sz-disabled-opacity)]">Merge</button>
+          </div>
+        </div>
+      )}
+    </dialog>
   );
 }
 
@@ -648,3 +677,8 @@ function QuickAdd({ value, onChange, onAdd }: { value: string; onChange: (v: str
 
 const moveSelect =
   "min-h-10 w-full rounded-[var(--sz-admin-radius-control)] border border-line bg-admin-canvas px-2.5 text-[13px] text-body outline-none focus-visible:border-primary-700";
+
+/** The centred modal shell, matching ConfirmDialog — the UA already centres a
+ *  modal <dialog> with `margin: auto`, so nothing needs translating. */
+const modalClass =
+  "m-auto w-[min(400px,calc(100vw-32px))] rounded-[var(--sz-admin-radius-card)] border border-line bg-raised p-0 text-body shadow-[var(--sz-shadow-modal)] backdrop:bg-[var(--sz-overlay)]";

@@ -10,7 +10,7 @@ import type { StatusColour } from "@/lib/admin/order-status-colours";
  */
 export const STATUS_CHIP: Record<StatusColour, string> = {
   gold: "text-[var(--sz-admin-gold-ink)] bg-warning-soft border-accent-soft",
-  green: "text-success bg-success-soft border-success-border",
+  green: "text-success-ink bg-success-soft border-success-border",
   red: "text-error bg-error-soft border-error-border",
   muted: "text-muted bg-surface border-line",
   ink: "text-heading bg-surface border-line",

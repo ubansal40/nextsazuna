@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
-import { Icon, useToast } from "@/components/ui";
+import { Icon, useDialog, useToast } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
 // `lib/order-lookup` is pure — no `server-only`, no I/O — so the browser can
@@ -33,8 +33,8 @@ import {
  *
  * There is no design spec for this screen, so it is built from the patterns the
  * rest of the admin already established: the orders list's search / sort /
- * pagination, the collections drawer's 452px `aside`, and the order detail's
- * in-place section editing.
+ * pagination, the taxonomy screens' 452px `<dialog>` drawer, and the order
+ * detail's in-place section editing.
  *
  * `phone` is editable, but never as a field. It is the row's identity — the
  * UNIQUE key the order desk looks a walk-in up by, and the handle the storefront
@@ -57,10 +57,10 @@ export function CustomersScreen({ initialPage }: { initialPage: AdminCustomerPag
   const [page, setPage] = useState(initialPage);
   const [filters, setFilters] = useState<AdminCustomerFilters>({});
   const [search, setSearch] = useState("");
-  // `selectedId` is tracked separately from `detail` so the drawer can be keyed
-  // on it. Two customers created by the same import can share an `updatedAt`,
-  // and keying on the id is what guarantees the editors re-seed when the
-  // profile behind them changes.
+  // `selectedId` is tracked separately from `detail` so the drawer knows it is
+  // open before the profile has arrived. It also feeds the drawer's re-seed
+  // sentinel: two customers created by the same import can share an
+  // `updatedAt`, so the id is what distinguishes them.
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -216,49 +216,50 @@ export function CustomersScreen({ initialPage }: { initialPage: AdminCustomerPag
         </div>
       </div>
 
-      {selectedId !== null && (
-        <ProfileDrawer
-          key={selectedId}
-          detail={detail}
-          loading={loadingDetail}
-          busy={busy}
-          onClose={close}
-          onSave={(patch, ok) => {
-            if (!detail) return;
-            startTransition(async () => {
-              const result = await saveCustomerProfileAction(detail.id, patch, filters);
-              if (result.ok) {
-                setDetail(result.customer);
-                setPage(result.page);
-                toast("success", ok);
-              } else {
-                toast("error", result.error);
-              }
-            });
-          }}
-          // Resolves to whether it landed, so the dialog closes on success and
-          // stays open — with what was typed still in it — on a collision.
-          onChangePhone={async (phone) => {
-            if (!detail) return false;
-            const result = await changeCustomerPhoneAction(detail.id, phone, filters);
-            if (!result.ok) {
+      {/* Always mounted, opened by `open`: a modal <dialog> only hands focus back
+          to the row that opened it if it is still in the document when it
+          closes, so it cannot be unmounted on close. */}
+      <ProfileDrawer
+        open={selectedId !== null}
+        detail={detail}
+        loading={loadingDetail}
+        busy={busy}
+        onClose={close}
+        onSave={(patch, ok) => {
+          if (!detail) return;
+          startTransition(async () => {
+            const result = await saveCustomerProfileAction(detail.id, patch, filters);
+            if (result.ok) {
+              setDetail(result.customer);
+              setPage(result.page);
+              toast("success", ok);
+            } else {
               toast("error", result.error);
-              return false;
             }
-            setDetail(result.customer);
-            setPage(result.page);
-            toast(
-              "success",
-              result.change.sessionsRevoked > 0
-                ? `Phone changed to ${result.change.to}. ${result.change.sessionsRevoked} session${
-                    result.change.sessionsRevoked === 1 ? "" : "s"
-                  } ended.`
-                : `Phone changed to ${result.change.to}.`,
-            );
-            return true;
-          }}
-        />
-      )}
+          });
+        }}
+        // Resolves to whether it landed, so the dialog closes on success and
+        // stays open — with what was typed still in it — on a collision.
+        onChangePhone={async (phone) => {
+          if (!detail) return false;
+          const result = await changeCustomerPhoneAction(detail.id, phone, filters);
+          if (!result.ok) {
+            toast("error", result.error);
+            return false;
+          }
+          setDetail(result.customer);
+          setPage(result.page);
+          toast(
+            "success",
+            result.change.sessionsRevoked > 0
+              ? `Phone changed to ${result.change.to}. ${result.change.sessionsRevoked} session${
+                  result.change.sessionsRevoked === 1 ? "" : "s"
+                } ended.`
+              : `Phone changed to ${result.change.to}.`,
+          );
+          return true;
+        }}
+      />
     </div>
   );
 }
@@ -329,6 +330,7 @@ type ContactInput = Pick<
 type PersonalInput = Pick<CustomerProfileInput, "dob" | "anniversary" | "ringSize" | "bangleSize" | "notes">;
 
 function ProfileDrawer({
+  open,
   detail,
   loading,
   busy,
@@ -336,6 +338,7 @@ function ProfileDrawer({
   onSave,
   onChangePhone,
 }: {
+  open: boolean;
   detail: CustomerDetail | null;
   loading: boolean;
   busy: boolean;
@@ -344,16 +347,20 @@ function ProfileDrawer({
   /** Resolves true when the change landed. */
   onChangePhone: (phone: string) => Promise<boolean>;
 }) {
+  const { ref, onBackdropClick } = useDialog(open, onClose);
   const [editingContact, setEditingContact] = useState(false);
   const [contact, setContact] = useState<ContactInput>(() => toContact(detail));
   const [editingPersonal, setEditingPersonal] = useState(false);
   const [personal, setPersonal] = useState<PersonalInput>(() => toPersonal(detail));
-  // The drawer is keyed on the customer id by its caller's render, but a save
-  // returns a fresh detail into the same instance — so the editors re-seed from
-  // whatever was stored, not from what the client hoped for.
-  const [seeded, setSeeded] = useState(detail?.updatedAt ?? "");
-  if (detail && detail.updatedAt !== seeded) {
-    setSeeded(detail.updatedAt);
+  // The instance outlives one customer now that the drawer stays mounted, so the
+  // sentinel carries the id as well as the timestamp: a save returns a fresh
+  // detail into the same instance, and two customers imported in the same batch
+  // can share an `updatedAt`. Either change re-seeds the editors from whatever
+  // was stored, not from what the client hoped for; closing clears them.
+  const seedKey = detail ? `${detail.id}:${detail.updatedAt}` : "";
+  const [seeded, setSeeded] = useState(seedKey);
+  if (seedKey !== seeded) {
+    setSeeded(seedKey);
     setContact(toContact(detail));
     setPersonal(toPersonal(detail));
     setEditingContact(false);
@@ -361,12 +368,8 @@ function ProfileDrawer({
   }
 
   return (
-    <>
-      <button type="button" aria-label="Close" onClick={onClose} className="fixed inset-0 z-40 bg-[var(--sz-overlay)]" />
-      <aside
-        aria-label="Customer profile"
-        className="fixed inset-y-0 right-0 z-50 flex w-[min(452px,100vw)] flex-col bg-raised shadow-[var(--sz-shadow-drawer)]"
-      >
+    <dialog ref={ref} onClick={onBackdropClick} aria-label="Customer profile" className={drawerClass}>
+      <div className="flex h-full flex-col">
         <div className="flex items-start justify-between gap-2 border-b border-line px-4 py-3.5">
           <div className="min-w-0">
             <h3 className="truncate font-display text-md font-medium text-heading">
@@ -378,7 +381,7 @@ function ProfileDrawer({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-[7px] text-muted hover:bg-admin-canvas"
+            className="inline-flex size-10 shrink-0 items-center justify-center rounded-[7px] text-muted hover:bg-admin-canvas"
           >
             <Icon name="close" size={18} />
           </button>
@@ -546,8 +549,8 @@ function ProfileDrawer({
             </>
           )}
         </div>
-      </aside>
-    </>
+      </div>
+    </dialog>
   );
 }
 
@@ -887,6 +890,19 @@ function Readout({ label, value, mono }: { label: string; value: string | null; 
 
 const pagerButton =
   "inline-flex min-h-10 items-center rounded-[var(--sz-admin-radius-control)] border border-line bg-raised px-3.5 text-[12.5px] font-semibold text-body hover:border-primary-700 disabled:opacity-40 disabled:hover:border-line";
+
+/**
+ * The 452px right-hand drawer on a native <dialog> — the same shell the taxonomy
+ * drawers use.
+ *
+ * The UA centres a modal dialog and caps it at `calc(100% - 12px)` in both axes,
+ * so the margins pin it to the trailing edge and the size pair overrides that
+ * cap. `showModal()` supplies the dialog role, `aria-modal`, the focus trap,
+ * Escape, the backdrop and focus restore — none of which the hand-rolled
+ * `<aside>` over a scrim button had.
+ */
+const drawerClass =
+  "m-0 ml-auto h-dvh max-h-none w-[min(452px,100vw)] max-w-none border-l border-line bg-raised p-0 text-body shadow-[var(--sz-shadow-drawer)] backdrop:bg-[var(--sz-overlay)]";
 
 const labelClass = "mb-1 block font-mono text-[9.5px] font-semibold uppercase tracking-[0.07em] text-muted";
 const fieldClass =

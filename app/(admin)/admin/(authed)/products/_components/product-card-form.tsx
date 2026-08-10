@@ -8,7 +8,7 @@ import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
 import { MAX_PRODUCT_PHOTOS } from "@/lib/admin/product-limits";
 import type { ProductEditorOptions } from "@/lib/admin/catalog";
-import { skuLocked, type CardPhoto, type EditorCard } from "./editor-model";
+import { skuLocked, type EditorCard } from "./editor-model";
 
 /**
  * One product card — the shared card from Sazuna Admin Products.dc.html.
@@ -28,9 +28,22 @@ import { skuLocked, type CardPhoto, type EditorCard } from "./editor-model";
 
 export type EditorMode = "add" | "edit";
 
-/** `.adx-cf` — 13px on white, 42px tall, gold focus border. */
+/** `.adx-cf` — 13px on white, 42px tall, gold focus border. The ring itself is
+ *  the global `:focus-visible` rule's; a field never restyles it. */
 const fieldClass =
-  "min-h-[42px] w-full rounded-lg border border-line bg-raised px-2.5 text-[13px] text-heading outline-none placeholder:text-muted focus-visible:border-accent focus-visible:shadow-[var(--sz-ring-focus-soft)]";
+  "min-h-[42px] w-full rounded-lg border border-line bg-raised px-2.5 text-[13px] text-heading outline-none placeholder:text-muted focus-visible:border-accent";
+
+/**
+ * The photo drag's payload type.
+ *
+ * Firefox refuses to start a drag unless `setData` is called, but a
+ * `text/plain` payload makes every text input on the card a valid drop target:
+ * releasing a tile over Sale price typed the tile's index into the field AND
+ * set `saleOverride`, permanently switching that card off rule pricing — while
+ * the photo itself did not move. A private type still satisfies Firefox and is
+ * something no form field will accept.
+ */
+const PHOTO_DRAG_TYPE = "application/x-sazuna-photo-index";
 
 function unique(values: (string | undefined | null)[]): string[] {
   return [...new Set(values.filter((v): v is string => !!v))];
@@ -186,8 +199,7 @@ export function ProductCardForm({
                 onDragStart={(e) => {
                   setDragFrom(i);
                   e.dataTransfer.effectAllowed = "move";
-                  // Firefox refuses to start a drag without payload.
-                  e.dataTransfer.setData("text/plain", String(i));
+                  e.dataTransfer.setData(PHOTO_DRAG_TYPE, String(i));
                 }}
                 onDragOver={(e) => {
                   if (dragFrom === null) return;
