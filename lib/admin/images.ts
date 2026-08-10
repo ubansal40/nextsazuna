@@ -88,6 +88,23 @@ export class PermanentImageError extends Error {
 }
 
 /**
+ * The watermark could not be built — the logo, or the SKU stamp.
+ *
+ * Its own class because the blame is completely different. A
+ * `PermanentImageError` means the operator's file is unusable and they must do
+ * something about it; this means OUR overlay pipeline is broken and their
+ * photograph was never the problem. Production spent a day telling people to
+ * try a different photo while the actual fault was an SVG loader missing from
+ * the deployed libvips.
+ */
+export class ImageOverlayError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ImageOverlayError";
+  }
+}
+
+/**
  * The logo overlay and its centred x-offset are invariant across every image, so
  * they are built once. Cached on globalThis because Next re-evaluates modules on
  * hot reload, and re-running the sharp pipeline per reload is wasteful.
@@ -150,6 +167,62 @@ async function assertRendered(layer: Buffer, what: string): Promise<void> {
   }
 }
 
+/**
+ * A rounded rectangle as raw RGBA pixels.
+ *
+ * This used to be an inline SVG string handed to sharp, which is the obvious
+ * way to draw one — and it cost a full day of production downtime. libvips
+ * renders SVG through librsvg, an OPTIONAL component: `sharp.format.svg.input`
+ * reported `true` and standalone scripts on the box worked, but the deployed
+ * app (which had both `@img/sharp-libvips-linux-x64` and `-linuxmusl-x64`
+ * installed and resolved a different one) could not load the buffer, and every
+ * single upload died with libvips' opaque "Input buffer contains unsupported
+ * image format" — pointing the blame at the customer's photograph, which was
+ * fine.
+ *
+ * A rounded rectangle is about twenty lines of arithmetic. Making the watermark
+ * depend on an SVG rendering library — one whose availability varies per build
+ * and cannot be detected reliably — was never a trade worth making. Raw pixels
+ * have no optional dependencies, no loader to find, and no way to be absent.
+ *
+ * Corners are antialiased by coverage rather than hard-clipped, so the result is
+ * visually identical to what librsvg produced.
+ */
+export function roundedRectRgba(
+  width: number,
+  height: number,
+  radius: number,
+  colour: { r: number; g: number; b: number },
+  alpha: number,
+): Buffer {
+  const w = Math.max(1, Math.round(width));
+  const h = Math.max(1, Math.round(height));
+  const rad = Math.max(0, Math.min(radius, Math.floor(Math.min(w, h) / 2)));
+  const a = Math.round(Math.max(0, Math.min(1, alpha)) * 255);
+  const data = Buffer.alloc(w * h * 4);
+
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      let coverage = 1;
+      if (rad > 0) {
+        // Distance from the nearest corner's centre of curvature. Outside the
+        // corner boxes both terms are 0 and coverage stays 1.
+        const dx = x < rad ? rad - x - 0.5 : x > w - rad - 1 ? x - (w - rad) + 0.5 : 0;
+        const dy = y < rad ? rad - y - 0.5 : y > h - rad - 1 ? y - (h - rad) + 0.5 : 0;
+        if (dx > 0 && dy > 0) {
+          coverage = Math.max(0, Math.min(1, rad + 0.5 - Math.hypot(dx, dy)));
+        }
+      }
+      const i = (y * w + x) * 4;
+      data[i] = colour.r;
+      data[i + 1] = colour.g;
+      data[i + 2] = colour.b;
+      data[i + 3] = Math.round(a * coverage);
+    }
+  }
+  return data;
+}
+
 /** The bottom-left SKU label: maroon mono text on a white 85% rounded rect. */
 async function buildSkuLabel(sku: string): Promise<OverlayOptions> {
   const safe = normaliseSku(sku);
@@ -183,17 +256,12 @@ async function buildSkuLabel(sku: string): Promise<OverlayOptions> {
   const boxWidth = Math.min(SIZE - SKU_LEFT - 20, renderedWidth + paddingX * 2);
   const boxHeight = renderedHeight + paddingY * 2;
 
-  const bgSvg = Buffer.from(
-    `<svg width="${boxWidth}" height="${boxHeight}" viewBox="0 0 ${boxWidth} ${boxHeight}" xmlns="http://www.w3.org/2000/svg">` +
-      `<rect x="0" y="0" width="${boxWidth}" height="${boxHeight}" rx="10" ry="10" fill="rgba(255,255,255,0.85)"/>` +
-      `</svg>`,
-  );
+  // The background IS the canvas — no separate transparent layer to composite
+  // onto, and no SVG loader anywhere in the path.
+  const background = roundedRectRgba(boxWidth, boxHeight, 10, { r: 255, g: 255, b: 255 }, 0.85);
 
-  const layer = await sharp({
-    create: { width: boxWidth, height: boxHeight, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
-  })
+  const layer = await sharp(background, { raw: { width: boxWidth, height: boxHeight, channels: 4 } })
     .composite([
-      { input: bgSvg, left: 0, top: 0 },
       { input: textBuffer, left: paddingX, top: Math.max(0, Math.floor((boxHeight - renderedHeight) / 2)) },
     ])
     .png()
@@ -337,7 +405,19 @@ function decodeFailure(source: Buffer, cause: unknown): PermanentImageError {
 export async function processProductImage(source: Buffer, sku: string): Promise<Buffer> {
   assertPlausibleImage(source);
 
-  const [logo, skuLabel] = await Promise.all([getLogoOverlay(), buildSkuLabel(sku)]);
+  // Two separate try blocks, because they assign blame to two different people.
+  // Building the watermark is entirely our own work and cannot be affected by
+  // the upload; if it fails, saying "that photo couldn't be processed" is not
+  // just unhelpful, it is untrue.
+  let logo: { buffer: Buffer; left: number };
+  let skuLabel: OverlayOptions;
+  try {
+    [logo, skuLabel] = await Promise.all([getLogoOverlay(), buildSkuLabel(sku)]);
+  } catch (error) {
+    throw new ImageOverlayError(
+      `The Sazuna watermark couldn't be built: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 
   try {
     return await sharp(source)
@@ -347,10 +427,6 @@ export async function processProductImage(source: Buffer, sku: string): Promise<
       .avif({ quality: AVIF_QUALITY })
       .toBuffer();
   } catch (error) {
-    // The overlays are ours; only the source can fail to decode. Anything the
-    // logo or the stamp threw is a server fault and must NOT be reported to the
-    // operator as a bad photograph.
-    if (error instanceof Error && /stamp|monospace font/i.test(error.message)) throw error;
     throw decodeFailure(source, error);
   }
 }

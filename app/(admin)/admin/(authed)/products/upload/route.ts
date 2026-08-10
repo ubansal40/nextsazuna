@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { currentAdmin } from "@/lib/admin/session";
 import { authorizeSection } from "@/lib/admin/rbac";
-import { PermanentImageError, sniffImageFormat, storeProductImage } from "@/lib/admin/images";
+import { ImageOverlayError, PermanentImageError, sniffImageFormat, storeProductImage } from "@/lib/admin/images";
 import { createGate, GateTimeoutError } from "@/lib/admin/image-limit";
 import { MAX_PHOTO_BYTES, photoSizeLimitMessage } from "@/lib/admin/product-limits";
 
@@ -108,6 +108,16 @@ export async function POST(request: Request): Promise<Response> {
       return NextResponse.json(
         { error: "The server is busy processing photos. Try that one again in a moment." },
         { status: 503 },
+      );
+    }
+    // Our watermark, not their photograph. Say so — the operator retrying with
+    // a different file is wasted effort, and "try again" is what kept this
+    // fault invisible for a day in production.
+    if (error instanceof ImageOverlayError) {
+      console.error("[admin] WATERMARK BROKEN — every upload will fail until this is fixed:", error.message);
+      return NextResponse.json(
+        { error: "Photos can't be watermarked right now — this is a server fault, not your file. Tell the developer." },
+        { status: 500 },
       );
     }
     // Ours. Log the detail that makes it diagnosable — which file, how big,

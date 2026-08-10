@@ -18,7 +18,7 @@
  */
 import sharp, { type Sharp } from "sharp";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -38,6 +38,7 @@ const {
   storeProductImage,
   storeSquareImage,
   normaliseSku,
+  roundedRectRgba,
   sniffImageFormat,
   pathForUrl,
   finalUrl,
@@ -134,6 +135,54 @@ checks.push(
   ["an empty SKU still stamps something", normaliseSku("   ") === "SKU"],
   ["a SKU is capped at 64 characters", normaliseSku("A".repeat(200)).length === 64],
 );
+
+/* --- no SVG in the pipeline -------------------------------------------------
+ * This one is a scar, not a nicety.
+ *
+ * The SKU label's rounded background was an inline SVG string handed to sharp.
+ * libvips renders SVG through librsvg, which is OPTIONAL: `sharp.format.svg`
+ * reported available and standalone scripts on the production box worked, but
+ * the deployed app resolved a libvips without it and EVERY upload failed with
+ * "Input buffer contains unsupported image format" — an error that blames the
+ * customer's photograph. A day of production downtime for a rounded rectangle.
+ *
+ * The background is now raw pixels. This assertion exists so nobody reaches for
+ * an SVG again because it is the obvious way to draw a shape.
+ */
+const imagesSource = await readFile(new URL("../lib/admin/images.ts", import.meta.url), "utf8");
+// Deliberately looks for SVG *construction* (`xmlns`, `<rect`), not the word
+// SVG: `sniffImageFormat` must go on recognising an uploaded .svg, and that is
+// reading a format, not depending on a renderer for our own drawing.
+checks.push([
+  "the pipeline never BUILDS an SVG — librsvg is optional in libvips",
+  !/xmlns|<rect|<circle|<path\s/i.test(imagesSource),
+]);
+
+// The replacement for that SVG, asserted pixel by pixel: the corner has to be
+// genuinely transparent (a rounded rectangle, not a square) and the middle has
+// to carry the reference's 85% white.
+{
+  const W = 120, H = 40, R = 10;
+  const rect = roundedRectRgba(W, H, R, { r: 255, g: 255, b: 255 }, 0.85);
+  const at = (x: number, y: number) => rect.subarray((y * W + x) * 4, (y * W + x) * 4 + 4);
+  const centre = at(W >> 1, H >> 1);
+
+  checks.push(
+    ["the rounded rect is exactly w×h×4 bytes", rect.length === W * H * 4],
+    ["its middle is 85% white", centre[0] === 255 && centre[1] === 255 && centre[2] === 255 && centre[3] === 217],
+    ["its very corner is transparent — it is rounded, not square", at(0, 0)[3] === 0],
+    ["all four corners are rounded", [at(W - 1, 0), at(0, H - 1), at(W - 1, H - 1)].every((p) => p[3] === 0)],
+    ["an edge midpoint stays opaque", at(W >> 1, 0)[3] === 217 && at(0, H >> 1)[3] === 217],
+    // Hard-clipped corners look cheap next to what librsvg drew. The coverage
+    // ramp is what keeps the replacement visually identical.
+    ["the corner is antialiased, not hard-clipped", (() => {
+      const alphas = Array.from({ length: R }, (_, i) => at(i, R - 1 - i)[3]);
+      return alphas.some((a) => a > 0 && a < 217);
+    })()],
+    ["a radius larger than the box is clamped, not corrupt", roundedRectRgba(10, 10, 999, { r: 0, g: 0, b: 0 }, 1).length === 400],
+    ["a 1×1 rect is still valid", roundedRectRgba(1, 1, 10, { r: 1, g: 2, b: 3 }, 1).length === 4],
+  );
+}
 
 /* --- taxonomy square images ------------------------------------------------
  * Category and collection artwork runs the same crop but must carry NEITHER the
