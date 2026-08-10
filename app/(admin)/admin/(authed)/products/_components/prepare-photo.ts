@@ -28,12 +28,28 @@ const TARGET = 1000;
 /**
  * Quality for the intermediate encode.
  *
- * The bytes are re-encoded to AVIF q75 afterwards, so this only has to avoid
- * *adding* visible artefacts before that happens. 0.92 is high enough that the
- * generation loss is invisible on jewellery and still ~20× smaller than the
- * original.
+ * Cropping here means the photo is encoded twice — WebP now, AVIF on the server
+ * — so this number is the entire cost of doing the work in the browser at all.
+ * Measured on a real 4032×3024 upload (827 KB), against the same photo taken
+ * straight to AVIF q75 with no client step, as PSNR against the uncompressed
+ * 1000×1000 crop:
+ *
+ *     no client step      45.08 dB    827 KB uploaded
+ *     WebP 0.92           43.44 dB     82 KB uploaded   -1.64 dB
+ *     WebP 0.95           44.02 dB    120 KB uploaded   -1.06 dB
+ *     WebP 0.98           44.30 dB    159 KB uploaded   -0.78 dB
+ *     WebP lossless       45.13 dB    633 KB uploaded    none
+ *
+ * 0.95 is the knee: it recovers a third of the loss for 38 KB, where 0.98 buys
+ * a third as much again for twice that, and lossless gives up the entire reason
+ * for cropping here. Everything in that table is above 43 dB, which is
+ * visually lossless for a photograph — the choice is about headroom, not about
+ * anything an operator could see.
+ *
+ * Note this only costs UPLOAD bytes. The stored file is re-encoded to AVIF
+ * either way, so a higher number here never makes the storefront heavier.
  */
-const QUALITY = 0.92;
+const QUALITY = 0.95;
 
 export interface PreparedPhoto {
   /** What to upload — the resized blob, or the original file untouched. */
