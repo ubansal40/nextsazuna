@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { Icon, type IconName } from "@/components/ui";
-import type { FeatureCard, Tile, UspItem } from "@/lib/homepage";
+import type { FeatureCard, Tile, UspItem } from "@/lib/homepage-blocks";
 import { SectionHeading } from "./section-heading";
 
 /**

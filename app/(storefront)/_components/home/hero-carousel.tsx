@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { Icon } from "@/components/ui";
-import type { HeroSlide } from "@/lib/homepage";
+import type { HeroSlide } from "@/lib/homepage-blocks";
 
 const SWIPE_THRESHOLD = 40;
 

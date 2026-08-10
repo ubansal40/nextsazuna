@@ -101,6 +101,15 @@ jobs:
       - name: SKU sheet parsing checks
         run: npm run check:sku-sheet
 
+      # The homepage is one admin-authored JSON block, and the parser drops
+      # anything malformed in silence — a section simply stops appearing, with
+      # nothing thrown and nothing logged. This round-trips every block the
+      # admin builder can create through the real parser, so an editor that
+      # emits a shape the homepage will not draw fails here instead of on the
+      # shop.
+      - name: Homepage content checks
+        run: npm run check:content
+
       - name: Typecheck
         run: npm run typecheck
 

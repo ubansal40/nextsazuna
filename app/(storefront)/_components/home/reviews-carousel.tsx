@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { Icon } from "@/components/ui";
-import type { Review } from "@/lib/homepage";
+import type { Review } from "@/lib/homepage-blocks";
 
 const AUTOPLAY_MS = 6200;
 
