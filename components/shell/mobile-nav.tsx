@@ -47,7 +47,11 @@ export function MobileNav({ open, onClose, onSignIn, signedIn = false }: MobileN
             type="button"
             onClick={onClose}
             aria-label="Close menu"
-            className="inline-flex cursor-pointer p-0 text-body"
+            // 22px of icon inside a --sz-control-h tap target. This drawer only
+            // exists below 900px, where every visitor is using a thumb, and
+            // this is its only way out other than the backdrop — so the target
+            // is grown with a pseudo-element, which costs the row no layout.
+            className="relative inline-flex cursor-pointer p-0 text-body after:absolute after:left-1/2 after:top-1/2 after:size-[var(--sz-control-h)] after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']"
           >
             <Icon name="close" size={22} />
           </button>

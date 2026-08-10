@@ -16,6 +16,16 @@ import {
  * presentational — open/close state lives in SiteHeader.
  */
 
+/**
+ * Names the panel for the `aria-controls` on whichever category link opened it.
+ * Shared as a constant because both halves of that relationship have to agree,
+ * and SiteHeader also uses it to tell whether focus is inside the panel before
+ * it closes one.
+ *
+ * A single id is enough: only ever one panel is mounted.
+ */
+export const MEGA_PANEL_ID = "sz-mega-panel";
+
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
     <p className="m-0 mb-3.5 font-mono text-eyebrow uppercase tracking-eyebrow text-accent-strong">
@@ -34,7 +44,10 @@ export function MegaMenu({ category }: { category: NavCategory }) {
   const base = jewelleryUrl(slug);
 
   return (
-    <div className="absolute inset-x-0 top-full z-[55] border-b border-line bg-canvas shadow-mega animate-fade-down">
+    <div
+      id={MEGA_PANEL_ID}
+      className="absolute inset-x-0 top-full z-[55] border-b border-line bg-canvas shadow-mega animate-fade-down"
+    >
       <div className="mx-auto grid max-w-[var(--sz-container)] grid-cols-[1fr_1fr_1fr_1.3fr] gap-9 px-10 py-8">
         <div>
           <Eyebrow>Shop {megaName}</Eyebrow>

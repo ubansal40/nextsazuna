@@ -61,7 +61,12 @@ export async function SiteFooter() {
 
   return (
     <footer className="bg-footer-bg text-footer-text">
-      <div className="mx-auto max-w-[var(--sz-container)] px-10 pt-14 footer-stacked:px-5">
+      {/* The gutter is the shell's, not the footer's: it was 40/20px against
+          the header's 40/24px, which put the footer's left edge 4px out from
+          every other block on the page on a phone. It also steps at the
+          header's breakpoint rather than at `footer-stacked`, because two
+          left edges that disagree between 760px and 900px is the same bug. */}
+      <div className="mx-auto max-w-[var(--sz-container)] px-[var(--sz-gutter)] pt-14 nav-collapsed:px-[var(--sz-gutter-mobile)]">
         {/* Brand, then one track per FOOTER_SECTIONS, then contact. Derived
             rather than hardcoded, so adding or removing a link column does not
             silently leave the grid a column short.

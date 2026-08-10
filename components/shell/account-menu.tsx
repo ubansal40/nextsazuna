@@ -242,9 +242,12 @@ export function AccountMenu({
                 if (event.key === "Enter") requestCode();
               }}
               placeholder="+977 98XXXXXXXX"
-              // The soft field ring, as every other text control in the system
-              // uses — not the heavier global button ring.
-              className="w-full rounded-[var(--sz-radius-control)] border border-line bg-raised px-[13px] py-[11px] text-control text-body outline-none transition-[border-color,box-shadow] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-primary-700 focus-visible:shadow-[var(--sz-ring-focus-soft)]"
+              // No focus ring of its own. The soft one this used to override
+              // the global rule with measures 1.31:1 against the raised
+              // surface, which is no indicator at all; the shared
+              // `:focus-visible` ring in globals.css is 3.07:1. The border
+              // change stays — that is emphasis, not the indicator.
+              className="w-full rounded-[var(--sz-radius-control)] border border-line bg-raised px-[13px] py-[11px] text-control text-body outline-none transition-[border-color,box-shadow] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-primary-700"
             />
 
             <SignInError message={error} />
@@ -301,8 +304,12 @@ export function AccountMenu({
                   inputMode="numeric"
                   autoComplete={index === 0 ? "one-time-code" : "off"}
                   aria-label={`Digit ${index + 1} of ${OTP_LENGTH}`}
+                  // Same as the field above, and it matters more here: a box
+                  // that already holds a digit is border-primary-700 whether it
+                  // has focus or not, so the global ring was the only thing
+                  // telling a keyboard user which of the six they were in.
                   className={cn(
-                    "h-[var(--sz-otp-h)] min-w-0 flex-1 rounded-[var(--sz-radius-control)] border bg-raised text-center font-mono text-otp outline-none transition-[border-color,box-shadow] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-primary-700 focus-visible:shadow-[var(--sz-ring-focus-soft)]",
+                    "h-[var(--sz-otp-h)] min-w-0 flex-1 rounded-[var(--sz-radius-control)] border bg-raised text-center font-mono text-otp outline-none transition-[border-color,box-shadow] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-primary-700",
                     digit ? "border-primary-700 text-heading" : "border-line text-muted",
                   )}
                 />

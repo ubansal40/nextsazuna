@@ -3,7 +3,17 @@
 import Image from "next/image";
 import Link from "next/link";
 import { formatPrice } from "@/lib/format";
-import { Icon, useDialog } from "@/components/ui";
+import { Icon, Skeleton, useDialog } from "@/components/ui";
+
+/**
+ * How much the drawer can trust `lines`.
+ *
+ * "pricing" and "failed" both mean *the bag is not empty* — the contents are
+ * known, their prices are not. Collapsing either into an empty `lines` array is
+ * how this drawer used to tell customers their bag was empty while the pricing
+ * request was still in flight, and permanently if it never came back.
+ */
+export type MiniCartStatus = "ready" | "pricing" | "failed";
 
 export interface MiniCartLine {
   id: string;
@@ -26,6 +36,16 @@ export interface MiniCartProps {
    * total that also knows about coupons; until then this is summed from lines.
    */
   subtotal?: string;
+  /**
+   * Overrides the piece count in the title. localStorage knows how many pieces
+   * are in the bag before the server has priced any of them, so the heading and
+   * the header's badge can agree from the first paint.
+   */
+  count?: number;
+  /** Defaults to "ready", which is what a caller with priced lines has. */
+  status?: MiniCartStatus;
+  /** Re-runs a failed pricing request. One attempt, on the customer's ask. */
+  onRetry?: () => void;
   /** True once the order qualifies for free insured shipping. */
   freeShipping?: boolean;
   onQuantityChange?: (id: string, quantity: number) => void;
@@ -47,6 +67,9 @@ export function MiniCart({
   onClose,
   lines = [],
   subtotal,
+  count: countOverride,
+  status = "ready",
+  onRetry,
   freeShipping = false,
   onQuantityChange,
   onRemove,
@@ -55,7 +78,7 @@ export function MiniCart({
   const empty = lines.length === 0;
   // Pieces, not lines — two of the same ring is a bag of two. The header badge
   // counts the same way, so the two can never disagree.
-  const count = lines.reduce((sum, line) => sum + line.quantity, 0);
+  const count = countOverride ?? lines.reduce((sum, line) => sum + line.quantity, 0);
 
   // Summed in integer paisa, so several lines cannot drift the way repeated
   // float addition would.
@@ -90,7 +113,56 @@ export function MiniCart({
           </button>
         </div>
 
-        {empty ? (
+        {status === "pricing" ? (
+          /* Known contents, unknown prices. Placeholders for the rows the
+             server is about to return — the empty state here would be a lie,
+             and it is the one this drawer used to tell. */
+          <div className="flex flex-1 flex-col gap-4 px-[22px] py-4">
+            <p role="status" className="sr-only">
+              Pricing your bag
+            </p>
+            {Array.from({ length: Math.min(Math.max(count, 1), 3) }, (_, row) => (
+              <div key={row} className="flex gap-[13px]">
+                <Skeleton className="h-[var(--sz-cart-thumb-h)] w-[var(--sz-cart-thumb-w)] shrink-0" />
+                <div className="flex min-w-0 flex-1 flex-col gap-2.5">
+                  <Skeleton className="h-3.5 w-3/4" />
+                  <Skeleton className="h-3 w-1/3" />
+                  <Skeleton className="mt-auto h-7 w-full" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : status === "failed" ? (
+          /* The bag is intact — only the round trip that prices it failed. It
+             says so, and offers the one action that can fix it, because the
+             alternative was a drawer that looked permanently empty. */
+          <div className="flex flex-1 flex-col items-center justify-center px-8 py-10 text-center">
+            <div className="flex size-16 items-center justify-center rounded-pill bg-error-soft text-error">
+              <Icon name="alert" size={28} strokeWidth={1.5} />
+            </div>
+            <p className="m-0 mt-[18px] font-[family-name:var(--sz-font-display)] text-cart-empty-title text-heading">
+              We couldn&rsquo;t price your bag
+            </p>
+            <p className="mb-5 mt-2 max-w-[32ch] text-sm text-muted">
+              Your {count === 1 ? "piece is" : "pieces are"} still saved. Prices come from the
+              shop, and we couldn&rsquo;t reach it just now.
+            </p>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="cursor-pointer rounded-[var(--sz-radius-control)] bg-primary-700 px-[22px] py-3 text-sm font-semibold text-white transition-colors duration-[var(--sz-dur-fast)] hover:bg-primary-800"
+            >
+              Try again
+            </button>
+            <Link
+              href="/cart"
+              onClick={onClose}
+              className="mt-2.5 cursor-pointer text-control-sm font-semibold text-primary-700 underline"
+            >
+              Open the full bag
+            </Link>
+          </div>
+        ) : empty ? (
           <div className="flex flex-1 flex-col items-center justify-center px-8 py-10 text-center">
             <div className="flex size-16 items-center justify-center rounded-pill bg-surface text-accent-strong">
               <Icon name="bag" size={28} strokeWidth={1.5} />
@@ -119,7 +191,7 @@ export function MiniCart({
         ) : (
           <>
             {freeShipping && (
-              <p className="m-0 flex items-center gap-2 bg-success-soft px-[22px] py-[9px] text-xs font-semibold text-success">
+              <p className="m-0 flex items-center gap-2 bg-success-soft px-[22px] py-[9px] text-xs font-semibold text-success-ink">
                 <Icon name="truck" size={15} strokeWidth={1.7} />
                 Free insured shipping unlocked
               </p>
@@ -143,7 +215,10 @@ export function MiniCart({
                   </span>
 
                   <div className="min-w-0 flex-1">
-                    <div className="flex justify-between gap-2">
+                    {/* The gap is exactly half of what the remove button's tap
+                        target adds, so that target reaches the title's edge and
+                        stops — no overlap, no clicks stolen from the link. */}
+                    <div className="flex justify-between gap-3.5">
                       <span className="min-w-0">
                         {line.href ? (
                           <Link
@@ -163,7 +238,12 @@ export function MiniCart({
                         type="button"
                         onClick={() => onRemove?.(line.id)}
                         aria-label={`Remove ${line.name}`}
-                        className="shrink-0 cursor-pointer p-0 text-muted-soft transition-colors duration-[var(--sz-dur-fast)] hover:text-error"
+                        // 16px of icon inside a --sz-control-h tap target. The
+                        // target is a pseudo-element rather than padding so it
+                        // grows without moving the icon or reflowing the row.
+                        // It is destructive and there is no undo, so the 16px
+                        // it used to be was a mis-tap waiting to happen.
+                        className="relative shrink-0 cursor-pointer p-0 text-muted-soft transition-colors duration-[var(--sz-dur-fast)] after:absolute after:left-1/2 after:top-1/2 after:size-[var(--sz-control-h)] after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] hover:text-error"
                       >
                         <Icon name="close" size={16} />
                       </button>

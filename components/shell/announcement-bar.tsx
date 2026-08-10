@@ -61,35 +61,49 @@ export function AnnouncementBar({ messages, autoSlide = true, interval = 3200 }:
           "max-height var(--sz-dur-ann) var(--sz-ease-out), opacity var(--sz-dur-ann-fade) ease",
       }}
     >
-      <div className="relative mx-auto flex h-[var(--sz-ann-h)] max-w-[var(--sz-container)] items-center justify-center gap-4 px-[var(--sz-gutter-mobile)] nav-expanded:px-[var(--sz-gutter)]">
-        <p className="m-0 flex min-h-5 items-center gap-[9px]">
-          <span aria-hidden="true" className="size-1.5 rotate-45 bg-accent" />
-          <span className="font-mono text-2xs uppercase tracking-eyebrow text-ann-text">
-            {message}
-          </span>
-        </p>
+      {/* Three tracks rather than a centred flex row with the dismiss button
+          floating over it. Absolutely positioned, that button reserved no space
+          in the row, so at 375px any message wider than ~291px slid underneath
+          it. The two outer tracks are equal, so the message stays centred while
+          the right one holds the button. */}
+      <div className="mx-auto grid h-[var(--sz-ann-h)] max-w-[var(--sz-container)] grid-cols-[1fr_auto_1fr] items-center px-[var(--sz-gutter-mobile)] nav-expanded:px-[var(--sz-gutter)]">
+        <div className="col-start-2 flex min-w-0 items-center justify-center gap-4">
+          <p className="m-0 flex min-h-5 min-w-0 items-center gap-[9px]">
+            <span aria-hidden="true" className="size-1.5 shrink-0 rotate-45 bg-accent" />
+            {/* The copy is admin-editable and unbounded. The strip is one line
+                tall by design and clips whatever overflows, so long copy ends
+                in an ellipsis instead of being sliced through the middle — the
+                full sentence is still in the DOM for a screen reader. */}
+            <span className="truncate font-mono text-2xs uppercase tracking-eyebrow text-ann-text">
+              {message}
+            </span>
+          </p>
 
-        {messages.length > 1 && (
-          <span aria-hidden="true" className="flex items-center gap-[5px]">
-            {messages.map((label, dot) => (
-              <span
-                key={label}
-                className={cn(
-                  "h-[var(--sz-ann-dot-h)] rounded-[2px] transition-[width,background-color] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)]",
-                  dot === index
-                    ? "w-[var(--sz-ann-dot-w)] bg-accent"
-                    : "w-[var(--sz-ann-dot-w-idle)] bg-[rgb(var(--sz-accent-rgb)/.35)]",
-                )}
-              />
-            ))}
-          </span>
-        )}
+          {messages.length > 1 && (
+            <span aria-hidden="true" className="flex shrink-0 items-center gap-[5px]">
+              {messages.map((label, dot) => (
+                <span
+                  key={label}
+                  className={cn(
+                    "h-[var(--sz-ann-dot-h)] rounded-[2px] transition-[width,background-color] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)]",
+                    dot === index
+                      ? "w-[var(--sz-ann-dot-w)] bg-accent"
+                      : "w-[var(--sz-ann-dot-w-idle)] bg-[rgb(var(--sz-accent-rgb)/.35)]",
+                  )}
+                />
+              ))}
+            </span>
+          )}
+        </div>
 
         <button
           type="button"
           aria-label="Dismiss announcements"
           onClick={() => setDismissed(true)}
-          className="absolute right-[18px] top-1/2 inline-flex -translate-y-1/2 cursor-pointer p-1 text-ann-dismiss transition-colors duration-[var(--sz-dur-fast)] hover:text-ann-text nav-expanded:right-[34px]"
+          // The negative margin cancels the button's own padding, so the glyph
+          // — not its box — lines up with the gutter, as it did when it was
+          // positioned by hand.
+          className="col-start-3 -mr-1 inline-flex cursor-pointer justify-self-end p-1 text-ann-dismiss transition-colors duration-[var(--sz-dur-fast)] hover:text-ann-text"
         >
           <Icon name="close" size={16} strokeWidth={1.8} />
         </button>
