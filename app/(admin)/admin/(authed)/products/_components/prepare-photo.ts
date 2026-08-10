@@ -31,8 +31,9 @@ const TARGET = 1000;
  * Cropping here means the photo is encoded twice — WebP now, AVIF on the server
  * — so this number is the entire cost of doing the work in the browser at all.
  * Measured on a real 4032×3024 upload (827 KB), against the same photo taken
- * straight to AVIF q75 with no client step, as PSNR against the uncompressed
- * 1000×1000 crop:
+ * straight to AVIF with no client step, as PSNR against the uncompressed
+ * 1000×1000 crop (measured while the server encoded at quality 75; the server
+ * now uses 88, which shifts every row up but not the gaps between them):
  *
  *     no client step      45.08 dB    827 KB uploaded
  *     WebP 0.92           43.44 dB     82 KB uploaded   -1.64 dB

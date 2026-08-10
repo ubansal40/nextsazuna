@@ -52,7 +52,23 @@ const SKU_RADIUS = 12;
 const SKU_BOX_ALPHA = 0.92;
 const SKU_LEFT = 24;
 const SKU_BOTTOM = 20;
-const AVIF_QUALITY = 75;
+/**
+ * AVIF encode quality, on sharp's 0–100 perceptual scale.
+ *
+ * The reference shop used 75. Raised to 88 on the owner's instruction, trading
+ * page weight for headroom. Measured on a real 4032×3024 upload, per stored
+ * 1000×1000 image:
+ *
+ *                    plain background    busy/textured    PSNR
+ *     quality 75          ~21 KB             ~56 KB      45.1 dB
+ *     quality 88          ~35 KB             ~99 KB      47.2 dB
+ *
+ * So roughly 1.8× the bytes for about two decibels. That cost is paid on every
+ * page view by every customer — a 40-tile category page carries ~0.6 MB more —
+ * which is the thing to look at first if storefront performance is ever
+ * investigated.
+ */
+const AVIF_QUALITY = 88;
 
 /**
  * Monospace advance width as a fraction of font size — near enough for every
