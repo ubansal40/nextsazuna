@@ -15,8 +15,11 @@ import { saveProfile } from "../_actions";
  * than to have to ask.
  */
 
+// No focus ring here: the global :focus-visible rule owns it (CLAUDE.md). The
+// soft ring this used to set was ~1.3:1 against the raised surface and beat the
+// global one on specificity, so focused fields read as unfocused.
 const fieldClass =
-  "w-full rounded-[var(--sz-radius-btn-lg)] border border-line bg-canvas px-3.5 text-control text-heading outline-none min-h-12 transition-[border-color,box-shadow] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-accent focus-visible:shadow-[var(--sz-ring-focus-soft)]";
+  "w-full rounded-[var(--sz-radius-btn-lg)] border border-line bg-canvas px-3.5 text-control text-heading outline-none min-h-12 transition-[border-color] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-accent";
 const labelClass = "mb-[7px] block text-control-sm font-semibold text-body";
 
 const FIELDS = [

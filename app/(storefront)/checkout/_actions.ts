@@ -138,6 +138,13 @@ export async function quoteCheckout(
 
 export interface PlaceOrderInput {
   entries: unknown;
+  /**
+   * The total, in paisa, that the customer was shown when they agreed to this
+   * order — `CheckoutQuote.totalMinor` from the quote on screen. Re-pricing
+   * here must come to exactly this figure or the order is refused: the amount
+   * charged and the amount displayed are the same number or there is no order.
+   */
+  expectedTotalMinor: number;
   code?: string;
   giftWrap?: boolean;
   method: string;
@@ -160,7 +167,12 @@ export type PlaceOrderResult =
     }
   /** Plain navigation — Khalti hands back a URL it has already prepared. */
   | { ok: true; kind: "navigate"; orderNumber: string; token: string; url: string }
-  | { ok: false; error: "empty" | "invalid" | "unavailable" | "failed" };
+  /**
+   * "changed" — the bag re-priced to something other than the quoted total, so
+   * nothing was written. Recoverable: the caller re-quotes and shows the new
+   * figure. Never silently proceed past it.
+   */
+  | { ok: false; error: "empty" | "invalid" | "unavailable" | "changed" | "failed" };
 
 /** Enough to reach someone about a delivery, not a format police. */
 function validPhone(phone: string): boolean {
@@ -192,6 +204,20 @@ export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResu
     // would create an order nobody can pay for.
     if (!priced.method || priced.method.code !== input.method) {
       return { ok: false, error: "unavailable" };
+    }
+
+    /*
+     * The customer agreed to a figure. If pricing here produces a different one
+     * — the bag moved on, a price was edited, a coupon lapsed between the quote
+     * and the click — the order is refused rather than written at a total
+     * nobody was ever shown. Integer paisa on both sides; no float ever touches
+     * this comparison (ADR 0003).
+     */
+    if (
+      !Number.isInteger(input.expectedTotalMinor) ||
+      input.expectedTotalMinor !== priced.totalMinor
+    ) {
+      return { ok: false, error: "changed" };
     }
 
     const methodCode = priced.method.code as MethodCode;

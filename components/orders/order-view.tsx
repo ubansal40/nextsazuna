@@ -108,12 +108,12 @@ const TONES = {
   paid: {
     panel: "border-line bg-raised",
     icon: "bg-success-soft text-success",
-    chip: "bg-success-soft text-success",
+    chip: "bg-success-soft text-success-ink",
   },
   pending: {
     panel: "border-line bg-raised",
     icon: "bg-primary-50 text-primary-700",
-    chip: "bg-warning-soft text-warning",
+    chip: "bg-warning-soft text-warning-ink",
   },
   failed: {
     panel: "border-error-border bg-error-soft",
@@ -301,7 +301,7 @@ function StatusHead({ order }: { order: OrderViewData }) {
         <p className="m-0 font-mono text-xs text-muted-soft">Order</p>
         <p className="m-0 font-mono text-lg font-semibold text-heading">{order.orderNumber}</p>
       </div>
-      <span className="rounded-pill bg-warning-soft px-3.5 py-1.5 text-xs font-semibold text-warning">
+      <span className="rounded-pill bg-warning-soft px-3.5 py-1.5 text-xs font-semibold text-warning-ink">
         {current?.label ?? order.status}
       </span>
     </div>

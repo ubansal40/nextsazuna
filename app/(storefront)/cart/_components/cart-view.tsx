@@ -91,7 +91,12 @@ export function CartView({
     void Promise.resolve().then(() => {
       if (!active) return;
       try {
-        setGiftWrap(window.localStorage.getItem("sazuna:gift-wrap") === "1");
+        // Read after hydration, not during render: reading localStorage while
+      // rendering would make the server and client trees disagree. The hooks rule
+      // below guards against cascading renders, which is the right default — this
+      // is the case it cannot express. It runs once and costs one extra render,
+      // and there is no SSR-safe render-time alternative.
+      setGiftWrap(window.localStorage.getItem("sazuna:gift-wrap") === "1");
       } catch {
         // Ignore.
       }

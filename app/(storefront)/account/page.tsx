@@ -91,8 +91,10 @@ export default async function AccountPage() {
                       year: "numeric",
                     })}
                   </span>
+                  {/* formatPrice returns null for an absent total; without the
+                      fallback the row's amount is simply missing. */}
                   <span className="ms-auto font-mono text-sm text-body tabular-nums">
-                    {formatPrice(order.total_amount)}
+                    {formatPrice(order.total_amount) ?? "—"}
                   </span>
                   <Icon name="chevron-right" size={16} className="text-muted" />
                 </Link>

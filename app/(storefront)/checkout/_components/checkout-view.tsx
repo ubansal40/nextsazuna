@@ -5,13 +5,40 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
-import { readCart } from "@/lib/cart-storage";
+import { onCartChanged, readCart, type CartEntry } from "@/lib/cart-storage";
 import { Icon, type IconName } from "@/components/ui";
 import { placeOrder, quoteCheckout, type CheckoutQuote } from "../_actions";
 
 type Flow = "loading" | "form" | "submitting" | "redirecting" | "success" | "failure";
 
 const DRAFT_KEY = "sazuna:checkout-draft";
+
+/**
+ * A stable fingerprint of the bag, used to check that what is about to be
+ * ordered is still what was quoted.
+ *
+ * Sorted, because line order does not change any figure: restoring a removed
+ * line at a different position must not read as "your bag changed".
+ */
+function bagSignature(entries: CartEntry[]): string {
+  return entries
+    .map((entry) => `${entry.productId}:${entry.quantity}`)
+    .sort()
+    .join(",");
+}
+
+/**
+ * Why an order was refused, in words. Every one of these is recoverable — the
+ * customer is told what happened and the quote is refreshed underneath them.
+ * "failed" is the only outcome that goes to the failure panel.
+ */
+const REFUSAL: Record<"empty" | "invalid" | "unavailable" | "changed", string> = {
+  empty: "Your bag is empty, so nothing was ordered.",
+  invalid: "We need your name, delivery address and phone number to place the order.",
+  unavailable: "That payment method isn't available right now — please choose another.",
+  changed:
+    "Your bag changed while you were here, so the total did too. Check the updated total, then place your order.",
+};
 
 const METHOD_ICON: Record<string, IconName> = {
   cod: "card",
@@ -23,8 +50,11 @@ const METHOD_ICON: Record<string, IconName> = {
 const panelClass =
   "mt-7 rounded-[var(--sz-radius-modal)] border border-line-soft bg-raised px-6 text-center";
 
+// No focus ring here: the global :focus-visible rule owns it (CLAUDE.md). The
+// soft ring this used to set was ~1.3:1 against the raised surface and beat the
+// global one on specificity, so focused fields read as unfocused.
 const fieldClass =
-  "w-full rounded-[var(--sz-radius-thumb)] border bg-raised px-3.5 text-prose text-heading outline-none min-h-[var(--sz-field-h)] transition-[border-color,box-shadow] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-accent focus-visible:shadow-[var(--sz-ring-focus-soft)]";
+  "w-full rounded-[var(--sz-radius-thumb)] border bg-raised px-3.5 text-prose text-heading outline-none min-h-[var(--sz-field-h)] transition-[border-color] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-accent";
 
 const labelClass = "mb-[7px] block text-control-sm font-semibold text-body";
 
@@ -53,6 +83,10 @@ export function CheckoutView({
   const [promoInput, setPromoInput] = useState("");
   const [orderNumber, setOrderNumber] = useState("");
   const [mobileSummary, setMobileSummary] = useState(false);
+  /** Set whenever an order is refused, so no click is ever silently swallowed. */
+  const [notice, setNotice] = useState<string | null>(null);
+  /** A quote is in flight, so the figure on the button is not final yet. */
+  const [pricing, setPricing] = useState(false);
 
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
@@ -68,59 +102,107 @@ export function CheckoutView({
   );
 
   /**
+   * False until the saved draft has been read. Gates the persist effect below.
+   *
+   * State rather than a ref, and that is the point: the persist effect must not
+   * run at all until the render it closes over carries the restored draft.
+   * React flushes every passive effect before it drains the microtask queue, so
+   * deferring the read into a microtask — as this used to — let persist run
+   * first, with the initial empty state, and overwrite the draft before it was
+   * ever read. The failure panel promises "your details are saved"; they were
+   * being destroyed on mount. With the gate, declaration order no longer
+   * matters.
+   */
+  const [restored, setRestored] = useState(false);
+
+  /** The bag the current quote was priced from — see `submit`. */
+  const quoted = useRef<CartEntry[] | null>(null);
+
+  /**
    * Pick up what the browser already knows: the saved delivery draft, so a
    * failed payment does not cost the customer their address twice, and the
    * gift-wrap choice made in the bag.
    *
-   * Deferred to a microtask because the first render also happens on the
-   * server, where none of this exists — reading it synchronously would be a
-   * hydration mismatch.
+   * Read synchronously: an effect runs after hydration has committed, so there
+   * is no server/client mismatch here to defer around.
    */
   useEffect(() => {
-    let active = true;
-    void Promise.resolve().then(() => {
-      if (!active) return;
-      try {
-        const raw = window.localStorage.getItem(DRAFT_KEY);
-        if (raw) {
-          const draft = JSON.parse(raw) as Record<string, unknown>;
-          if (typeof draft.name === "string") setName(draft.name);
-          if (typeof draft.address === "string") setAddress(draft.address);
-          if (typeof draft.phone === "string") setPhone(draft.phone);
-          if (typeof draft.email === "string") setEmail(draft.email);
-        }
-        setGiftWrap(window.localStorage.getItem("sazuna:gift-wrap") === "1");
-      } catch {
-        // A corrupt draft is not worth failing checkout over.
+    try {
+      // Read after hydration, not during render: reading localStorage while
+      // rendering would make the server and client trees disagree. The hooks rule
+      // below guards against cascading renders, which is the right default — this
+      // is the case it cannot express. It runs once and costs one extra render,
+      // and there is no SSR-safe render-time alternative.
+      const raw = window.localStorage.getItem(DRAFT_KEY);
+      if (raw) {
+        const draft = JSON.parse(raw) as Record<string, unknown>;
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        if (typeof draft.name === "string") setName(draft.name);
+        if (typeof draft.address === "string") setAddress(draft.address);
+        if (typeof draft.phone === "string") setPhone(draft.phone);
+        if (typeof draft.email === "string") setEmail(draft.email);
       }
-    });
-    return () => {
-      active = false;
-    };
+      setGiftWrap(window.localStorage.getItem("sazuna:gift-wrap") === "1");
+    } catch {
+      // A corrupt draft is not worth failing checkout over.
+    }
+    setRestored(true);
   }, []);
 
   useEffect(() => {
+    if (!restored) return;
     try {
       window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ name, address, phone, email }));
     } catch {
       // Storage full or blocked — the form still works for this visit.
     }
-  }, [name, address, phone, email]);
+  }, [restored, name, address, phone, email]);
 
   const refresh = useCallback(() => {
     const ticket = ++request.current;
-    quoteCheckout(readCart(), { code: code ?? undefined, giftWrap, method })
+    // Remember exactly what went to the server; `submit` refuses to order a bag
+    // that no longer matches it.
+    const entries = readCart();
+    setPricing(true);
+    quoteCheckout(entries, { code: code ?? undefined, giftWrap, method })
       .then((next) => {
         if (ticket !== request.current) return;
+        quoted.current = entries;
         setQuote(next);
+        setPricing(false);
         setFlow((current) => (current === "loading" ? "form" : current));
       })
       .catch(() => {
-        if (ticket === request.current) setFlow("failure");
+        if (ticket !== request.current) return;
+        setPricing(false);
+        setFlow("failure");
       });
   }, [code, giftWrap, method]);
 
+  // `refresh` raises the pending flag before it awaits — that is what a pending
+  // flag is for, and the alternative is a button that looks live while a quote
+  // is in flight. One extra render on mount, by design.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(refresh, [refresh]);
+
+  /*
+   * The bag can move while checkout is open — another tab, or the header's own
+   * add-to-bag. Without this the summary quietly describes a bag that no longer
+   * exists, and the customer is asked to agree to the wrong figure.
+   *
+   * Only while the form is the thing on screen: the confirmation page clears
+   * the bag, and re-quoting during a hand-off would swap the spinner for "your
+   * bag is empty" on the way out.
+   */
+  useEffect(() => {
+    if (flow !== "form") return;
+    return onCartChanged(refresh);
+  }, [flow, refresh]);
+
+  // A refusal that nobody sees is a button that does nothing. Move to it.
+  useEffect(() => {
+    if (notice) document.getElementById("co-notice")?.focus();
+  }, [notice]);
 
   // Post to the gateway once its signed fields are in the DOM.
   useEffect(() => {
@@ -133,15 +215,34 @@ export function CheckoutView({
 
   async function submit() {
     setSubmitted(true);
+    setNotice(null);
     if (!name.trim() || !address.trim() || phone.replace(/\D/g, "").length < 7) {
       const target = !name.trim() ? "co-name" : !address.trim() ? "co-addr" : "co-phone";
       document.getElementById(target)?.focus();
       return;
     }
 
+    /*
+     * The customer agreed to one figure: the one on this button. Ordering the
+     * bag as it stands *now* would let a change made since the quote — in
+     * another tab, or by the header's add-to-bag — be re-priced by the server
+     * and charged without ever being shown. So the bag that was quoted is what
+     * gets ordered, and only if it is still the bag the browser holds.
+     */
+    const entries = quoted.current;
+    if (!quote || !entries || bagSignature(entries) !== bagSignature(readCart())) {
+      setNotice(REFUSAL.changed);
+      refresh();
+      return;
+    }
+
     setFlow("submitting");
     const result = await placeOrder({
-      entries: readCart(),
+      entries,
+      // Belt to that braces: the server refuses to write an order whose total
+      // does not come to this exact figure in paisa. Catches drift the browser
+      // cannot see — a price edit, a coupon lapsing mid-checkout.
+      expectedTotalMinor: quote.totalMinor,
       code: code ?? undefined,
       giftWrap,
       method,
@@ -152,7 +253,16 @@ export function CheckoutView({
     });
 
     if (!result.ok) {
-      setFlow(result.error === "empty" ? "form" : "failure");
+      if (result.error === "failed") {
+        setFlow("failure");
+        return;
+      }
+      // Nothing was charged and nothing was written. Say what happened, and
+      // re-quote so the screen agrees with the bag again — an emptied bag
+      // falls through to the empty-bag panel on the next render.
+      setFlow("form");
+      setNotice(REFUSAL[result.error]);
+      refresh();
       return;
     }
 
@@ -254,6 +364,7 @@ export function CheckoutView({
             type="button"
             onClick={() => {
               setFlow("form");
+              setNotice(null);
               refresh();
             }}
             className="cursor-pointer rounded-[var(--sz-radius-thumb)] bg-primary-700 px-[26px] text-sm font-semibold text-white min-h-12 hover:bg-primary-800"
@@ -339,7 +450,9 @@ export function CheckoutView({
     <button
       type="button"
       onClick={submit}
-      disabled={busy}
+      // Held while a quote is in flight: for those few hundred milliseconds the
+      // figure beside "Place Order" is not the one that would be charged.
+      disabled={busy || pricing}
       aria-busy={busy}
       className={cn(
         "flex w-full cursor-pointer items-center justify-center gap-[9px] bg-primary-700 text-control font-semibold text-white min-h-[var(--sz-control-h-lg)] transition-colors duration-[var(--sz-dur-fast)] hover:bg-primary-800 disabled:cursor-wait",
@@ -360,6 +473,21 @@ export function CheckoutView({
   return (
     <div className="mt-[18px] grid items-start gap-10 checkout-stacked:gap-0 checkout-split:grid-cols-[minmax(0,1fr)_var(--sz-checkout-summary)]">
       <div>
+        {/* Why the last attempt did not become an order. Focused when it
+            appears, because on mobile the button that was pressed is pinned to
+            the bottom of the screen and this is at the top. */}
+        {notice && (
+          <p
+            id="co-notice"
+            role="alert"
+            tabIndex={-1}
+            className="m-0 mb-[18px] flex gap-2.5 rounded-[var(--sz-radius-md)] border border-error-border bg-error-soft p-3.5 text-sm leading-relaxed text-body"
+          >
+            <Icon name="alert" size={17} className="mt-0.5 flex-none text-error" />
+            {notice}
+          </p>
+        )}
+
         {/* Mobile: the summary collapses so the form is the first thing seen. */}
         <div className="mb-[22px] hidden checkout-stacked:block">
           <button

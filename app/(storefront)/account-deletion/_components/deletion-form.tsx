@@ -18,8 +18,11 @@ import { requestAccountDeletion, type DeletionRequestResult } from "../_actions"
  * page's message, and the two disagree about what is wrong.
  */
 
+// No focus ring here: the global :focus-visible rule owns it (CLAUDE.md). The
+// soft ring this used to set was ~1.3:1 against the raised surface and beat the
+// global one on specificity, so focused fields read as unfocused.
 const fieldClass =
-  "w-full rounded-[var(--sz-radius-btn-lg)] border bg-canvas px-3.5 py-2.5 text-control text-heading outline-none min-h-12 transition-[border-color,box-shadow] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-accent focus-visible:shadow-[var(--sz-ring-focus-soft)]";
+  "w-full rounded-[var(--sz-radius-btn-lg)] border bg-canvas px-3.5 py-2.5 text-control text-heading outline-none min-h-12 transition-[border-color] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-accent";
 const labelClass = "mb-[7px] block text-control-sm font-semibold text-body";
 const optionalClass = "font-normal text-muted-soft";
 const helpClass = "m-0 mt-1.5 text-trust text-muted";
