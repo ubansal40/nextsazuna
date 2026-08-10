@@ -36,33 +36,68 @@ export function InfiniteGrid({ initial, total, pageSize, request }: Props) {
   const [products, setProducts] = useState(initial);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  /**
+   * "The server has nothing further for us", independently of `total`.
+   *
+   * `products.length < total` is the wrong thing to trust on its own: it is a
+   * count taken by a separate COUNT(DISTINCT) query, and any page that comes
+   * back short — or entirely of rows we already hold — leaves the accumulated
+   * list permanently below it. That is not academic. Before the price sorts
+   * gained a tiebreaker, unstable LIMIT/OFFSET paging returned duplicates, the
+   * dedupe below quietly dropped them, `hasMore` never went false, and the
+   * sentinel stayed mounted inside its own 640px rootMargin — so it re-fired
+   * the moment the observer re-registered, looping COUNT(DISTINCT) and
+   * deep-OFFSET queries forever. The ordering fix removes that cause; this
+   * removes the whole class of it, since a catalogue edit between two requests
+   * can make `total` stale at any time.
+   */
+  const [exhausted, setExhausted] = useState(false);
   const sentinel = useRef<HTMLDivElement>(null);
   const page = useRef(1);
+  /**
+   * Ids already on screen, built once and mutated in place. Keeping it rather
+   * than deriving it holds the dedupe at O(page) instead of rebuilding a Set
+   * over the whole accumulated list on every load — this grid runs to thousands
+   * of cards. It never drives rendering, so it deliberately has no setter.
+   */
+  const [seen] = useState(() => new Set(initial.map((p) => p.id)));
+  /**
+   * In-flight guard. A ref, not `loading`, because a piece of state read inside
+   * `loadMore` has to be in its dependency list, and that changes the
+   * callback's identity mid-load — which tears down and re-registers the
+   * observer, and re-registering inside the rootMargin fires it again.
+   */
+  const busy = useRef(false);
 
   // Note: no effect resets this state when filters change. The parent passes a
   // `key` derived from the active filters and sort, so a change remounts this
   // component with fresh state — React's own answer to "reset on prop change",
   // and it avoids an extra render pass.
 
-  const hasMore = products.length < total;
+  const hasMore = !exhausted && products.length < total;
 
   const loadMore = useCallback(async () => {
-    if (loading || failed) return;
+    if (busy.current || failed) return;
+    busy.current = true;
     setLoading(true);
     try {
       const next = await loadMoreProducts({ ...request, page: page.current + 1, pageSize });
       page.current += 1;
-      // Guard against a double-fire appending the same page twice.
-      setProducts((current) => {
-        const seen = new Set(current.map((p) => p.id));
-        return [...current, ...next.filter((p) => !seen.has(p.id))];
-      });
+
+      const fresh = next.filter((p) => !seen.has(p.id));
+      for (const product of fresh) seen.add(product.id);
+
+      // A short page is the end of the list. A page that adds nothing new means
+      // asking again would only fetch the same rows a third time.
+      if (next.length < pageSize || fresh.length === 0) setExhausted(true);
+      if (fresh.length > 0) setProducts((current) => [...current, ...fresh]);
     } catch {
       setFailed(true);
     } finally {
+      busy.current = false;
       setLoading(false);
     }
-  }, [loading, failed, request, pageSize]);
+  }, [failed, request, pageSize, seen]);
 
   useEffect(() => {
     const node = sentinel.current;

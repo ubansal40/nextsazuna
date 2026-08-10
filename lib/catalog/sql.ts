@@ -51,11 +51,29 @@ export const PRODUCT_COLUMNS = `
  * `bestselling` counts actual order lines. With only 27 order rows in the
  * catalog today it degrades to near-arbitrary, so it falls back to id order for
  * everything unsold rather than returning a random-looking list.
+ *
+ * Every entry ends in `p.id`, and that is load-bearing rather than tidiness.
+ * These expressions are paged with LIMIT/OFFSET, and LIMIT over a non-unique
+ * ORDER BY is *not* stable: rows tied on the leading key may come back in a
+ * different relative order on each execution, so page 2 can repeat rows page 1
+ * already returned and skip others entirely. The price sorts had no tiebreaker,
+ * and with ~3,000 products sharing a few hundred distinct prices the ties are
+ * dense — infinite scroll dropped rows, then never terminated because the
+ * accumulated list could not reach `total`. The primary key is unique, so
+ * appending it makes each ordering total and every page deterministic.
+ *
+ * Index impact: none. `EFFECTIVE_PRICE` is a CASE over two columns, which no
+ * index can satisfy — `idx_products_pricing (price, sale_price)` was never
+ * eligible and these queries already filesort. Adding a second sort key extends
+ * the sort tuple; it does not change the access path. The two orderings that
+ * *can* use an index — `popularity` and `newest`, on
+ * `idx_products_active_publish_id (is_active, publish_date, id)` — already led
+ * with `p.id` or ended with it, and are untouched.
  */
 export const SORT_SQL = {
   popularity: "p.id DESC",
-  "price-asc": `${EFFECTIVE_PRICE} ASC`,
-  "price-desc": `${EFFECTIVE_PRICE} DESC`,
+  "price-asc": `${EFFECTIVE_PRICE} ASC, p.id ASC`,
+  "price-desc": `${EFFECTIVE_PRICE} DESC, p.id DESC`,
   newest: "COALESCE(p.publish_date, p.created_at) DESC, p.id DESC",
   bestselling:
     "(SELECT COUNT(*) FROM order_items oi WHERE oi.product_id = p.id) DESC, p.id DESC",

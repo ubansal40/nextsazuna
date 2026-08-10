@@ -99,7 +99,12 @@ export function FaqSearch({ resultCount }: { resultCount: number }) {
           aria-label="Search FAQs"
           aria-describedby="faq-result-count"
           placeholder="Search questions"
-          className="w-full rounded-[var(--sz-radius-md)] border border-line bg-raised ps-11 pe-4 text-control text-heading outline-none min-h-[52px] transition-[border-color,box-shadow] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-accent focus-visible:shadow-[var(--sz-ring-focus-soft)]"
+          // No `focus-visible:shadow-…` here. The soft ring this used to set is
+          // 1.31:1 against the field — a focus indicator nobody can see. The
+          // global `:focus-visible` rule paints the real 3.07:1 one, and a
+          // utility in Tailwind's utilities layer beats it, so the override was
+          // not decoration but a removal.
+          className="w-full rounded-[var(--sz-radius-md)] border border-line bg-raised ps-11 pe-4 text-control text-heading outline-none min-h-[52px] transition-[border-color,box-shadow] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)] focus-visible:border-accent"
         />
       </div>
 

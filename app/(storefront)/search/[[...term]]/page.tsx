@@ -26,8 +26,17 @@ interface PageProps {
   searchParams: Promise<RawParams>;
 }
 
+/**
+ * The App Router hands `params` back already percent-decoded, so this must not
+ * decode a second time. It used to, and the second pass was doing two things:
+ * throwing URIError on any term containing a bare `%` — /search/100%25 gold
+ * arrives here as `100% gold` and `decodeURIComponent("100% gold")` is a hard
+ * 500 inside an async Server Component — and silently mangling anything that
+ * merely *looked* like an escape, so a search for `50%20` became a search for
+ * `50 `. Encoding still happens on the way out, when `basePath` is rebuilt.
+ */
 function readTerm(segments: string[] | undefined): string {
-  return decodeURIComponent(segments?.[0] ?? "").trim();
+  return (segments?.[0] ?? "").trim();
 }
 
 function one(value: string | string[] | undefined): string | undefined {

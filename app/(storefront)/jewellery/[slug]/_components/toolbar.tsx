@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useOptimistic, useState, useTransition } from "react";
 import Link from "next/link";
 import { Drawer, Icon } from "@/components/ui";
 import { cn } from "@/lib/cn";
@@ -27,6 +27,21 @@ interface Props {
 export function Toolbar({ countLabel, basePath, state, sort, facets }: Props) {
   const router = useRouter();
   const [sheet, setSheet] = useState<"filter" | "sort" | null>(null);
+  /**
+   * What the select shows while the sorted page is still on the wire.
+   *
+   * `sort` is a server prop, so it only changes once navigation completes.
+   * A controlled select bound straight to it snapped back to the previous
+   * option the instant React re-rendered, and stayed wrong for the whole round
+   * trip — on a slow connection that reads as "the sort didn't take", and the
+   * customer picks again. `useOptimistic` holds the chosen value for exactly as
+   * long as the transition is pending and then defers to the server's answer,
+   * so a failed or redirected navigation cannot leave the control lying about
+   * what the grid is showing. The filter links keep using the real `sort`: a
+   * URL is a promise about state that exists.
+   */
+  const [, startTransition] = useTransition();
+  const [pendingSort, setPendingSort] = useOptimistic(sort);
   const groups = buildGroups(facets);
   const extra = sort !== "popularity" ? { sort } : {};
   const activeCount = Object.values(state).reduce((n, values) => n + values.length, 0);
@@ -51,8 +66,14 @@ export function Toolbar({ countLabel, basePath, state, sort, facets }: Props) {
               <span className="relative inline-flex items-center">
                 <select
                   aria-label="Sort products"
-                  value={sort}
-                  onChange={(event) => router.push(sortUrl(basePath, state, event.target.value))}
+                  value={pendingSort}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    startTransition(() => {
+                      setPendingSort(next);
+                      router.push(sortUrl(basePath, state, next));
+                    });
+                  }}
                   className={cn(
                     "min-h-[44px] cursor-pointer appearance-none rounded-[9px] border border-line bg-raised",
                     "py-2.5 pl-3.5 pr-[38px] text-sm text-heading outline-none",

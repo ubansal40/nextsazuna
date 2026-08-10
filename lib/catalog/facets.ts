@@ -78,6 +78,15 @@ function toOptions(rows: FacetRow[]): FacetOption[] {
  * fields are actually populated.
  */
 export async function getFacets(scope: { categorySlug?: string } = {}): Promise<Facets> {
+  /**
+   * Restricts `products p` to the taxonomy this page is showing. Every group's
+   * query must carry it. Category and collection used not to — they counted the
+   * whole catalogue — so /jewellery/rings.html offered Necklaces in its Category
+   * group, and ticking it asked for products that are both a ring and a
+   * necklace: the empty state, every time. That is precisely the dead-end
+   * `count > 0` exists to prevent, and it defeated it for the only two groups
+   * whose options are themselves taxonomies.
+   */
   const scoped = scope.categorySlug
     ? `JOIN product_categories spc ON spc.product_id = p.id
        JOIN categories sc ON sc.id = spc.category_id
@@ -105,11 +114,11 @@ export async function getFacets(scope: { categorySlug?: string } = {}): Promise<
       `SELECT c.slug AS value, COUNT(DISTINCT p.id) AS count
          FROM categories c
          JOIN product_categories pc ON pc.category_id = c.id
-         JOIN products p ON p.id = pc.product_id
+         JOIN products p ON p.id = pc.product_id ${scoped}
         WHERE ${IS_VISIBLE}
         GROUP BY c.slug, c.name
         ORDER BY count DESC`,
-      [],
+      scopeParams,
     ),
     query<FacetRow>(
       `SELECT p.material AS value, COUNT(DISTINCT p.id) AS count
@@ -130,11 +139,11 @@ export async function getFacets(scope: { categorySlug?: string } = {}): Promise<
          FROM collections co
          JOIN collection_categories cc ON cc.collection_id = co.id
          JOIN product_categories pc ON pc.category_id = cc.category_id
-         JOIN products p ON p.id = pc.product_id
+         JOIN products p ON p.id = pc.product_id ${scoped}
         WHERE co.is_active = 1 AND ${IS_VISIBLE}
         GROUP BY co.slug, co.name
         ORDER BY count DESC`,
-      [],
+      scopeParams,
     ),
   ]);
 

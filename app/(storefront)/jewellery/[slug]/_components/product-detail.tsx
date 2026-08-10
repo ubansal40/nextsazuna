@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { Accordion, Icon } from "@/components/ui";
+import { cn } from "@/lib/cn";
 import { staticOrigin } from "@/lib/site-url";
 import { getRelatedProducts, type ProductDetail } from "@/lib/catalog";
 import { getWhatsAppHref } from "@/lib/content";
@@ -199,9 +200,20 @@ export async function ProductDetailView({ product }: { product: ProductDetail })
               {product.name}
             </h1>
 
-            {/* Sale pricing is a hard design rule — see CLAUDE.md. Never restyle. */}
+            {/* Sale pricing is a hard design rule — see CLAUDE.md. Never restyle.
+                The oxblood-and-semibold treatment is what *marks* a markdown, so
+                it is conditional on there being one: a full-price piece stays ink
+                and lighter, exactly as the product card and the bag render it.
+                Unconditional, it made every product look discounted. */}
             <div className="mt-3.5 flex flex-wrap items-baseline gap-2.5">
-              <span className="font-mono text-pdp-price font-semibold tabular-nums tracking-tight text-primary-700">
+              <span
+                className={cn(
+                  "font-mono text-pdp-price tabular-nums tracking-tight",
+                  product.compareAtPrice
+                    ? "font-semibold text-primary-700"
+                    : "font-medium text-heading",
+                )}
+              >
                 {product.price}
               </span>
               {product.compareAtPrice && (

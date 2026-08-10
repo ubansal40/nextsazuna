@@ -73,7 +73,15 @@ export function HeroCarousel({ slides, autoplayMs }: { slides: HeroSlide[]; auto
         <div
           key={slide.headline}
           aria-hidden={i !== index}
-          className="absolute inset-0 transition-opacity duration-[800ms] ease-linear"
+          className={cn(
+            "absolute inset-0 transition-opacity duration-[800ms] ease-linear",
+            // Opacity is a paint property, not a hit-testing one: an invisible
+            // slide still swallows every click landing on its full-bleed scrim,
+            // and the last one in DOM order sits on top of the entire hero. Left
+            // alone, tapping the visible CTA navigated to a *different* slide's
+            // href. Hiding a slide has to take it out of hit-testing too.
+            i === index ? "pointer-events-auto" : "pointer-events-none",
+          )}
           style={{ opacity: i === index ? 1 : 0 }}
         >
           {slide.image && (

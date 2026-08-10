@@ -23,19 +23,37 @@ export const metadata: Metadata = {
   alternates: { canonical: "/blog" },
 };
 
+/**
+ * `?category=guides&category=care` hands back an array, not a string.
+ *
+ * Nothing in the UI produces that URL, but anything at all can request one, and
+ * `.toLowerCase()` on an array threw — a repeated parameter 500'd the whole
+ * index. The listing surfaces guard it the same way; this is their `one()`.
+ */
+function one(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 export default async function JournalPage({
   searchParams,
 }: {
-  searchParams: Promise<{ category?: string }>;
+  searchParams: Promise<{ category?: string | string[] }>;
 }) {
-  const { category } = await searchParams;
+  const category = one((await searchParams).category)?.trim() ?? "";
   const posts = await listPublishedPosts();
 
   // Derived from the posts themselves, so a new category is a post rather than
   // a migration.
   const categories = [...new Set(posts.map((p) => p.category).filter(Boolean))].sort();
-  const active = categories.find((c) => c.toLowerCase() === category?.toLowerCase()) ?? null;
-  const shown = active ? posts.filter((p) => p.category === active) : posts;
+  const active = categories.find((c) => c.toLowerCase() === category.toLowerCase()) ?? null;
+  /**
+   * A `?category=` that matches nothing is a failed filter, and it used to
+   * render as the complete, unfiltered index with "All" lit up — the one
+   * reading that is impossible to spot as wrong. It gets the empty state and is
+   * told so instead.
+   */
+  const unmatched = category.length > 0 && !active;
+  const shown = active ? posts.filter((p) => p.category === active) : unmatched ? [] : posts;
 
   const [featured, ...rest] = shown;
 
@@ -77,7 +95,7 @@ export default async function JournalPage({
 
       {categories.length > 0 && (
         <nav aria-label="Categories" className="mt-8 flex flex-wrap gap-2">
-          <CategoryChip href="/blog" label="All" active={!active} />
+          <CategoryChip href="/blog" label="All" active={!active && !unmatched} />
           {categories.map((name) => (
             <CategoryChip
               key={name}
@@ -97,12 +115,20 @@ export default async function JournalPage({
             <span className="size-3 rotate-45 bg-line" />
           </span>
           <p className="m-0 mt-5 font-[family-name:var(--sz-font-display)] text-modal-title font-medium text-heading">
-            {active ? "No articles in this category yet" : "No articles yet"}
+            {unmatched
+              ? /* Echoed back so the reader can see the typo, clipped so a
+                   pathological query string cannot blow out the card. */
+                `No category called “${category.slice(0, 40)}”`
+              : active
+                ? "No articles in this category yet"
+                : "No articles yet"}
           </p>
           <p className="mx-auto m-0 mt-2 max-w-[40ch] text-sm leading-relaxed text-muted">
-            New stories from the atelier are on the way.
+            {unmatched
+              ? "Pick one of the categories above, or read everything in the Journal."
+              : "New stories from the atelier are on the way."}
           </p>
-          {active && (
+          {(active || unmatched) && (
             <Link
               href="/blog"
               className="mt-5 inline-flex items-center justify-center rounded-[var(--sz-radius-control)] bg-primary-700 px-6 text-sm font-semibold text-white no-underline min-h-12 hover:bg-primary-800 hover:text-white hover:no-underline"
