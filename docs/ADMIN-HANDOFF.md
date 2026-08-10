@@ -1,6 +1,6 @@
 # Admin rebuild — session handoff (Stage 4)
 
-> ## ⚠ START HERE — open thread as of `5742e22`
+> ## ⚠ START HERE — open thread as of `083e512`
 >
 > **Phases A–H are complete and pushed.** So is the image system, which was
 > rebuilt from scratch on the owner's instruction in `5742e22`.
@@ -46,7 +46,44 @@
 > **Not yet done on production:** apply migration 0017, set
 > `PRODUCT_IMAGE_UPLOAD_DIR`, deploy, restart, upload one photo.
 >
-> ### 3. Production facts — VERIFIED over SSH, do NOT re-investigate
+> ### 3. The SVG watermark incident (`083e512`) — READ BEFORE TOUCHING images.ts
+>
+> Every upload on production failed with libvips' "Input buffer contains
+> unsupported image format", which names the customer's *photograph*. The
+> photograph was never involved.
+>
+> The SKU label's rounded background was an inline SVG handed to sharp. libvips
+> renders SVG via **librsvg, which is optional**. Everything offline said it was
+> fine — `sharp.format.svg.input` true, standalone scripts in the app directory
+> decoded SVG through both CJS and ESM, in both installed libvips builds. It
+> failed **only inside the LiteSpeed-hosted process**, which could not be
+> instrumented. The mechanism is unproven and now moot: the rectangle is drawn
+> as raw RGBA pixels. `check:images` fails the build if anything constructs an
+> SVG in that file again.
+>
+> **How it was traced, if something similar happens:** the stack's
+> `Promise.all (index N)` identifies which overlay, and the byte offset in the
+> deployed chunk (`.next/server/chunks/…`) can be read directly with
+> `head -c N file | tail -c 500` to see exactly which statement threw.
+>
+> **Also fixed:** overlay failures now throw `ImageOverlayError` and say "server
+> fault, not your file". They used to fall through to "that photo couldn't be
+> processed, please try again", which is what kept this invisible while people
+> retried different photographs.
+>
+> ### 4. Two deployments, and one has the WRONG storage path
+>
+> `new.sazunajewellers.com` is still running (it is the only long-lived Node
+> process on the box) and its `PRODUCT_IMAGE_UPLOAD_DIR` is
+> `/home/u721828376/sazuna-storage/uploads/products` — **not** the
+> `~/domains/sazuna-storage/...` that `next.` uses. Both directories exist, with
+> 439 and 440 files. `next.` is authoritative; retire `new.` and delete the
+> stray storage dir once its contents are confirmed redundant.
+>
+> `Failed to find Server Action …` in the log is unrelated: a browser tab
+> holding JavaScript from an older build. A hard refresh clears it.
+>
+> ### 5. Production facts — VERIFIED over SSH, do NOT re-investigate
 >
 > Key-based SSH (`~/.ssh/id_ed25519_sazuna`, port 65002,
 > `u721828376@76.13.74.211`), tested on the box itself:
@@ -68,14 +105,14 @@
 > - The owner was asked to rotate the SSH password (it was pasted in chat and
 >   never used by me). Confirm it was rotated.
 >
-> ### 4. Then: performance (the one unstarted item from the fix list)
+> ### 6. Then: performance (the one unstarted item from the fix list)
 >
 > Owner had no preference; **decided approach**: cache storefront pages with
 > ~60s revalidation AND bust paths on admin writes, so the timer is a safety
 > net for any path missed. Storefront pages are all `force-dynamic` today and
 > the DB is ~320ms per round trip.
 >
-> ### 5. Unverified UI from the parallel agent work (`626e16b`)
+> ### 7. Unverified UI from the parallel agent work (`626e16b`)
 >
 > Five agents built these; all typecheck + lint + build, and I browser-checked
 > only customers and pricing. **Not visually verified:** the multi-card product
