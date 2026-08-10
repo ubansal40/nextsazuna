@@ -1,7 +1,7 @@
 import { createReadStream, statSync } from "node:fs";
 import { Readable } from "node:stream";
 import path from "node:path";
-import { PRODUCT_IMAGE_UPLOAD_DIR, TAXONOMY_IMAGE_UPLOAD_DIR } from "@/lib/admin/images";
+import { CONTENT_IMAGE_UPLOAD_DIR, PRODUCT_IMAGE_UPLOAD_DIR, TAXONOMY_IMAGE_UPLOAD_DIR } from "@/lib/admin/images";
 
 /**
  * Serve uploaded images — GET /uploads/**
@@ -34,6 +34,7 @@ import { PRODUCT_IMAGE_UPLOAD_DIR, TAXONOMY_IMAGE_UPLOAD_DIR } from "@/lib/admin
 const ROOTS: Record<string, string> = {
   products: PRODUCT_IMAGE_UPLOAD_DIR,
   taxonomy: TAXONOMY_IMAGE_UPLOAD_DIR,
+  content: CONTENT_IMAGE_UPLOAD_DIR,
 };
 
 const CONTENT_TYPES: Record<string, string> = {

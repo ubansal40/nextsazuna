@@ -18,19 +18,27 @@ import { cn } from "@/lib/cn";
  *
  * `kind` is passed through to the route, which authorizes that section: a
  * staffer with `categories` alone cannot upload through the collections drawer.
+ *
+ * `content` is the homepage builder, and it posts to its own route for the same
+ * reason — there `kind` is the section key, and the homepage also needs a shape
+ * the taxonomy route cannot produce. A hero is 16:9; squaring it throws away the
+ * composition the photograph was taken for.
  */
 export function ImageField({
   value,
   onChange,
   kind,
   slug,
+  shape = "square",
   hint = "Used on the storefront listing card. Anything not square is centre-cropped.",
   className,
 }: {
   value: string | null;
   onChange: (url: string | null) => void;
-  kind: "categories" | "collections";
+  kind: "categories" | "collections" | "content";
   slug: string;
+  /** The frame the upload is cropped to. Homepage heroes and banners are wide. */
+  shape?: "square" | "wide";
   hint?: string;
   className?: string;
 }) {
@@ -45,8 +53,10 @@ export function ImageField({
       const body = new FormData();
       body.append("image", file);
       body.append("kind", kind);
+      body.append("shape", shape);
       body.append("slug", slug || kind);
-      const response = await fetch("/admin/taxonomy/image", { method: "POST", body });
+      const endpoint = kind === "content" ? "/admin/content/image" : "/admin/taxonomy/image";
+      const response = await fetch(endpoint, { method: "POST", body });
       const payload = (await response.json()) as { url?: string; error?: string };
       if (!response.ok || !payload.url) {
         toast("error", payload.error ?? "Upload failed. Please try again.");
@@ -67,7 +77,7 @@ export function ImageField({
   return (
     <div className={className}>
       <p className="mb-1.5 text-xs font-semibold text-body">
-        Image <span className="font-medium text-muted">· square 1:1</span>
+        Image <span className="font-medium text-muted">· {shape === "wide" ? "wide 16:9" : "square 1:1"}</span>
       </p>
 
       <input

@@ -75,6 +75,12 @@ export const ADMIN_NAV = {
       ],
     },
     {
+      label: "Content",
+      items: [
+        { section: "content", label: "Homepage", href: "/admin/content", icon: "layout" },
+      ],
+    },
+    {
       label: "System",
       items: [
         { section: null, ownerOnly: true, label: "Audit log", href: "/admin/audit", icon: "shield" },

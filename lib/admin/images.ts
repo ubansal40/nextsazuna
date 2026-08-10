@@ -31,6 +31,9 @@ import sharp, { type OverlayOptions } from "sharp";
  */
 
 const SIZE = 1000;
+/** Hero and banner frame. 16:9, the aspect those sections are laid out at. */
+const WIDE_WIDTH = 1600;
+const WIDE_HEIGHT = 900;
 const LOGO_WIDTH = 50;
 const LOGO_TOP = 25;
 /**
@@ -104,6 +107,17 @@ export const PRODUCT_IMAGE_UPLOAD_DIR =
  */
 export const TAXONOMY_IMAGE_UPLOAD_DIR =
   process.env.TAXONOMY_IMAGE_UPLOAD_DIR || path.join(path.dirname(PRODUCT_IMAGE_UPLOAD_DIR), "taxonomy");
+
+/**
+ * Homepage artwork — hero slides and the featured banner.
+ *
+ * A third root rather than reusing taxonomy's, because these are the only
+ * images in the app that are NOT square. A hero cropped to 1:1 loses the
+ * composition it was shot for.
+ */
+export const CONTENT_IMAGE_URL_BASE = "/uploads/content/";
+export const CONTENT_IMAGE_UPLOAD_DIR =
+  process.env.CONTENT_IMAGE_UPLOAD_DIR || path.join(path.dirname(PRODUCT_IMAGE_UPLOAD_DIR), "content");
 
 const LOGO_PATH = process.env.PRODUCT_IMAGE_LOGO_PATH || path.join(process.cwd(), "public/sazuna-logo.webp");
 
@@ -615,6 +629,50 @@ export async function storeProductImage(source: Buffer, sku: string): Promise<st
  * later. `slugBase` names the file readably; the content digest keeps a
  * re-upload idempotent and two categories' images apart.
  */
+/**
+ * Process a wide banner image — hero slides and the featured banner.
+ *
+ * Deliberately NOT `processSquareImage`. Everything else about the treatment is
+ * identical (EXIF rotate, centre cover-crop, AVIF at the same quality), and the
+ * only difference is the frame: 1600x900 rather than 1000x1000, because a hero
+ * is composed for a wide crop and squaring it throws away the shot.
+ *
+ * `processProductImage` and `processSquareImage` are untouched by this — that
+ * pipeline was rebuilt and measured recently, and a shared "size" parameter
+ * would have put this change inside it for no gain.
+ */
+export async function processWideImage(source: Buffer): Promise<Buffer> {
+  assertPlausibleImage(source);
+  try {
+    return await sharp(source)
+      .rotate()
+      .resize(WIDE_WIDTH, WIDE_HEIGHT, { fit: "cover", position: "centre" })
+      .avif({ quality: AVIF_QUALITY })
+      .toBuffer();
+  } catch (error) {
+    throw decodeFailure(source, error);
+  }
+}
+
+/**
+ * Process and store a homepage image, returning the URL the block will hold.
+ *
+ * Square for a category tile, wide for a hero or banner — the field's own
+ * schema says which, so the caller never has to guess.
+ */
+export async function storeContentImage(
+  source: Buffer,
+  slugBase: string,
+  shape: "square" | "wide",
+): Promise<string> {
+  const processed = shape === "wide" ? await processWideImage(source) : await processSquareImage(source);
+  await mkdir(CONTENT_IMAGE_UPLOAD_DIR, { recursive: true });
+  const digest = createHash("sha256").update(processed).digest("hex").slice(0, 8);
+  const filename = `${sanitiseForFilename(slugBase)}-${shape}-${digest}.avif`;
+  await writeFile(path.join(CONTENT_IMAGE_UPLOAD_DIR, filename), processed);
+  return `${CONTENT_IMAGE_URL_BASE}${filename}`;
+}
+
 export async function storeSquareImage(source: Buffer, slugBase: string): Promise<string> {
   const processed = await processSquareImage(source);
   await mkdir(TAXONOMY_IMAGE_UPLOAD_DIR, { recursive: true });

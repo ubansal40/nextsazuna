@@ -57,6 +57,10 @@ export const ADMIN_SECTIONS: readonly AdminSection[] = [
   { key: "tags", label: "Tags", path: "/admin/tags" },
   { key: "materials", label: "Materials", path: "/admin/materials" },
   { key: "purities", label: "Purities", path: "/admin/purities" },
+  // The reference declared `content` too, and gated nothing with it. The key is
+  // kept verbatim so a staff_roles row written by the old admin means here what
+  // the owner meant then — the difference is that this one is enforced.
+  { key: "content", label: "Site content", path: "/admin/content" },
 ] as const;
 
 /** Fast membership set for validation and gating. */
