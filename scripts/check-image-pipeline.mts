@@ -117,6 +117,25 @@ checks.push([
   labelMean > cleanMean + 8,
 ]);
 
+/**
+ * The stamp has to be big enough to READ.
+ *
+ * It shipped at 19px — about 2% of a 1000px image, which on a category tile is
+ * roughly four pixels tall. A theft-deterrent watermark nobody can read is
+ * decoration. This measures the actual height of the label band in the output,
+ * so shrinking the font back down fails the build rather than quietly making
+ * the mark useless again.
+ */
+{
+  const strip = await sharp(output)
+    .extract({ left: 30, top: 880, width: 1, height: 120 })
+    .greyscale()
+    .raw()
+    .toBuffer();
+  const bright = Array.from(strip).filter((v) => v > 225).length;
+  checks.push(["the SKU label is tall enough to read (>=40px band)", bright >= 40]);
+}
+
 // The logo is composited top-centre. Same argument: on a flat source, the
 // region either has something in it or it does not.
 const LOGO = { left: 450, top: 20, width: 100, height: 60 };
@@ -135,6 +154,22 @@ checks.push(
   ["an empty SKU still stamps something", normaliseSku("   ") === "SKU"],
   ["a SKU is capped at 64 characters", normaliseSku("A".repeat(200)).length === 64],
 );
+
+/* --- the stamp font ships with the repo ------------------------------------
+ * The production box has twelve font families installed and pango renders tofu
+ * boxes for every one of them, including the generic `monospace` alias. Photos
+ * went out with a row of empty rectangles where the SKU should be, and every
+ * "did it render?" check passed, because tofu is opaque pixels of the right
+ * size. The font is therefore SHIPPED and loaded by path, and `assertFontUsable`
+ * proves glyphs render before the first photo of each process.
+ */
+{
+  const fontPath = new URL("../public/fonts/geist-mono-stamp.ttf", import.meta.url);
+  checks.push([
+    "the SKU stamp font is bundled, not borrowed from the server",
+    existsSync(fontPath),
+  ]);
+}
 
 /* --- no SVG in the pipeline -------------------------------------------------
  * This one is a scar, not a nicety.

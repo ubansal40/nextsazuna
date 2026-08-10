@@ -28,6 +28,7 @@ import {
   type EditorCard,
 } from "./editor-model";
 import { MAX_PHOTO_BYTES, MAX_PRODUCT_PHOTOS, photoSizeLimitMessage } from "@/lib/admin/product-limits";
+import { preparePhoto } from "./prepare-photo";
 
 /**
  * The shared product-card editor from Sazuna Admin Products.dc.html, in two of
@@ -253,9 +254,15 @@ export function ProductEditor({
           if (index >= tiles.length) return;
           const { file, photo } = tiles[index];
           try {
+            // Crop to the final 1000×1000 before it leaves the device: a 6 MB
+            // phone photo becomes ~150 KB, which on a mobile connection is the
+            // difference between half a minute and a moment. Falls back to the
+            // original whenever the browser can't do it (HEIC on desktop), so
+            // this can only make the upload smaller, never make it fail.
+            const prepared = await preparePhoto(file);
             const body = new FormData();
             body.set("sku", sku);
-            body.append("image", file);
+            body.append("image", prepared.body, prepared.filename);
             const response = await fetch("/admin/products/upload", { method: "POST", body });
             const data = (await response.json()) as { url?: string; error?: string };
             if (!response.ok || !data.url) {

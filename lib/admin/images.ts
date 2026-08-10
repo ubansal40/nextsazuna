@@ -33,10 +33,32 @@ import sharp, { type OverlayOptions } from "sharp";
 const SIZE = 1000;
 const LOGO_WIDTH = 50;
 const LOGO_TOP = 25;
-const SKU_FONT_SIZE = 19;
+/**
+ * The SKU stamp.
+ *
+ * The reference used 19px, which is ~2% of a 1000px image — legible only when
+ * the photo is viewed at full size, and the photo is almost never viewed at
+ * full size. On a category tile it is around four pixels tall: present, and
+ * unreadable, which is the worst of both worlds since the point of a
+ * theft-deterrent watermark is that it can be read.
+ *
+ * 32px bold is roughly what the big jewellery catalogues stamp at, and stays
+ * legible down to a ~300px thumbnail. The label box gained contrast to match.
+ */
+const SKU_FONT_SIZE = 32;
+const SKU_PADDING_X = 18;
+const SKU_PADDING_Y = 10;
+const SKU_RADIUS = 12;
+const SKU_BOX_ALPHA = 0.92;
 const SKU_LEFT = 24;
 const SKU_BOTTOM = 20;
 const AVIF_QUALITY = 75;
+
+/**
+ * Monospace advance width as a fraction of font size — near enough for every
+ * mono face to predict whether a string will fit before rendering it.
+ */
+const MONO_ADVANCE = 0.6;
 
 /** The reference's SKU watermark colour. */
 const SKU_COLOUR = "#d51b40";
@@ -68,7 +90,27 @@ export const TAXONOMY_IMAGE_UPLOAD_DIR =
   process.env.TAXONOMY_IMAGE_UPLOAD_DIR || path.join(path.dirname(PRODUCT_IMAGE_UPLOAD_DIR), "taxonomy");
 
 const LOGO_PATH = process.env.PRODUCT_IMAGE_LOGO_PATH || path.join(process.cwd(), "public/sazuna-logo.webp");
-const SKU_FONT_PATH = process.env.PRODUCT_IMAGE_SKU_FONT_PATH;
+
+/**
+ * The SKU stamp's font — SHIPPED, not borrowed from the system.
+ *
+ * This is not a preference, it is the only thing that works. The Hostinger box
+ * has twelve font families installed (the URW/Ghostscript base set) and pango
+ * renders **tofu boxes** for every single one of them, including the generic
+ * `monospace` alias — verified by rendering on the box itself. So every photo
+ * uploaded in production carried a row of empty rectangles where its SKU should
+ * be. The stamp was not "too small to read"; there was nothing to read.
+ *
+ * Passing `fontfile` bypasses fontconfig entirely — FreeType loads the file
+ * directly — which removes the whole class of "it depends what the server has
+ * installed". Geist Mono is the right file to ship: the design system already
+ * names it as the face for prices and SKUs, and it is OFL-licensed and already
+ * in this repo as woff2 (the .ttf is the same font, converted, because FreeType
+ * cannot be relied on to read woff2).
+ */
+const SKU_FONT_FAMILY = "Geist Mono";
+const SKU_FONT_PATH =
+  process.env.PRODUCT_IMAGE_SKU_FONT_PATH || path.join(process.cwd(), "public/fonts/geist-mono-stamp.ttf");
 
 /**
  * A failure that retrying cannot fix — an unreadable file, a HEIC on a build
@@ -223,19 +265,75 @@ export function roundedRectRgba(
   return data;
 }
 
-/** The bottom-left SKU label: maroon mono text on a white 85% rounded rect. */
+/**
+ * Prove, once per process, that text actually renders as GLYPHS.
+ *
+ * `assertRendered` catches a blank stamp, but not the failure that actually
+ * shipped: tofu. A row of empty rectangles is opaque pixels of the right size,
+ * so every "did it render?" check passes while the photograph carries no
+ * readable SKU at all.
+ *
+ * Two different strings of the same length are the test. Real glyphs make
+ * different pictures; missing glyphs make the same box repeated, so the two
+ * renders come out byte-identical. Cheap, decisive, and it runs before the
+ * first photo of the process rather than after a thousand of them.
+ */
+declare global {
+  var __sazunaFontChecked: boolean | undefined;
+}
+
+async function assertFontUsable(): Promise<void> {
+  if (globalThis.__sazunaFontChecked) return;
+
+  const sample = (text: string) =>
+    sharp({
+      text: { text, font: SKU_FONT_FAMILY, ...fontFile(), width: 400, height: 48, rgba: true },
+    })
+      .png()
+      .toBuffer();
+
+  const [a, b] = await Promise.all([sample("ABCD"), sample("WXYZ")]);
+  if (a.equals(b)) {
+    throw new Error(
+      `The font "${SKU_FONT_FAMILY}" renders no glyphs — the SKU stamp would be empty boxes. ` +
+        `Expected the bundled font at ${SKU_FONT_PATH}` +
+        (existsSync(SKU_FONT_PATH) ? " (the file is there, but FreeType could not use it)." : " (the file is MISSING)."),
+    );
+  }
+  globalThis.__sazunaFontChecked = true;
+}
+
+/** Only pass `fontfile` when it is really there — an absent path makes libvips
+ *  fail outright rather than fall back. */
+function fontFile(): { fontfile?: string } {
+  return SKU_FONT_PATH && existsSync(SKU_FONT_PATH) ? { fontfile: SKU_FONT_PATH } : {};
+}
+
+/** The bottom-left SKU label: maroon mono text on a white rounded rect. */
 async function buildSkuLabel(sku: string): Promise<OverlayOptions> {
+  await assertFontUsable();
   const safe = normaliseSku(sku);
-  const paddingX = 14;
-  const paddingY = 8;
-  const maxTextWidth = Math.max(120, SIZE - SKU_LEFT - 50 - paddingX * 2);
-  const textHeight = SKU_FONT_SIZE + 8;
+  const maxTextWidth = Math.max(120, SIZE - SKU_LEFT - 50 - SKU_PADDING_X * 2);
+
+  /**
+   * Shrink the type rather than clip the code.
+   *
+   * `wrap: "none"` with a fixed width does not ellipsize, it cuts — so a long
+   * SKU at a fixed 32px would render as a *different, shorter* SKU burned into
+   * the photograph, which is the same class of fault as dropping the decimal
+   * point. Sizing to fit means a 64-character SKU comes out smaller but whole.
+   */
+  const fontSize = Math.max(
+    12,
+    Math.min(SKU_FONT_SIZE, Math.floor(maxTextWidth / Math.max(1, safe.length * MONO_ADVANCE))),
+  );
+  const textHeight = fontSize + 12;
 
   const textBuffer = await sharp({
     text: {
-      text: `<span foreground="${SKU_COLOUR}" font="${SKU_FONT_SIZE}px">${safe}</span>`,
-      font: "monospace",
-      ...(SKU_FONT_PATH && existsSync(SKU_FONT_PATH) ? { fontfile: SKU_FONT_PATH } : {}),
+      text: `<span foreground="${SKU_COLOUR}" font="${SKU_FONT_FAMILY} ${fontSize}px">${safe}</span>`,
+      font: SKU_FONT_FAMILY,
+      ...fontFile(),
       width: maxTextWidth,
       height: textHeight,
       align: "left",
@@ -253,16 +351,16 @@ async function buildSkuLabel(sku: string): Promise<OverlayOptions> {
   const textMeta = await sharp(textBuffer).metadata();
   const renderedWidth = Math.max(1, Number(textMeta.width) || maxTextWidth);
   const renderedHeight = Math.max(1, Number(textMeta.height) || textHeight);
-  const boxWidth = Math.min(SIZE - SKU_LEFT - 20, renderedWidth + paddingX * 2);
-  const boxHeight = renderedHeight + paddingY * 2;
+  const boxWidth = Math.min(SIZE - SKU_LEFT - 20, renderedWidth + SKU_PADDING_X * 2);
+  const boxHeight = renderedHeight + SKU_PADDING_Y * 2;
 
   // The background IS the canvas — no separate transparent layer to composite
   // onto, and no SVG loader anywhere in the path.
-  const background = roundedRectRgba(boxWidth, boxHeight, 10, { r: 255, g: 255, b: 255 }, 0.85);
+  const background = roundedRectRgba(boxWidth, boxHeight, SKU_RADIUS, { r: 255, g: 255, b: 255 }, SKU_BOX_ALPHA);
 
   const layer = await sharp(background, { raw: { width: boxWidth, height: boxHeight, channels: 4 } })
     .composite([
-      { input: textBuffer, left: paddingX, top: Math.max(0, Math.floor((boxHeight - renderedHeight) / 2)) },
+      { input: textBuffer, left: SKU_PADDING_X, top: Math.max(0, Math.floor((boxHeight - renderedHeight) / 2)) },
     ])
     .png()
     .toBuffer();
