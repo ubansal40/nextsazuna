@@ -109,7 +109,20 @@ export function ProductCard({
         <p className="text-[length:var(--sz-text-card-title)] text-body leading-[1.3] truncate">
           {title}
         </p>
-        <div className="flex items-baseline gap-[7px] mt-1.5 overflow-hidden">
+        {/*
+          Wraps rather than clips. Both children are `whitespace-nowrap` and a
+          flex child defaults to `min-width: auto`, so they refused to shrink and
+          the row hard-clipped mid-digit: on a 375px 2-up grid the content box is
+          ~135px while a sale price plus its struck original needs well over 170.
+          Wrapping is the graceful degradation and truncation is not — an
+          ellipsised price is worse than a price on its own line, and shrinking
+          the children instead would need `overflow: hidden` on each, which
+          changes what `items-baseline` aligns them by. Latent today (nothing is
+          discounted), so this is about the first sale, not about what renders
+          now. The card root still clips, so a single over-long price cannot
+          escape into the grid.
+        */}
+        <div className="flex flex-wrap items-baseline gap-x-[7px] gap-y-0.5 mt-1.5 overflow-hidden">
           <span
             className={cn(
               "font-mono tabular-nums whitespace-nowrap",

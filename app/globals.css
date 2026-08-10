@@ -145,6 +145,23 @@
   --sz-ring-error: 0 0 0 3px rgb(var(--sz-error-rgb) / .14);
 
   --sz-disabled-opacity: .42;
+
+  /* Ink for the two soft semantic fills whose own hue is too light to read on
+   * them. --sz-warning on --sz-warning-soft measures 2.63:1 and --sz-success on
+   * --sz-success-soft 4.37:1 — both under the 4.5:1 WCAG AA needs at badge and
+   * toast sizes, while the info (4.81) and error (5.09) pairings already pass.
+   * These are the same two hues stepped darker until they land in that band
+   * (5.06:1 and 5.12:1), so the palette does not gain a colour, only a legible
+   * weight of one it already has. The fills themselves are spec tokens and are
+   * untouched. Use these ONLY as ink on their soft fill; on canvas the plain
+   * --sz-warning / --sz-success remain correct. */
+  --sz-warning-ink: #7D5F1E;
+  --sz-success-ink: #3A6F3A;
+
+  /* WCAG 2.5.8 AA minimum target. --sz-control-h (44px) is the size the system
+   * gives a control that owns its own box; this is the floor for a hit area
+   * grown behind a glyph that must stay small, such as a chip's remove ×. */
+  --sz-tap-min: 24px;
 }
 
 /* ----------------------------------------------------------------------------
@@ -572,6 +589,8 @@
   --color-error-soft: var(--sz-error-soft);
   --color-warning: var(--sz-warning);
   --color-warning-soft: var(--sz-warning-soft);
+  --color-warning-ink: var(--sz-warning-ink);
+  --color-success-ink: var(--sz-success-ink);
   --color-info: var(--sz-info);
   --color-info-soft: var(--sz-info-soft);
 
@@ -833,16 +852,33 @@
  * fields at 14.5px), which trips it on nearly every input in the shop.
  *
  * Fixed at the cause rather than by blocking zoom: blocking is ignored by iOS
- * anyway, and it would take zoom away from customers who need it. `max()` keeps
- * anything already larger — the search overlay's 17px, the OTP boxes' 18px —
- * exactly as designed, and `pointer: coarse` leaves the desktop scale alone.
+ * anyway, and it would take zoom away from customers who need it. `pointer:
+ * coarse` leaves the desktop scale alone.
+ *
+ * The floor is taken against --sz-field-fs, NOT against a bare `1em`. In the
+ * `font-size` property `em` resolves against the INHERITED size, never the
+ * element's own declared size, so `max(16px, 1em)` clamped every control to the
+ * 16px body context — including the ones designed larger, which is the opposite
+ * of preserving them. A control that is designed above the floor therefore
+ * publishes its own size here, and `max()` can finally see it. `1em` remains the
+ * fallback, so a control that simply inherits its size behaves as before.
  * ------------------------------------------------------------------------- */
 @media (pointer: coarse) {
   input,
   select,
   textarea {
-    font-size: max(16px, 1em);
+    font-size: max(16px, var(--sz-field-fs, 1em));
   }
+}
+
+/* The two control type steps the system already names above the floor. They opt
+ * in centrally, keyed on the utilities the bridge above generates from those
+ * same tokens, so no value is restated and the shell's search field and OTP
+ * boxes keep their designed size on touch. A control outside these two publishes
+ * --sz-field-fs on itself (see `controlBox` in components/ui/field.tsx). */
+@media (pointer: coarse) {
+  .text-search-input { --sz-field-fs: var(--sz-text-search-input) }
+  .text-otp { --sz-field-fs: var(--sz-text-otp) }
 }
 
 /* ---------------------------------------------------------------------------

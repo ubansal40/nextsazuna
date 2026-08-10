@@ -7,6 +7,11 @@ import { cn } from "@/lib/cn";
  *
  * Status and merchandising labels. `tone` carries meaning, so pick by meaning
  * (stock state, sale) rather than by the colour you happen to want.
+ *
+ * The stock tones read as `-ink` rather than the plain hue: a badge is 11–12px,
+ * so it needs 4.5:1, and --sz-warning on --sz-warning-soft is 2.63:1 while
+ * --sz-success on --sz-success-soft is 4.37:1. The ink tokens are the same hues
+ * stepped darker into the band the info and error tones already sit in.
  */
 const badge = cva(
   "inline-flex items-center gap-1.5 rounded-[var(--sz-radius-pill)] whitespace-nowrap",
@@ -14,8 +19,8 @@ const badge = cva(
     variants: {
       tone: {
         neutral: "bg-surface text-muted",
-        inStock: "bg-success-soft text-success",
-        lowStock: "bg-warning-soft text-warning",
+        inStock: "bg-success-soft text-success-ink",
+        lowStock: "bg-warning-soft text-warning-ink",
         outOfStock: "bg-surface text-muted",
         sale: "bg-primary-700 text-white",
         info: "bg-info-soft text-info",

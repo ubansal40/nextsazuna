@@ -45,12 +45,20 @@ export function RadioGroup({
           <label
             key={option.value}
             className={cn(
-              "flex-1 flex items-center gap-[9px]",
+              "relative flex-1 flex items-center gap-[9px]",
               "text-[length:var(--sz-text-control-sm)] text-body",
               "bg-raised border border-line rounded-[var(--sz-radius-control)]",
               "px-[11px] py-[10px]",
               "transition-colors duration-[var(--sz-dur)] ease-[var(--sz-ease-out)]",
               "has-[:focus-visible]:shadow-[var(--sz-focus-ring)]",
+              // The drawn option is ~42px tall — under the 44px the system names
+              // as a tap target, and this is a primary mobile control (the metal
+              // picker). The hit area is grown with a pseudo-element rather than
+              // a min-height so the option's drawn box does not change: the
+              // options sit in a row, so the extra height overlaps nothing, and
+              // the label's own box still hits, making the target the union.
+              "before:absolute before:inset-x-0 before:top-1/2 before:h-[var(--sz-control-h)]",
+              "before:-translate-y-1/2 before:content-['']",
               option.disabled
                 ? "cursor-not-allowed opacity-[var(--sz-disabled-opacity)]"
                 : "cursor-pointer hover:border-accent has-[:checked]:border-accent",

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { Icon } from "./icon";
 import { useDialog } from "./use-dialog";
@@ -36,21 +36,28 @@ export function Drawer({
 }: DrawerProps) {
   const { ref, onBackdropClick } = useDialog(open, onClose);
   const isSheet = side === "bottom";
+  // Per instance, not a literal: the listing page mounts the Filters and the
+  // Sort sheet at once and only toggles `open`, so a shared id put both titles
+  // in the DOM together and every aria-labelledby resolved to the first — the
+  // Sort sheet announced itself as "Filters".
+  const titleId = useId();
 
   return (
     <dialog
       ref={ref}
       onClick={onBackdropClick}
-      aria-labelledby="sz-drawer-title"
+      aria-labelledby={titleId}
       className={cn(
         "bg-canvas p-0 text-body shadow-lg",
-        "backdrop:bg-[rgb(var(--sz-heading-rgb)/.44)] backdrop:animate-fade",
+        // The lightest of the three scrims the system names, not a fourth
+        // weight of its own.
+        "backdrop:bg-[var(--sz-scrim-soft)] backdrop:animate-fade",
         isSheet
           ? [
               // Pinned to the bottom of the viewport, full width, capped so the
               // page behind stays partly visible.
               "mx-auto mb-0 mt-auto w-full max-w-none",
-              "max-h-[84vh] rounded-t-[18px]",
+              "max-h-[84vh] rounded-t-[var(--sz-radius-modal)]",
               "open:animate-sheet-up",
             ]
           : [
@@ -63,8 +70,8 @@ export function Drawer({
       <div className={cn("flex flex-col", isSheet ? "max-h-[84vh]" : "h-full")}>
         <header className="flex items-center justify-between gap-3 border-b border-line-soft px-5 py-3.5">
           <h2
-            id="sz-drawer-title"
-            className="font-[family-name:var(--sz-font-display)] text-[19px] font-medium text-heading"
+            id={titleId}
+            className="font-[family-name:var(--sz-font-display)] text-dropdown-title font-medium text-heading"
           >
             {title}
           </h2>

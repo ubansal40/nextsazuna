@@ -34,7 +34,9 @@ export function useToast() {
 }
 
 const TONE: Record<ToastTone, { icon: IconName; className: string }> = {
-  success: { icon: "check", className: "bg-success-soft text-success border-success/25" },
+  // `-ink`, not `-success`: the plain hue on its own soft fill is 4.37:1, under
+  // the 4.5:1 this 14px copy needs. Same reason as the Badge stock tones.
+  success: { icon: "check", className: "bg-success-soft text-success-ink border-success/25" },
   error: { icon: "alert", className: "bg-error-soft text-error border-error/25" },
   info: { icon: "info", className: "bg-info-soft text-info border-info/25" },
 };

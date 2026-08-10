@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { Icon } from "./icon";
 import { useDialog } from "./use-dialog";
@@ -25,12 +25,15 @@ export interface ModalProps {
  */
 export function Modal({ open, onClose, title, eyebrow, children, footer, className }: ModalProps) {
   const { ref, onBackdropClick } = useDialog(open, onClose);
+  // Per instance: a literal id breaks the moment two Modals are mounted at once,
+  // because aria-labelledby then resolves to whichever title is first in the DOM.
+  const titleId = useId();
 
   return (
     <dialog
       ref={ref}
       onClick={onBackdropClick}
-      aria-labelledby="sz-modal-title"
+      aria-labelledby={titleId}
       className={cn(
         "m-auto w-full max-w-[460px] p-0 bg-canvas text-body",
         "rounded-[var(--sz-radius-xl)] shadow-lg overflow-hidden",
@@ -61,7 +64,7 @@ export function Modal({ open, onClose, title, eyebrow, children, footer, classNa
       </div>
 
       <div className="px-[26px] pt-3.5 pb-[26px]">
-        <h2 id="sz-modal-title" className="text-lg mb-2.5">
+        <h2 id={titleId} className="text-lg mb-2.5">
           {title}
         </h2>
         <div className="text-sm leading-[var(--sz-leading-relaxed)] text-body">{children}</div>
