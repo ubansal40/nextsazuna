@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { Accordion } from "@/components/ui";
 import { ContentCta } from "@/components/content/content-cta";
-import { FAQ_LIST_ID, FaqSearch } from "@/components/content/faq-search";
+import { FaqSearch } from "@/components/content/faq-search";
+import { FAQ_LIST_ID } from "@/components/content/faq-anchor";
 import { renderInline } from "@/components/content/inline";
 import { ContentHeader, policyContainer } from "@/components/content/policy-page";
 import { faqs } from "@/lib/content-pages/policy/faqs";

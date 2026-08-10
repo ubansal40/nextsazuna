@@ -36,6 +36,13 @@ jobs:
       # a live gateway, a mail server or a real order. They ran only in `npm run
       # verify` locally, which meant CI would happily go green on a change that
       # broke payment signing or the guest-lookup access control.
+      # A Server Component reading a plain value out of a "use client" module
+      # type-checks, builds, and then 500s at runtime, because Next replaces
+      # those exports with client-reference proxies. SORT_VALUES shipped that
+      # way and crashed every listing carrying a ?sort= parameter.
+      - name: Server/client boundary
+        run: npm run check:client-boundary
+
       - name: Payment signature checks
         run: npm run check:payments
 

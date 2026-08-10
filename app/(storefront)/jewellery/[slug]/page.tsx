@@ -8,11 +8,10 @@ import {
   type SortKey,
 } from "@/lib/catalog";
 import { bracketById, getFacets } from "@/lib/catalog/facets";
-import { readFilters, type RawParams } from "@/lib/catalog/filter-params";
+import { readFilters, type RawParams, readSort } from "@/lib/catalog/filter-params";
 import { getCategoryIntro } from "@/lib/content";
 import { ProductDetailView } from "./_components/product-detail";
 import { ProductListingView } from "./_components/product-listing";
-import { SORT_VALUES } from "./_components/toolbar";
 
 /**
  * The canonical storefront URL: /jewellery/{slug}.html
@@ -96,8 +95,7 @@ export default async function JewelleryPage({ params, searchParams }: PageProps)
   const q = await searchParams;
   const filters = readFilters(q);
 
-  const sortRaw = one(q.sort);
-  const sort = sortRaw && SORT_VALUES.has(sortRaw as "popularity") ? sortRaw : "popularity";
+  const sort = readSort(one(q.sort));
 
   const categorySlug = resolved.kind === "category" ? resolved.category.slug : undefined;
   const tagSlug = resolved.kind === "tag" ? resolved.tag.slug : undefined;

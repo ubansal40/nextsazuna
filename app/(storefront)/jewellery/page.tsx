@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
 import { listProducts, type SortKey } from "@/lib/catalog";
 import { bracketById, getFacets } from "@/lib/catalog/facets";
-import { readFilters, type RawParams } from "@/lib/catalog/filter-params";
+import { readFilters, type RawParams, readSort } from "@/lib/catalog/filter-params";
 import { ProductListingView } from "./[slug]/_components/product-listing";
-import { SORT_VALUES } from "./[slug]/_components/toolbar";
 
 /**
  * Every piece — /jewellery.
@@ -34,8 +33,7 @@ export default async function AllJewelleryPage({
   const q = await searchParams;
   const filters = readFilters(q);
 
-  const sortRaw = one(q.sort);
-  const sort = sortRaw && SORT_VALUES.has(sortRaw as "popularity") ? sortRaw : "popularity";
+  const sort = readSort(one(q.sort));
 
   const [listing, facets] = await Promise.all([
     listProducts({

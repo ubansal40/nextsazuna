@@ -21,7 +21,7 @@ import { whatsappHref } from "@/lib/whatsapp";
  * list settling.
  */
 
-export const FAQ_LIST_ID = "faq-topics";
+import { FAQ_LIST_ID } from "./faq-anchor";
 /** Set on each <details>, holding its question and answer, already lowercased. */
 export const FAQ_SEARCH_ATTR = "data-faq-search";
 

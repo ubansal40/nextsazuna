@@ -7,6 +7,38 @@
  * disabled and every option is keyboard reachable for free.
  */
 
+/**
+ * Sort options live HERE, not in the toolbar that renders them.
+ *
+ * They used to be exported from `toolbar.tsx`, which carries `"use client"`.
+ * Server Components imported `SORT_VALUES` from it and called `.has()` on it —
+ * and that works in TypeScript, builds cleanly, and passes every check, because
+ * the type is a real Set. At runtime it is not: Next replaces a client module's
+ * exports with client-reference proxies when a server module imports them, so
+ * `.has` is undefined and the page 500s.
+ *
+ * It only fired when a `?sort=` parameter was present, because the call sits
+ * behind `sortRaw && …`. Default page loads were fine; using the sort dropdown
+ * crashed the listing. This module has no `"use client"` and no `server-only`,
+ * so both sides can share it, which is the only safe place for a value both
+ * sides read.
+ */
+export const SORT_OPTIONS = [
+  { value: "popularity", label: "Popularity" },
+  { value: "price-asc", label: "Price: Low → High" },
+  { value: "price-desc", label: "Price: High → Low" },
+  { value: "newest", label: "Newest" },
+] as const;
+
+export type SortValue = (typeof SORT_OPTIONS)[number]["value"];
+
+export const SORT_VALUES: ReadonlySet<string> = new Set(SORT_OPTIONS.map((o) => o.value));
+
+/** Normalise an untrusted `?sort=` value to one we actually support. */
+export function readSort(raw: string | undefined): SortValue {
+  return raw && SORT_VALUES.has(raw) ? (raw as SortValue) : "popularity";
+}
+
 export const FILTER_KEYS = ["cat", "material", "purity", "collection", "price"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 

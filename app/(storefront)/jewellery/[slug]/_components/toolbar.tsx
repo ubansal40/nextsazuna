@@ -6,18 +6,8 @@ import Link from "next/link";
 import { Drawer, Icon } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { Facets } from "@/lib/catalog/facets";
-import { clearAllUrl, sortUrl, toggleUrl, type FilterState } from "@/lib/catalog/filter-params";
+import { clearAllUrl, sortUrl, toggleUrl, SORT_OPTIONS, type FilterState } from "@/lib/catalog/filter-params";
 import { buildGroups, FilterOption } from "./filter-sidebar";
-
-/** Popularity and Best Selling mean the same thing here, so only one is offered. */
-export const SORT_OPTIONS = [
-  { value: "popularity", label: "Popularity" },
-  { value: "price-asc", label: "Price: Low → High" },
-  { value: "price-desc", label: "Price: High → Low" },
-  { value: "newest", label: "Newest" },
-] as const;
-
-export const SORT_VALUES = new Set(SORT_OPTIONS.map((o) => o.value));
 
 interface Props {
   countLabel: string;

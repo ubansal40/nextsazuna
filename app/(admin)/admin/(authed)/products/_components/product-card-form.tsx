@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Icon } from "@/components/ui";
 import { MultiSelect } from "@/components/admin/multi-select";
 import { cn } from "@/lib/cn";
@@ -66,6 +66,16 @@ export function ProductCardForm({
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
+  /**
+   * `useId`, not the card key.
+   *
+   * Card keys are minted with `Math.random()`, and the editor's `useState`
+   * initialiser runs on the server AND again on the client — so the two produce
+   * different keys and React reports a hydration mismatch on this very
+   * attribute. `useId` is stable across both renders, which is exactly what an
+   * id used by `aria-describedby` has to be.
+   */
+  const lockNoteId = useId();
   const materialOptions = unique([card.material, ...options.materials]);
   const purityOptions = unique([card.purity, ...options.purities]);
   const locked = card.status === "saved" || card.status === "saving";
@@ -335,7 +345,7 @@ export function ProductCardForm({
                 readOnly={lockSku}
                 onChange={(e) => handlers.onSkuChange(e.target.value)}
                 aria-invalid={!!card.errors.sku}
-                aria-describedby={lockSku && !locked ? `sku-lock-${card.key}` : undefined}
+                aria-describedby={lockSku && !locked ? lockNoteId : undefined}
                 className={cn(
                   fieldClass,
                   "font-mono",
@@ -345,7 +355,7 @@ export function ProductCardForm({
               />
             </Fw>
             {lockSku && !locked && (
-              <p id={`sku-lock-${card.key}`} className="mt-1 text-[10px] text-muted">
+              <p id={lockNoteId} className="mt-1 text-[10px] text-muted">
                 Stamped onto the photos — remove them to change it.
               </p>
             )}
