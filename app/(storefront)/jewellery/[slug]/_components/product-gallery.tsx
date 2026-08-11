@@ -102,7 +102,7 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
                   "radial-gradient(120% 120% at 30% 25%, var(--sz-media-from), var(--sz-media-to))",
               }}
             >
-              <Image src={src} alt="" fill sizes="74px" className="object-cover" />
+              <Image src={src} alt="" fill sizes="74px" loading="eager" className="object-cover" />
             </button>
           ))}
         </div>
@@ -134,11 +134,14 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
                 "radial-gradient(120% 120% at 30% 25%, var(--sz-media-from), var(--sz-media-to))",
             }}
           >
+            {/* The first frame is the page's LCP element, so it alone asks to
+                go first. The rest are eager — a swipe must never wait on a
+                fetch — but at normal priority, behind the one on screen. */}
             <Image
               src={src}
               alt={i === 0 ? productName : `${productName} — view ${i + 1}`}
               fill
-              priority={i === 0}
+              {...(i === 0 ? { priority: true } : { loading: "eager" as const })}
               sizes="(max-width: 980px) 100vw, 45vw"
               className="object-cover"
             />

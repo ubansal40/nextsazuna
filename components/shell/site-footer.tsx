@@ -94,6 +94,7 @@ export async function SiteFooter() {
               alt="Sazuna Jewellers"
               width={1130}
               height={240}
+              loading="eager"
               className="block h-[var(--sz-logo-h-footer)] w-auto"
             />
             <p className="m-0 mt-4 font-[family-name:var(--sz-font-display)] text-control italic text-accent">

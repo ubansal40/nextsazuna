@@ -25,6 +25,18 @@ export interface ProductCardProps {
    * makes the browser fetch a candidate about three times the pixels it draws.
    */
   sizes?: string;
+  /**
+   * Marks this card's photo as an LCP candidate — the first row of a listing,
+   * which is what the customer is actually waiting to see.
+   *
+   * **No card ever lazy-loads**: every photo is fetched the moment it mounts.
+   * This flag decides *order*, not *whether*. `priority` makes Next emit
+   * `fetchpriority="high"` and a preload link, and marking all 24 cards high is
+   * identical to marking none — the browser's ordering collapses and the top row
+   * finishes no sooner than the bottom one. So the first row asks to go first
+   * and the rest go immediately after.
+   */
+  priority?: boolean;
   className?: string;
 }
 
@@ -48,6 +60,7 @@ export function ProductCard({
   offerLabel,
   outOfStock = false,
   sizes = DEFAULT_SIZES,
+  priority = false,
   className,
 }: ProductCardProps) {
   const onSale = Boolean(compareAtPrice);
@@ -84,6 +97,8 @@ export function ProductCard({
               alt={image.alt}
               fill
               sizes={sizes}
+              // `priority` already implies eager, and passing both is an error.
+              {...(priority ? { priority: true } : { loading: "eager" as const })}
               className="object-cover"
             />
           ) : (

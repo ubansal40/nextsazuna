@@ -207,6 +207,7 @@ export function MiniCart({
                         alt=""
                         fill
                         sizes="68px"
+                        loading="eager"
                         className="object-cover"
                       />
                     ) : (

@@ -18,7 +18,7 @@
  */
 import sharp, { type Sharp } from "sharp";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -424,6 +424,70 @@ try {
 }
 
 await rm(tempDir, { recursive: true, force: true });
+
+/* --- nothing lazy-loads ---------------------------------------------------
+ * The owner's requirement is explicit: product photography is the product, and
+ * it must start downloading the moment its card exists rather than when the
+ * customer scrolls near it.
+ *
+ * `next/image` defaults to `loading="lazy"` when you say nothing, so this is the
+ * kind of rule that decays silently — a new card added six months from now is
+ * lazy by omission, nobody notices, and the shop gets slower one component at a
+ * time. So it is asserted against the source rather than trusted to review.
+ *
+ * `priority` counts: it implies eager, and passing both to `next/image` throws.
+ */
+const uiRoots = ["app", "components"];
+const tsxFiles: string[] = [];
+async function collectTsx(dir: string): Promise<void> {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) await collectTsx(full);
+    else if (entry.name.endsWith(".tsx")) tsxFiles.push(full);
+  }
+}
+for (const root of uiRoots) if (existsSync(root)) await collectTsx(root);
+
+const lazyImages: string[] = [];
+const defaultedImages: string[] = [];
+
+for (const file of tsxFiles) {
+  const source = await readFile(file, "utf8");
+  for (const match of source.matchAll(/<Image\b[\s\S]{0,900}?\/>/g)) {
+    const tag = match[0];
+    const line = source.slice(0, match.index).split("\n").length;
+    if (/loading\s*=\s*["{]\s*"?lazy/.test(tag)) lazyImages.push(`${file}:${line}`);
+    else if (!/\bpriority\b/.test(tag) && !/loading\s*=/.test(tag)) {
+      defaultedImages.push(`${file}:${line}`);
+    }
+  }
+}
+
+// Raw <img> too — the blog emits its own, and `loading` defaults to eager there,
+// so only an explicit "lazy" is a violation.
+const rawLazy: string[] = [];
+for (const file of [...tsxFiles, "lib/blog/markdown.ts"]) {
+  if (!existsSync(file)) continue;
+  const source = await readFile(file, "utf8");
+  for (const match of source.matchAll(/<img\b[\s\S]{0,600}?>/g)) {
+    if (/loading\s*=\s*["{]?\s*"?lazy/.test(match[0])) {
+      rawLazy.push(`${file}:${source.slice(0, match.index).split("\n").length}`);
+    }
+  }
+}
+
+checks.push(
+  [`every <Image> was scanned (${tsxFiles.length} tsx files)`, tsxFiles.length > 50],
+  [
+    `no <Image> sets loading="lazy"${lazyImages.length ? ` — ${lazyImages.join(", ")}` : ""}`,
+    lazyImages.length === 0,
+  ],
+  [
+    `no <Image> falls through to next/image's lazy default${defaultedImages.length ? ` — ${defaultedImages.join(", ")}` : ""}`,
+    defaultedImages.length === 0,
+  ],
+  [`no raw <img> sets loading="lazy"${rawLazy.length ? ` — ${rawLazy.join(", ")}` : ""}`, rawLazy.length === 0],
+);
 
 let failed = 0;
 for (const [name, ok] of checks) {

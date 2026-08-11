@@ -250,6 +250,7 @@ export function ProductCardForm({
                   width={70}
                   height={70}
                   unoptimized
+                  loading="eager"
                   draggable={false}
                   className={cn("size-full object-cover", photo.status !== "ready" && "opacity-60")}
                 />

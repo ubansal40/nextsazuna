@@ -395,7 +395,7 @@ export function PickerThumb({ src, className }: { src: string | null; className?
       )}
     >
       {src ? (
-        <Image src={src} alt="" fill unoptimized sizes="46px" className="object-cover" />
+        <Image src={src} alt="" fill unoptimized loading="eager" sizes="46px" className="object-cover" />
       ) : (
         <span aria-hidden="true" className="size-[14px] rotate-45 bg-accent opacity-50" />
       )}

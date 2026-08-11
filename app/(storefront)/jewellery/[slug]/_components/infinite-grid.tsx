@@ -14,6 +14,15 @@ interface Props {
 
 const SCROLL_KEY = "sz-plp-scroll";
 
+/**
+ * Cards that ask the browser to fetch their photo first.
+ *
+ * Six: three rows of two on a phone, two rows of three on a wide desktop —
+ * either way, roughly what is on screen before the customer scrolls. Every other
+ * card still loads immediately; this is only about who goes first.
+ */
+const FIRST_SCREEN = 6;
+
 /** What we park in sessionStorage on the way to a product. */
 interface SavedScroll {
   /** Identity of the listing the offset was taken from. */
@@ -174,7 +183,7 @@ export function InfiniteGrid({ initial, total, pageSize, request }: Props) {
         onClick={rememberPosition}
         className="grid grid-cols-2 gap-x-3 gap-y-[18px] md:gap-x-[22px] md:gap-y-7 xl:grid-cols-3"
       >
-        {products.map((product) => (
+        {products.map((product, index) => (
           <ProductCard
             key={product.id}
             title={product.name}
@@ -184,6 +193,12 @@ export function InfiniteGrid({ initial, total, pageSize, request }: Props) {
             image={product.imageUrl ? { src: product.imageUrl, alt: product.name } : undefined}
             outOfStock={!product.inStock}
             certified
+            /* Nothing here lazy-loads — every card fetches on mount. The first
+               six are the two rows a phone shows without scrolling, and they are
+               the only ones asking to jump the queue; the rest follow straight
+               after at normal priority. Flagging all 24 high would mean none of
+               them is. */
+            priority={index < FIRST_SCREEN}
           />
         ))}
 

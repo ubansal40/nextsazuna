@@ -847,7 +847,7 @@ function SummaryThumb({
       )}
     >
       {line.imageUrl ? (
-        <Image src={line.imageUrl} alt="" fill sizes="58px" className="object-cover" />
+        <Image src={line.imageUrl} alt="" fill sizes="58px" loading="eager" className="object-cover" />
       ) : (
         <span aria-hidden="true" className="size-5 rotate-45 bg-accent opacity-55" />
       )}

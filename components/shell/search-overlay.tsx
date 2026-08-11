@@ -276,6 +276,7 @@ export function SearchOverlay({ open, onClose, whatsappHref }: SearchOverlayProp
                         alt=""
                         fill
                         sizes="44px"
+                        loading="eager"
                         className="object-cover"
                       />
                     ) : (

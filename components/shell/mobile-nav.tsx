@@ -40,6 +40,7 @@ export function MobileNav({ open, onClose, onSignIn, signedIn = false }: MobileN
               alt="Sazuna Jewellers"
               width={1130}
               height={240}
+              loading="eager"
               className="block h-[var(--sz-logo-h-drawer)] w-auto"
             />
           </Link>

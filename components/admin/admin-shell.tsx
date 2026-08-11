@@ -80,7 +80,7 @@ export function AdminShell({ admin, nav, environment, children }: AdminShellProp
         )}
       >
         <div className="sticky top-0 z-[2] flex items-center gap-2.5 border-b border-line-soft bg-canvas px-3 py-3.5">
-          <Image src="/sazuna-logo.webp" alt="Sazuna" width={1130} height={240} className="h-5 w-auto shrink-0" />
+          <Image src="/sazuna-logo.webp" alt="Sazuna" width={1130} height={240} loading="eager" className="h-5 w-auto shrink-0" />
           <span className="font-mono text-[8.5px] uppercase tracking-[0.2em] text-accent-strong">Admin</span>
           <button
             type="button"

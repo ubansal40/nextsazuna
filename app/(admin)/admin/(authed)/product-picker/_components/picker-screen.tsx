@@ -555,6 +555,7 @@ function Tile({
             alt=""
             fill
             unoptimized
+            loading="eager"
             sizes="(min-width: 1101px) 280px, (min-width: 761px) 33vw, 50vw"
             className="object-cover"
           />

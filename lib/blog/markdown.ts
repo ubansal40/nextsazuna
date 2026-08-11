@@ -61,7 +61,7 @@ function inline(text: string): string {
         const href = safeUrl(url);
         // A bad URL degrades to the alt text rather than an empty frame.
         return href
-          ? `<img src="${href}" alt="${alt}" loading="lazy" decoding="async">`
+          ? `<img src="${href}" alt="${alt}" loading="eager" decoding="async">`
           : alt;
       })
       .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label: string, url: string) => {

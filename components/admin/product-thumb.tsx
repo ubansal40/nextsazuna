@@ -30,7 +30,7 @@ export function ProductThumb({
       style={{ width: size, height: size }}
     >
       {src ? (
-        <Image src={src} alt={alt} width={size} height={size} className="size-full object-cover" unoptimized />
+        <Image src={src} alt={alt} width={size} height={size} loading="eager" className="size-full object-cover" unoptimized />
       ) : (
         <span
           aria-hidden="true"

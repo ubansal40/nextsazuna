@@ -59,7 +59,7 @@ export function CategoryTiles({
             <div className="relative aspect-square overflow-hidden rounded-[var(--sz-radius-lg)]">
               <div className="absolute inset-0 flex items-center justify-center bg-[repeating-linear-gradient(135deg,var(--sz-line-soft)_0_12px,var(--sz-surface)_12px_24px)] transition-transform duration-[550ms] ease-[var(--sz-ease-out)] group-hover:scale-[1.06]">
                 {tile.image ? (
-                  <Image src={tile.image} alt="" fill sizes="200px" className="object-cover" />
+                  <Image src={tile.image} alt="" fill sizes="200px" loading="eager" className="object-cover" />
                 ) : (
                   <span
                     aria-hidden="true"
@@ -140,7 +140,9 @@ export function FeaturedBanner({
   return (
     <section className="mt-[var(--sz-section-gap)] home-narrow:mt-[var(--sz-section-gap-sm)]">
       <div className="relative flex min-h-[clamp(380px,54vh,580px)] items-center overflow-hidden bg-[repeating-linear-gradient(135deg,var(--sz-banner-from)_0_20px,var(--sz-banner-to)_20px_40px)]">
-        {image && <Image src={image} alt="" fill sizes="100vw" className="object-cover" />}
+        {/* Full-bleed and often the largest thing on the page after the hero,
+            so it is a genuine LCP candidate rather than just eager. */}
+        {image && <Image src={image} alt="" fill sizes="100vw" priority className="object-cover" />}
         <div className="absolute inset-0 bg-[linear-gradient(90deg,rgb(var(--sz-hero-scrim-rgb)/.76),rgb(var(--sz-hero-scrim-rgb)/.34)_48%,rgb(var(--sz-hero-scrim-rgb)/.04)_76%)]" />
         <div className="relative mx-auto w-full max-w-[var(--sz-container)] px-10 home-narrow:px-5">
           <div className="max-w-[520px]">
@@ -203,6 +205,7 @@ export function CollectionCards({
                   alt=""
                   fill
                   sizes="(max-width: 760px) 100vw, 50vw"
+                  loading="eager"
                   className="object-cover"
                 />
               )}

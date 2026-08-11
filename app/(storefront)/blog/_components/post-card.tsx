@@ -48,7 +48,7 @@ function Cover({ post, className }: { post: PostCardData; className: string }) {
           src={post.cover}
           alt=""
           className="size-full object-cover transition-transform duration-[var(--sz-dur-slow)] ease-[var(--sz-ease-out)] group-hover:scale-105"
-          loading="lazy"
+          loading="eager"
           decoding="async"
         />
       )}

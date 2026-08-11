@@ -95,7 +95,7 @@ export function ImageField({
       <div className="flex items-start gap-[11px]">
         {value ? (
           <span className="inline-flex size-[92px] shrink-0 items-center justify-center overflow-hidden rounded-[10px] border border-line bg-[radial-gradient(120%_120%_at_30%_25%,var(--sz-surface-raised),var(--sz-accent-soft))]">
-            <Image src={value} alt="" width={92} height={92} className="size-full object-cover" unoptimized />
+            <Image src={value} alt="" width={92} height={92} loading="eager" className="size-full object-cover" unoptimized />
           </span>
         ) : (
           <button

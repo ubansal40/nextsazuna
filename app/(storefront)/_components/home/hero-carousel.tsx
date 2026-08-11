@@ -84,12 +84,15 @@ export function HeroCarousel({ slides, autoplayMs }: { slides: HeroSlide[]; auto
           )}
           style={{ opacity: i === index ? 1 : 0 }}
         >
+          {/* Slide 0 is the homepage LCP element and asks to go first. The other
+              slides are eager so autoplay never lands on a blank frame, but they
+              must not compete with slide 0 for the first bytes. */}
           {slide.image && (
             <Image
               src={slide.image}
               alt=""
               fill
-              priority={i === 0}
+              {...(i === 0 ? { priority: true } : { loading: "eager" as const })}
               sizes="(max-width: 1360px) 100vw, 1280px"
               className="object-cover"
             />
