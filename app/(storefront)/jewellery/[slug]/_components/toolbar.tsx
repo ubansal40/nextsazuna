@@ -56,8 +56,14 @@ export function Toolbar({ countLabel, basePath, state, sort, facets }: Props) {
     <>
       <div className="sticky top-[calc(var(--sz-header-h)-1px)] z-40 mt-[26px] border-b border-line-soft bg-[rgb(var(--sz-canvas-rgb)/.94)] backdrop-blur-[8px]">
         <div className="mx-auto max-w-[var(--sz-container)] px-5 md:px-10">
-          {/* Desktop */}
-          <div className="hidden items-center justify-between gap-[18px] py-[13px] lg:flex">
+          {/*
+            Desktop. The height is declared, not inferred from the padding: the
+            sticky filter rail below positions itself under this row's pinned
+            bottom edge, and a height that only exists as a sum of paddings is
+            one the rail can silently stop clearing. Minus the 1px rule, which
+            sits on the bordered parent.
+          */}
+          <div className="hidden items-center justify-between gap-[18px] py-[13px] lg:flex lg:h-[calc(var(--sz-plp-toolbar-h)-1px)]">
             <p aria-live="polite" className="font-mono text-[12.5px] text-muted">
               {countLabel}
             </p>

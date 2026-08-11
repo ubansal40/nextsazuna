@@ -107,7 +107,21 @@ export function FilterSidebar({ facets, state, basePath, sort }: Props) {
       aria-label="Filters"
       className={cn(
         "hidden self-start overflow-auto overscroll-contain lg:block",
-        "sticky top-[calc(var(--sz-header-h)+72px)] max-h-[calc(100vh-var(--sz-header-h)-92px)]",
+        /*
+         * Pinned clear of the toolbar, not against it.
+         *
+         * The offset used to be `header-h + 72px`, a number that stood in for
+         * the toolbar's height and was two pixels short of it: the toolbar
+         * sticks 1px under the header and is 71px tall, so its pinned bottom
+         * edge is at header-h + 70 and the rail landed at header-h + 72. On a
+         * page that is not scrolled the section's own margin gives 28px and it
+         * looks right — the two rules only meet once both are stuck.
+         *
+         * `--sz-plp-sidebar-top` is that arithmetic written down once, from the
+         * same toolbar-height token the toolbar sizes itself with.
+         */
+        "sticky top-[var(--sz-plp-sidebar-top)]",
+        "max-h-[calc(100vh-var(--sz-plp-sidebar-top)-var(--sz-plp-sidebar-gap))]",
       )}
     >
       <div className="flex items-baseline justify-between gap-3 border-b border-line-soft pb-3.5">

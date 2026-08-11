@@ -127,6 +127,19 @@
   --sz-text-page-title: 42px;
   --sz-text-page-title-sm: 30px;
   --sz-plp-sidebar: 256px;
+  /* The count + sort row's full height: 13px, a 44px control, 13px, and the 1px
+   * rule under it. The toolbar sets its own height FROM this rather than letting
+   * it come out of the padding, because the sticky filter rail below has to know
+   * where the toolbar's pinned bottom edge lands — and a height nobody declared
+   * is a height the rail can silently stop clearing. */
+  --sz-plp-toolbar-h: 71px;
+  --sz-plp-sidebar-gap: 20px;
+  /* Where the sticky filter rail starts once everything is pinned. The toolbar
+   * sticks 1px under the header, so its bottom edge sits at
+   * header-h - 1 + toolbar-h; the rail clears that rather than touching it. */
+  --sz-plp-sidebar-top: calc(
+    var(--sz-header-h) - 1px + var(--sz-plp-toolbar-h) + var(--sz-plp-sidebar-gap)
+  );
   /* Fallback only. SiteHeader measures itself and overwrites this on the root
    * element, because the announcement bar collapses on scroll and the header's
    * real height changes — a fixed value leaves a gap under the sticky toolbar. */
