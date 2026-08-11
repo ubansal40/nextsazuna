@@ -28,6 +28,7 @@ import {
   type EditorCard,
 } from "./editor-model";
 import { MAX_PHOTO_BYTES, MAX_PRODUCT_PHOTOS, photoSizeLimitMessage } from "@/lib/admin/product-limits";
+import { keepOneDot, wholeRupees } from "@/lib/admin/pricing";
 import { preparePhoto } from "./prepare-photo";
 
 /**
@@ -183,7 +184,10 @@ export function ProductEditor({
         patch(key, { rulePrice: null });
         return;
       }
-      patch(key, live.saleOverride ? { rulePrice: price } : { rulePrice: price, salePrice: price });
+      // Whole rupees into the field: the rule returns a DECIMAL string, and no
+      // price in this catalogue has ever carried paisa.
+      const whole = wholeRupees(price);
+      patch(key, live.saleOverride ? { rulePrice: whole } : { rulePrice: whole, salePrice: whole });
     },
     [patch],
   );
@@ -348,12 +352,22 @@ export function ProductEditor({
       onPriceChange: (value) => {
         setTouched(true);
         // Typing here is the override the spec's "Auto: रु X" control undoes.
+        //
+        // A decimal point is allowed WHILE typing and rounded away on blur.
+        // Stripping it on every keystroke looks tidier and is dangerous: typing
+        // "5500.75" then becomes "550075", a hundredfold price on a piece of
+        // jewellery, with nothing on screen to suggest anything was dropped.
         patch(card.key, {
-          salePrice: value,
+          salePrice: keepOneDot(value),
           saleOverride: true,
           errors: {},
           status: card.status === "failed" ? "editing" : card.status,
         });
+      },
+      /** Settle the price to whole rupees once the operator leaves the field. */
+      onPriceBlur: () => {
+        const settled = wholeRupees(card.salePrice);
+        if (settled !== card.salePrice) patch(card.key, { salePrice: settled });
       },
       useRulePrice: () => {
         if (card.rulePrice === null) return;
@@ -636,27 +650,25 @@ export function ProductEditor({
         ? `Save all ${pendingCount}`
         : "Save product";
 
-  const subtitle =
-    mode === "add"
-      ? "One card per product — the sale price is derived from the weights, purity and pricing rules."
-      : "Editing a single product. The name is editable here.";
-
   return (
     <div className="mx-auto max-w-[820px] pb-28">
+      {/*
+       * The heading is present but not painted. The sidebar already says where
+       * you are, and the strapline under it ("the sale price is derived from the
+       * weights…") explained a mechanism nobody needed explaining twice — it
+       * cost a row of vertical space on a phone to say so. It stays in the
+       * accessibility tree because a page with no heading is a page a screen
+       * reader cannot navigate.
+       */}
       <div className="mb-4 flex items-start gap-2">
         <Link
           href="/admin/products"
           aria-label="Back to all products"
-          className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-[var(--sz-admin-radius-control)] border border-line bg-raised text-muted no-underline hover:border-primary-700 hover:no-underline"
+          className="inline-flex size-9 shrink-0 items-center justify-center rounded-[var(--sz-admin-radius-control)] border border-line bg-raised text-muted no-underline hover:border-primary-700 hover:no-underline"
         >
           <Icon name="arrow-left" size={16} />
         </Link>
-        <div>
-          <h2 className="font-display text-2xl font-medium text-heading">
-            {mode === "edit" ? "Edit product" : "Add products"}
-          </h2>
-          <p className="mt-0.5 max-w-[62ch] text-[12.5px] text-muted">{subtitle}</p>
-        </div>
+        <h2 className="sr-only">{mode === "edit" ? "Edit product" : "Add products"}</h2>
       </div>
 
       {mode === "add" && (

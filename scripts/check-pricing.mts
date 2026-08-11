@@ -9,7 +9,17 @@
  *
  * Run: npx tsx scripts/check-pricing.mts
  */
-import { evaluateFormula, formulaError, findMatchingRule, computeRulePrice } from "../lib/admin/pricing";
+import {
+  MRP_MULTIPLIER,
+  computeRulePrice,
+  evaluateFormula,
+  findMatchingRule,
+  formulaError,
+  keepOneDot,
+  mrpFromSalePrice,
+  wholeRupees,
+} from "../lib/admin/pricing";
+import { OFF_VOCABULARY_SUFFIX, withCurrentValue } from "../lib/admin/vocab-options";
 
 const checks: [string, boolean][] = [];
 const approx = (a: number, b: number) => Math.abs(a - b) < 0.001;
@@ -149,6 +159,95 @@ checks.push(
       [{ material: "gold", purity: null, category_id: null, formula: "x", net_weight: { min: 1, max: 4 } }],
       { material: "Silver", purity: null, categoryIds: [], net_weight: 2 },
     ) === null,
+  ],
+);
+
+/* --- MRP ------------------------------------------------------------------
+ * Every product lists at double and sells at half, so this one multiplication
+ * is the struck-through price on every card in the shop. It is written on every
+ * save, which means a wrong answer here silently re-prices the catalogue one
+ * product at a time.
+ */
+checks.push(
+  ["the MRP is twice the selling price", mrpFromSalePrice("1400") === "2800.00"],
+  ["...from a DECIMAL string too", mrpFromSalePrice("1400.00") === "2800.00"],
+  ["...and from a number", mrpFromSalePrice(51500) === "103000.00"],
+  ["the multiplier is 2, and the sums above agree with it", MRP_MULTIPLIER === 2],
+  ["the MRP is stored scale-2, as the column is", /^\d+\.00$/.test(mrpFromSalePrice("999"))],
+  ["a half rupee rounds before doubling, never to an odd paisa", mrpFromSalePrice("1400.50") === "2802.00"],
+  // A zero MRP beside a real sale price would draw as an infinite discount.
+  ["a zero sale price yields no MRP rather than a nonsense one", mrpFromSalePrice("0") === "0.00"],
+  ["rubbish yields no MRP", mrpFromSalePrice("abc") === "0.00" && mrpFromSalePrice("") === "0.00"],
+  ["the MRP always sits above the sale price, so a markdown is never a markup", Number(mrpFromSalePrice("1")) > 1],
+);
+
+/* --- typing a price ------------------------------------------------------
+ * The field is whole rupees, but the point must survive keystroke by keystroke.
+ * Stripping it on change turns "5500.75" into "550075" — a hundredfold price on
+ * a piece of jewellery, typed by someone who entered exactly what they meant.
+ */
+checks.push(
+  ["a decimal point survives while typing", keepOneDot("5500.75") === "5500.75"],
+  ["a trailing point survives, so the next digit lands after it", keepOneDot("5500.") === "5500."],
+  ["...so typing it out never multiplies the price by a hundred", keepOneDot(keepOneDot("5500.") + "7") === "5500.7"],
+  ["a second point is refused rather than making the number unparseable", keepOneDot("55.00.75") === "55.0075"],
+  ["letters and symbols are dropped", keepOneDot("रु 5,500.75") === "5500.75"],
+  ["and blur settles it to whole rupees", wholeRupees(keepOneDot("5500.75")) === "5501"],
+);
+
+checks.push(
+  ["a DECIMAL price loses its trailing zeroes for the editor", wholeRupees("1400.00") === "1400"],
+  ["...and a fraction rounds rather than truncating", wholeRupees("1400.60") === "1401"],
+  ["a blank price stays blank — an empty field is not a zero", wholeRupees("") === "" && wholeRupees(null) === ""],
+  ["rubbish is blank, never NaN", wholeRupees("abc") === ""],
+  ["a zero price is shown, not swallowed", wholeRupees("0.00") === "0"],
+);
+
+/* --- the vocabulary a rule is edited against ------------------------------
+ * A rule's material and purity are picked from the taxonomy, but the taxonomy
+ * changes and the rule does not. A <select> whose value matches no <option>
+ * silently renders the first one, so the screen would show "Any material" for a
+ * rule that actually matches "Yellow Gold" — a condition misread, with nothing
+ * thrown and nothing logged. The live rule YG14 is exactly this shape.
+ */
+const VOCAB = ["Yellow Gold", "White Gold", "Silver"];
+
+checks.push(
+  [
+    "the vocabulary is offered in the order it is given, not re-sorted",
+    withCurrentValue(VOCAB, "").map((o) => o.value).join(",") === "Yellow Gold,White Gold,Silver",
+  ],
+  [
+    "a stored value that is still in the taxonomy adds no duplicate",
+    withCurrentValue(VOCAB, "Silver").length === VOCAB.length,
+  ],
+  [
+    "a stored value that has left the taxonomy is still offered",
+    withCurrentValue(VOCAB, "Gold").some((o) => o.value === "Gold"),
+  ],
+  [
+    "...and says so, so it reads as history rather than a choice",
+    withCurrentValue(VOCAB, "Gold").at(-1)?.label === `Gold${OFF_VOCABULARY_SUFFIX}`,
+  ],
+  [
+    "...while still posting the exact string the column stores",
+    withCurrentValue(VOCAB, "Gold").at(-1)?.value === "Gold",
+  ],
+  [
+    "an empty value adds nothing — each screen words its own empty choice",
+    withCurrentValue(VOCAB, "").length === VOCAB.length,
+  ],
+  [
+    "whitespace is not a value",
+    withCurrentValue(VOCAB, "   ").length === VOCAB.length,
+  ],
+  [
+    "matching is exact — a near-miss is surfaced, not silently accepted",
+    withCurrentValue(VOCAB, "silver").length === VOCAB.length + 1,
+  ],
+  [
+    "an empty taxonomy still offers what a rule already stores",
+    withCurrentValue([], "Yellow Gold").map((o) => o.value).join(",") === "Yellow Gold",
   ],
 );
 

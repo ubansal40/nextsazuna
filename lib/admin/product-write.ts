@@ -3,7 +3,7 @@ import "server-only";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { pool, transaction } from "../db";
 import { recordAdminAction } from "./audit";
-import { computeRulePrice, type PricingRuleCondition } from "./pricing";
+import { computeRulePrice, mrpFromSalePrice, type PricingRuleCondition } from "./pricing";
 import { MAX_PRODUCT_PHOTOS } from "./product-limits";
 import type { AdminContext } from "./rbac";
 
@@ -11,8 +11,10 @@ import type { AdminContext } from "./rbac";
  * Product create and edit.
  *
  * Everything the reference validates, plus the guards it lacks and the pricing
- * model the owner chose. The base price is derived from the matching pricing
- * rule at save (the editor's field is the sale price).
+ * model the owner chose: the editor's one price field is the SELLING price, and
+ * the MRP is twice it — `mrpFromSalePrice`, applied on every save so the pair
+ * can never drift apart. Pricing rules still derive the *sale* price from the
+ * weights while the card is being filled in; they no longer decide the MRP.
  *
  * Photos arrive already processed — the upload route encodes each one before it
  * ever reaches this function, so there is no draft-until-the-images-are-ready
@@ -95,7 +97,12 @@ export function parseProductInput(raw: Partial<ProductInput>): ProductInput {
     purity: String(raw.purity ?? "").trim().slice(0, 80),
     stoneType: String(raw.stoneType ?? "").trim().slice(0, 120),
     description: String(raw.description ?? "").trim(),
-    salePrice: sale.toFixed(2),
+    // Whole rupees. The column keeps two decimals and the editor's field is
+    // whole-rupee, so a paisa figure could only arrive from a paste or a stale
+    // client — and it would be invisible everywhere afterwards, since
+    // `formatPrice` rounds for display and the MRP is derived from the rounded
+    // number anyway. Rounded once, here, rather than differently in two places.
+    salePrice: Math.round(sale).toFixed(2),
     grossWeight: decimal(raw.grossWeight, "grossWeight"),
     netWeight: decimal(raw.netWeight, "netWeight", { required: true }),
     diamondWeight: decimal(raw.diamondWeight, "diamondWeight"),
@@ -141,7 +148,6 @@ interface SlugRow extends RowDataPacket {
 interface CurrentRow extends RowDataPacket {
   slug: string;
   sku: string;
-  price: string;
   is_active: number;
   /** How many photos the product has right now — governs the SKU lock. */
   photo_count: number;
@@ -202,26 +208,6 @@ export async function previewRulePrice(input: {
     diamond_weight: Number(input.diamondWeight) || 0,
     stone_weight: Number(input.stoneWeight) || 0,
   });
-}
-
-/** The base (MRP) price for a product from the pricing rules, clamped so it is
- *  never below the selling price. Falls back to `fallback` when no rule matches. */
-async function resolveBasePrice(input: ProductInput, fallback: string): Promise<string> {
-  const rules = await loadPricingRules();
-
-  const computed = computeRulePrice(rules, {
-    material: input.material || null,
-    purity: input.purity || null,
-    categoryIds: input.categoryIds,
-    gross_weight: Number(input.grossWeight) || 0,
-    net_weight: Number(input.netWeight) || 0,
-    diamond_weight: Number(input.diamondWeight) || 0,
-    stone_weight: Number(input.stoneWeight) || 0,
-  });
-
-  const base = computed ?? fallback;
-  // MRP must never sit below the selling price, or "on sale" would mean a markup.
-  return Number(base) < Number(input.salePrice) ? input.salePrice : Number(base).toFixed(2);
 }
 
 async function uniqueSlug(conn: PoolConnection, base: string, excludeId: number | null): Promise<string> {
@@ -288,12 +274,12 @@ export async function saveProduct(
   const { id, input } = args;
   const imageUrls = input.imageUrls;
 
-  // Current state for an update: keep the existing slug and, when no rule
-  // matches, the existing price and visibility.
+  // Current state for an update: keep the existing slug and visibility, and
+  // learn whether photos exist (which locks the SKU).
   let current: CurrentRow | null = null;
   if (id) {
     const [rows] = await pool().execute<CurrentRow[]>(
-      `SELECT p.slug, p.sku, p.price, p.is_active,
+      `SELECT p.slug, p.sku, p.is_active,
               (SELECT COUNT(*) FROM product_images pi WHERE pi.product_id = p.id) AS photo_count
          FROM products p WHERE p.id = ? LIMIT 1`,
       [id],
@@ -321,18 +307,11 @@ export async function saveProduct(
     }
   }
 
-  // Base (MRP) pricing. On CREATE the matching rule derives it from the piece's
-  // metal weight (the owner's chosen auto-pricing); with no rule it falls back to
-  // the sale price. On EDIT the existing MRP is KEPT — recomputing it on every
-  // save would silently wipe a markdown an operator set by hand (a 50%-off piece
-  // would snap back to full price). It is only ever raised so the sale price can
-  // never sit above the MRP. A later "auto" control can recompute on request,
-  // matching the mock's reset affordance.
-  const price = id
-    ? Number(current!.price) < Number(input.salePrice)
-      ? input.salePrice
-      : current!.price
-    : await resolveBasePrice(input, input.salePrice);
+  // Base (MRP) pricing: twice the selling price, on create and on edit alike.
+  // There is no field for it and no way to set one by hand, so recomputing it
+  // every time cannot wipe anything an operator typed — and keeping a stale MRP
+  // beside an edited sale price is the only way the pair could disagree.
+  const price = mrpFromSalePrice(input.salePrice);
   const description = autoDescription(input);
   // New products publish by default; an edit keeps whatever visibility it had.
   const activeNow = (id ? current!.is_active === 1 : true) ? 1 : 0;

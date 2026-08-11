@@ -9,6 +9,7 @@ import {
   CODE_MAX_LENGTH,
   countOrNull,
   expiryInstant,
+  normaliseDraft,
   numberOrNull,
   startInstant,
   toDayInput,
@@ -60,6 +61,15 @@ export interface AdminCouponRow {
   usedCount: number;
   /** Orders that actually carry this code. The truth `usedCount` drifts from. */
   redemptions: number;
+  /**
+   * Every order carrying the code, cancelled and failed ones included.
+   *
+   * Deliberately a different number from `redemptions`: a cancelled order is not
+   * a redemption, but it is still a row whose `coupon_code` stops resolving the
+   * moment the coupon is deleted. This is the figure the delete warning must
+   * quote, or it understates the history at risk.
+   */
+  linkedOrders: number;
   isActive: boolean;
   /** `yyyy-mm-dd` in Nepal, or "" — the shape `<input type="date">` wants. */
   startsOn: string;
@@ -81,28 +91,33 @@ interface CouponDbRow extends RowDataPacket {
   used_count: number;
   is_active: number;
   created_by: string | null;
-  redemptions: number | null;
+  /** `SUM()` of an integer comes back as DECIMAL, and `decimalNumbers: false`
+   *  makes that a string (ADR 0003) — so this is not the number it looks like. */
+  redemptions: string | number | null;
+  linked_orders: number | null;
 }
 
+/** Live orders carrying a code — the rows a delete would orphan. */
+const LINKED = `o.coupon_code IS NOT NULL AND o.coupon_code <> '' AND o.deleted_at IS NULL`;
+
 /**
- * Orders that count as a redemption of a code.
+ * Of those, the ones that count as a redemption.
  *
  * The same denylist the per-customer limit enforces with, so the number the
  * owner reads and the number the checkout counts are the same number.
  */
-const REDEEMED = `
-  o.coupon_code IS NOT NULL AND o.coupon_code <> ''
-  AND o.deleted_at IS NULL
-  AND o.status NOT IN (${NON_REDEMPTION_STATUSES.map(() => "?").join(", ")})`;
+const REDEEMED = `${LINKED} AND o.status NOT IN (${NON_REDEMPTION_STATUSES.map(() => "?").join(", ")})`;
 
 export async function listCoupons(): Promise<AdminCouponRow[]> {
   const rows = await query<CouponDbRow>(
-    `SELECT c.*, r.n AS redemptions
+    `SELECT c.*, r.redeemed AS redemptions, r.linked AS linked_orders
        FROM coupons c
        LEFT JOIN (
-         SELECT o.coupon_code AS code, COUNT(*) AS n
+         SELECT o.coupon_code AS code,
+                COUNT(*) AS linked,
+                SUM(CASE WHEN o.status NOT IN (${NON_REDEMPTION_STATUSES.map(() => "?").join(", ")}) THEN 1 ELSE 0 END) AS redeemed
            FROM orders o
-          WHERE ${REDEEMED}
+          WHERE ${LINKED}
           GROUP BY o.coupon_code
        ) r ON r.code = c.code
       ORDER BY c.is_active DESC, c.id DESC`,
@@ -123,6 +138,7 @@ function project(row: CouponDbRow): AdminCouponRow {
     perCustomerLimit: row.per_customer_limit,
     usedCount: row.used_count,
     redemptions: Number(row.redemptions ?? 0),
+    linkedOrders: Number(row.linked_orders ?? 0),
     isActive: row.is_active === 1,
     startsOn: toDayInput(row.starts_at),
     expiresOn: toDayInput(row.expires_at),
@@ -229,13 +245,21 @@ function decimalOrNull(value: string): string | null {
   return n === null ? null : n.toFixed(2);
 }
 
-export async function saveCoupon(admin: AdminContext, id: number | null, input: CouponDraft): Promise<number> {
+export async function saveCoupon(admin: AdminContext, id: number | null, rawInput: unknown): Promise<number> {
   /*
-   * The same validator the drawer runs, at the boundary. The client's copy is a
-   * courtesy — this one decides. Duplicates are the exception: they are left to
-   * `uniq_code`, because checking first and inserting after is a race, and the
-   * unique key cannot lose it.
+   * A Server Action takes whatever the wire carries, so the shape is coerced
+   * before it is judged — otherwise a payload missing `code` is a 500 instead of
+   * a refusal.
+   *
+   * Then the same validator the drawer runs. The client's copy is a courtesy;
+   * this one decides — including the range checks, because MySQL does not reject
+   * an out-of-range DECIMAL, it silently clamps it, and a save that stores a
+   * different number than it was given must never report success.
+   *
+   * Duplicates are the one exception, left to `uniq_code`: checking first and
+   * inserting after is a race, and the unique key cannot lose it.
    */
+  const input: CouponDraft = normaliseDraft(rawInput);
   const errors = validateDraft(input, []);
   const first = Object.values(errors)[0];
   if (first) throw new Error(first);
@@ -260,6 +284,20 @@ export async function saveCoupon(admin: AdminContext, id: number | null, input: 
     return await transaction(async (connection) => {
       let couponId = id;
       if (couponId) {
+        /*
+         * Confirm the row is still there before writing over it. An UPDATE
+         * against a deleted id reports `affectedRows: 0` and throws nothing, so
+         * without this the drawer says "saved" for a coupon that no longer
+         * exists — and `affectedRows` cannot be used to tell the two apart,
+         * because a save that changes nothing reports 0 as well.
+         */
+        const [existing] = await connection.execute<(RowDataPacket & { id: number })[]>(
+          "SELECT id FROM coupons WHERE id = ? LIMIT 1",
+          [couponId],
+        );
+        if (!existing[0]) {
+          throw new Error("That coupon no longer exists — it may have been deleted by someone else.");
+        }
         await connection.execute(
           `UPDATE coupons
               SET code = ?, discount_type = ?, discount_value = ?, min_subtotal = ?, max_discount = ?,

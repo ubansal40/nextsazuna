@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
 import type { PricingRuleRow, PricingRuleInput, WeightBand, RuleTestResult } from "@/lib/admin/pricing-rules";
 import type { ProductEditorOptions } from "@/lib/admin/catalog";
+import { withCurrentValue } from "@/lib/admin/vocab-options";
 import {
   saveRuleAction,
   deleteRuleAction,
@@ -305,8 +306,12 @@ export function PricingRulesScreen({
                     className={fieldClass}
                   >
                     <option value="">Any</option>
-                    {options.materials.map((m) => (
-                      <option key={m} value={m}>{m}</option>
+                    {/* The stored value is always here, even if it has left the
+                        taxonomy: a select whose value matches no option renders
+                        the first one, so the rule would read "Any material"
+                        while actually matching something specific. */}
+                    {withCurrentValue(options.materials, editing.input.material).map((m) => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
                     ))}
                   </select>
                 </label>
@@ -318,8 +323,8 @@ export function PricingRulesScreen({
                     className={fieldClass}
                   >
                     <option value="">Any</option>
-                    {options.purities.map((p) => (
-                      <option key={p} value={p}>{p}</option>
+                    {withCurrentValue(options.purities, editing.input.purity).map((p) => (
+                      <option key={p.value} value={p.value}>{p.label}</option>
                     ))}
                   </select>
                 </label>

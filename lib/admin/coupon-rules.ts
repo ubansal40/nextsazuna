@@ -15,7 +15,6 @@
  * success, and changes no total anywhere.
  */
 
-import { couponDiscountMinor, toMinor } from "./order-money";
 import { formatPrice } from "../format";
 
 export type CouponStatus = "active" | "scheduled" | "expired" | "inactive";
@@ -25,6 +24,24 @@ export type DiscountType = "percent" | "fixed";
 export const CODE_MAX_LENGTH = 50;
 export const CODE_MIN_LENGTH = 3;
 export const CODE_PATTERN = /^[A-Z0-9-]+$/;
+
+/**
+ * The ceiling on every money field, and it is a correctness guard rather than a
+ * style rule.
+ *
+ * `discount_value` is DECIMAL(10,2), and MySQL does not reject a value past a
+ * column's range in the default mode — it **silently clamps** it. Saving
+ * 999999999999.00 stores 99999999.99, with no error and no warning, so the
+ * drawer would report success for a discount nobody typed. Refusing above this
+ * keeps every figure the editor accepts one the column can actually hold.
+ */
+export const MAX_MONEY = 99_999_999;
+
+/** `max_uses` and `per_customer_limit` are INT UNSIGNED. Same clamping rule. */
+export const MAX_COUNT = 4_294_967_295;
+
+/** Both money columns are scale-2, so a third decimal is silently dropped. */
+const MONEY_DECIMALS = 2;
 
 /**
  * The drawer's working shape. Numeric fields are strings because a half-typed
@@ -190,6 +207,37 @@ export function countOrNull(value: string): number | null {
   return Math.max(0, Math.floor(n));
 }
 
+/** How many digits were typed after the point. `"10"` is 0, `"1.5"` is 1. */
+export function decimalPlaces(value: string): number {
+  const [, fraction = ""] = String(value ?? "").trim().split(".");
+  return fraction.length;
+}
+
+/**
+ * Coerce whatever arrived into a draft.
+ *
+ * A Server Action is a public endpoint: the shape on the wire is whatever the
+ * caller sent, and `input.code.trim()` on an absent field is a 500 rather than a
+ * refusal. Everything lands as a string here so `validateDraft` — which decides
+ * — always has something to judge.
+ */
+export function normaliseDraft(input: unknown): CouponDraft {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const text = (value: unknown): string => (typeof value === "string" ? value : typeof value === "number" && Number.isFinite(value) ? String(value) : "");
+  return {
+    code: text(raw.code),
+    discountType: raw.discountType === "fixed" ? "fixed" : "percent",
+    discountValue: text(raw.discountValue),
+    maxDiscount: text(raw.maxDiscount),
+    minSubtotal: text(raw.minSubtotal),
+    maxUses: text(raw.maxUses),
+    perCustomerLimit: text(raw.perCustomerLimit),
+    startsOn: text(raw.startsOn),
+    expiresOn: text(raw.expiresOn),
+    isActive: raw.isActive !== false,
+  };
+}
+
 /* --------------------------------------------------------------------------
  * Validation
  * ------------------------------------------------------------------------ */
@@ -230,33 +278,69 @@ export function validateDraft(draft: CouponDraft, taken: Iterable<string> = []):
       draft.discountType === "percent"
         ? "Set a percentage above 0 — a coupon that takes nothing off does nothing."
         : "Set an amount above 0 — a coupon that takes nothing off does nothing.";
-  } else if (draft.discountType === "percent" && value > 100) {
-    errors.value = "A percentage can't be over 100.";
+  } else if (draft.discountType === "percent") {
+    if (value > 100) {
+      errors.value = "A percentage can't be over 100.";
+    } else if (decimalPlaces(draft.discountValue) > MONEY_DECIMALS) {
+      // The column keeps two decimals. Accepting a third would let the summary
+      // promise 33.333% while the shop gives 33.33%.
+      errors.value = "A percentage can have at most two decimal places.";
+    }
+  } else if (!Number.isInteger(value)) {
+    // Every price in this shop is whole rupees and every figure on screen is
+    // rounded to one, so paise in a discount would be stored and never shown.
+    errors.value = "Use whole rupees for a fixed amount.";
+  } else if (value > MAX_MONEY) {
+    errors.value = `A fixed amount has to be ${money(MAX_MONEY)} or less.`;
   }
 
   if (draft.discountType === "percent") {
     const cap = numberOrNull(draft.maxDiscount);
-    if (draft.maxDiscount.trim() && (cap === null || cap <= 0)) {
-      errors.maxDiscount = "A cap has to be more than nothing. Leave it blank for no cap.";
+    if (draft.maxDiscount.trim()) {
+      if (cap === null || cap <= 0) {
+        errors.maxDiscount = "A cap has to be more than nothing. Leave it blank for no cap.";
+      } else if (cap > MAX_MONEY) {
+        errors.maxDiscount = `A cap has to be ${money(MAX_MONEY)} or less.`;
+      }
     }
   }
 
   const min = numberOrNull(draft.minSubtotal);
-  if (draft.minSubtotal.trim() && (min === null || min < 0)) {
-    errors.minSubtotal = "A minimum subtotal can't be negative.";
+  if (draft.minSubtotal.trim()) {
+    if (min === null || min < 0) {
+      errors.minSubtotal = "A minimum subtotal can't be negative.";
+    } else if (min > MAX_MONEY) {
+      errors.minSubtotal = `A minimum subtotal has to be ${money(MAX_MONEY)} or less.`;
+    }
   }
 
   for (const [field, label] of [
     [draft.maxUses, "total usage limit"],
     [draft.perCustomerLimit, "per-customer limit"],
   ] as const) {
-    if (field.trim() && (countOrNull(field) ?? 0) < 1) {
+    if (!field.trim()) continue;
+    const count = countOrNull(field);
+    if (count === null || count < 1) {
       errors.limits = `Leave the ${label} blank for unlimited, or set it to 1 or more.`;
+      break;
+    }
+    if (count > MAX_COUNT) {
+      errors.limits = `That ${label} is larger than this system can store.`;
       break;
     }
   }
 
-  if (draft.startsOn && draft.expiresOn) {
+  /*
+   * A day that is not a day is refused rather than dropped. `startInstant`
+   * returns null for anything it cannot parse, and null is also how "no bound"
+   * is stored — so without this, a malformed date would save as a coupon with
+   * no start at all, and say it worked.
+   */
+  if (draft.startsOn.trim() && !startInstant(draft.startsOn)) {
+    errors.dates = "That start date isn't a real date.";
+  } else if (draft.expiresOn.trim() && !expiryInstant(draft.expiresOn)) {
+    errors.dates = "That expiry date isn't a real date.";
+  } else if (draft.startsOn && draft.expiresOn) {
     const start = startInstant(draft.startsOn);
     const end = expiryInstant(draft.expiresOn);
     if (start && end && end.getTime() < start.getTime()) {
@@ -359,20 +443,26 @@ export function draftFromRow(row: {
   };
 }
 
-/** The discount this draft would give on a subtotal, in paisa. The drawer's
- *  worked example, computed by the function checkout actually uses. */
-export function draftDiscountMinor(draft: CouponDraft, subtotalMinor: number): number {
-  return couponDiscountMinor(subtotalMinor, {
+/**
+ * The coupon as `couponDiscountMinor` reads it.
+ *
+ * The one translation from "what was typed" to "what the checkout computes", so
+ * the drawer's sentence and the shop's arithmetic cannot be fed different
+ * numbers. `check-coupons.mts` runs the real `couponDiscountMinor` over this and
+ * compares the result against what `describeCoupon` claims.
+ */
+export function toDiscountInput(draft: CouponDraft): {
+  discountType: DiscountType;
+  discountValue: number;
+  maxDiscount: number | null;
+} {
+  return {
     discountType: draft.discountType,
     discountValue: numberOrNull(draft.discountValue) ?? 0,
+    // Percent-only, so a cap left behind by switching type cannot shrink a
+    // fixed discount — the same rule `saveCoupon` writes with.
     maxDiscount: draft.discountType === "percent" ? numberOrNull(draft.maxDiscount) : null,
-  });
-}
-
-/** True when this draft would be refused for a cart of this size. */
-export function belowMinimum(draft: CouponDraft, subtotalMinor: number): boolean {
-  const min = numberOrNull(draft.minSubtotal);
-  return min !== null && min > 0 && subtotalMinor < toMinor(min);
+  };
 }
 
 /* --------------------------------------------------------------------------

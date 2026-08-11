@@ -21,18 +21,22 @@
  */
 import {
   CODE_MAX_LENGTH,
+  MAX_COUNT,
+  MAX_MONEY,
   blankDraft,
   countOrNull,
   couponStatus,
+  decimalPlaces,
   describeCoupon,
   describeValidity,
   discountLabel,
-  draftDiscountMinor,
   draftFromRow,
   expiryInstant,
   generateCode,
+  normaliseDraft,
   startInstant,
   toDayInput,
+  toDiscountInput,
   validateDraft,
   type CouponDraft,
 } from "../lib/admin/coupon-rules";
@@ -95,11 +99,12 @@ const cases: { name: string; d: CouponDraft; subtotalMinor: number; expect: numb
   },
 ];
 
+/** What the checkout would take off this draft. The REAL function, fed by the
+ *  one translation the drawer uses — no test-only reimplementation between. */
+const given = (d: CouponDraft, subtotalMinor: number) => couponDiscountMinor(subtotalMinor, toDiscountInput(d));
+
 for (const c of cases) {
-  checks.push([
-    `${c.name}: the drawer and the checkout agree on the paisa`,
-    draftDiscountMinor(c.d, c.subtotalMinor) === c.expect,
-  ]);
+  checks.push([`${c.name}: the checkout takes off exactly that much`, given(c.d, c.subtotalMinor) === c.expect]);
   checks.push([`${c.name}: the summary says so`, c.says.test(describeCoupon(c.d))]);
 }
 
@@ -107,16 +112,7 @@ for (const c of cases) {
 // left behind by switching type — otherwise a रु 5,000 code silently pays रु 100.
 checks.push([
   "a fixed coupon ignores a max-discount left over from percent mode",
-  draftDiscountMinor(
-    draft({ discountType: "fixed", discountValue: "5000", maxDiscount: "100" }),
-    rupees(60_000),
-  ) === rupees(5_000),
-]);
-
-checks.push([
-  "the drawer's arithmetic IS couponDiscountMinor, not a second copy",
-  draftDiscountMinor(draft({ discountValue: "12", maxDiscount: "3000" }), rupees(40_000)) ===
-    couponDiscountMinor(rupees(40_000), { discountType: "percent", discountValue: 12, maxDiscount: 3000 }),
+  given(draft({ discountType: "fixed", discountValue: "5000", maxDiscount: "100" }), rupees(60_000)) === rupees(5_000),
 ]);
 
 /* --- the summary sentence ------------------------------------------------- */
@@ -190,7 +186,7 @@ const loaded = draftFromRow(stored);
 checks.push(
   ["a stored coupon loads into the drawer with no errors", Object.keys(validateDraft(loaded)).length === 0],
   ["...its DECIMAL columns lose the trailing zeroes a form should not show", loaded.discountValue === "10" && loaded.maxDiscount === "2000"],
-  ["...and the discount it describes is unchanged", draftDiscountMinor(loaded, rupees(50_000)) === rupees(2_000)],
+  ["...and the discount it describes is unchanged", given(loaded, rupees(50_000)) === rupees(2_000)],
   [
     "a coupon with no cap, no minimum and no limits loads as blanks, not zeroes",
     (() => {
@@ -301,6 +297,66 @@ checks.push(
   ["an expiry before the start is refused", Boolean(err({ code: "D", discountValue: "10", startsOn: "2026-09-10", expiresOn: "2026-09-01" }).dates)],
   ["a same-day window is allowed — a one-day sale is a real thing", !err({ code: "D", discountValue: "10", startsOn: "2026-09-10", expiresOn: "2026-09-10" }).dates],
   ["a valid draft has no errors at all", Object.keys(err({ code: "SAVE10", discountValue: "10" })).length === 0],
+);
+
+/* --- what the columns can actually hold -----------------------------------
+ * MySQL does not reject an out-of-range DECIMAL in the default mode — it
+ * silently clamps it. 999999999999.00 into DECIMAL(10,2) stores 99999999.99,
+ * with no error and no warning, so a save would report success having stored a
+ * number nobody typed. Verified against the live database before this was
+ * written; these keep the editor inside what the column can hold.
+ */
+
+checks.push(
+  ["a fixed amount past the column's range is refused, not clamped", Boolean(err({ code: "BIG", discountType: "fixed", discountValue: "999999999999" }).value)],
+  [`a fixed amount at the ceiling is allowed`, !err({ code: "BIG", discountType: "fixed", discountValue: String(MAX_MONEY) }).value],
+  ["a cap past the range is refused", Boolean(err({ code: "C", discountValue: "10", maxDiscount: "999999999999" }).maxDiscount)],
+  ["a minimum subtotal past the range is refused", Boolean(err({ code: "M", discountValue: "10", minSubtotal: "999999999999" }).minSubtotal)],
+  ["a usage limit past INT UNSIGNED is refused", Boolean(err({ code: "L", discountValue: "10", maxUses: String(MAX_COUNT + 1) }).limits)],
+  [
+    "a percentage with three decimals is refused — the column keeps two",
+    Boolean(err({ code: "P", discountValue: "33.333" }).value),
+  ],
+  ["two decimals on a percentage are fine", !err({ code: "P", discountValue: "33.33" }).value],
+  [
+    "paise in a fixed amount are refused — every figure on screen is whole rupees",
+    Boolean(err({ code: "F", discountType: "fixed", discountValue: "100.50" }).value),
+  ],
+  ["a whole-rupee fixed amount is fine", !err({ code: "F", discountType: "fixed", discountValue: "100" }).value],
+);
+
+/* --- a day that is not a day ---------------------------------------------
+ * `startInstant` returns null both for "no bound" and for anything it cannot
+ * parse, so an unvalidated bad date would save as a coupon with no start at
+ * all — and say it worked.
+ */
+
+checks.push(
+  ["a malformed start date is refused rather than dropped", Boolean(err({ code: "D", discountValue: "10", startsOn: "banana" }).dates)],
+  ["a malformed expiry date is refused rather than dropped", Boolean(err({ code: "D", discountValue: "10", expiresOn: "2026-13-45" }).dates)],
+  ["blank dates are still fine", !err({ code: "D", discountValue: "10" }).dates],
+);
+
+/* --- whatever the wire carries -------------------------------------------
+ * A Server Action is a public endpoint. Before this, a payload with no `code`
+ * reached `input.code.trim()` and became a 500 instead of a refusal.
+ */
+
+checks.push(
+  ["an empty payload coerces to a draft rather than throwing", Object.keys(validateDraft(normaliseDraft({}))).length > 0],
+  ["a null payload coerces too", normaliseDraft(null).code === ""],
+  ["junk types become blanks, not 'undefined' or '[object Object]'", normaliseDraft({ code: { evil: true }, discountValue: [] }).code === "" && normaliseDraft({ discountValue: [] }).discountValue === ""],
+  ["a number sent where a string was expected is kept, not dropped", normaliseDraft({ discountValue: 10 }).discountValue === "10"],
+  ["an unknown discount type falls back to percent, never to something unstored", normaliseDraft({ discountType: "bogus" }).discountType === "percent"],
+  ["isActive defaults to true and only an explicit false turns it off", normaliseDraft({}).isActive === true && normaliseDraft({ isActive: false }).isActive === false],
+  [
+    "a coerced payload still has to pass every rule",
+    Boolean(validateDraft(normaliseDraft({ code: "OK", discountType: "fixed", discountValue: "999999999999" })).value),
+  ],
+);
+
+checks.push(
+  ["a decimal count is read as digits after the point", decimalPlaces("33.333") === 3 && decimalPlaces("10") === 0 && decimalPlaces("1.5") === 1],
 );
 
 /* --- numbers -------------------------------------------------------------- */

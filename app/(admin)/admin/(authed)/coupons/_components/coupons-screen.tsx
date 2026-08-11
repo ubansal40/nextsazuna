@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
 import {
+  STATUS_LABEL,
   blankDraft,
   couponStatus,
   describeCoupon,
@@ -361,7 +362,7 @@ export function CouponsScreen({ initial, nowIso }: { initial: AdminCouponRow[]; 
                       {Number(row.minSubtotal) > 0 ? (formatPrice(row.minSubtotal) ?? "—") : <span className="text-muted">—</span>}
                     </StackedCell>
                     <StackedCell label="Status">
-                      <Chip tone={STATUS_TONE[status]}>{status}</Chip>
+                      <Chip tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Chip>
                     </StackedCell>
                     <StackedCell label="Live">
                       <Switch
@@ -407,7 +408,23 @@ export function CouponsScreen({ initial, nowIso }: { initial: AdminCouponRow[]; 
       {/* Native modal <dialog>: Escape, the focus trap, the backdrop and focus
           restore all come from the platform. Kept mounted and driven by `open`,
           because a dialog unmounted while open never hands focus back. */}
-      <dialog ref={drawerRef} onClick={onBackdropClick} aria-label={editing?.id ? "Edit coupon" : "Create coupon"} className={drawerClass}>
+      {/*
+        Escape has to be stopped, not just observed. `useDialog` reports the
+        native `cancel` back to React but never prevents its default, so without
+        this the key both closes the drawer AND opens the discard dialog — the
+        edits are already gone by the time it asks whether to throw them away.
+        Prevented only when there is something to lose; an untouched drawer
+        closes on Escape the way every other drawer in this admin does.
+      */}
+      <dialog
+        ref={drawerRef}
+        onClick={onBackdropClick}
+        onCancel={(event) => {
+          if (editing?.touched) event.preventDefault();
+        }}
+        aria-label={editing?.id ? "Edit coupon" : "Create coupon"}
+        className={drawerClass}
+      >
         {editing && (
           <div className="flex h-full flex-col">
             <div className="flex items-center gap-2 border-b border-line px-4 py-3.5">
@@ -497,8 +514,11 @@ export function CouponsScreen({ initial, nowIso }: { initial: AdminCouponRow[]; 
                       <input
                         id="cp-value"
                         value={editing.draft.discountValue}
-                        onChange={(e) => setDraft({ discountValue: e.target.value.replace(/[^0-9.]/g, "") })}
-                        inputMode="decimal"
+                        // A percentage may carry two decimals, which is all the
+                        // column keeps; a fixed amount is whole rupees, because
+                        // every figure this shop displays is rounded to one.
+                        onChange={(e) => setDraft({ discountValue: isPercent ? decimalInput(e.target.value) : e.target.value.replace(/[^0-9]/g, "") })}
+                        inputMode={isPercent ? "decimal" : "numeric"}
                         placeholder="0"
                         aria-invalid={showErrors && Boolean(errors.value)}
                         className={cn(fieldClass, "font-mono", isPercent ? "pr-8" : "pl-8", showErrors && errors.value && "border-error")}
@@ -676,18 +696,20 @@ export function CouponsScreen({ initial, nowIso }: { initial: AdminCouponRow[]; 
         body={
           <>
             <p>The code stops working at checkout immediately and disappears from this list.</p>
-            {confirmDelete && confirmDelete.redemptions > 0 && (
+            {/* Counted from every order carrying the code, not just the ones
+                that redeemed it: a cancelled order's link breaks the same way. */}
+            {confirmDelete && confirmDelete.linkedOrders > 0 && (
               <p className="mt-2 rounded-lg border border-accent-soft bg-warning-soft px-3 py-2.5 text-[12.5px] leading-relaxed text-[var(--sz-admin-gold-ink)]">
-                {confirmDelete.redemptions.toLocaleString("en-IN")}{" "}
-                {confirmDelete.redemptions === 1 ? "order was" : "orders were"} placed with this code. Deleting it drops
-                that link from your order history — switching it off keeps the record and still stops new redemptions.
+                {confirmDelete.linkedOrders.toLocaleString("en-IN")}{" "}
+                {confirmDelete.linkedOrders === 1 ? "order carries" : "orders carry"} this code. Deleting it drops that
+                link from your order history — switching it off keeps the record and still stops new redemptions.
               </p>
             )}
           </>
         }
         confirmLabel="Delete coupon"
         cancelLabel="Keep it"
-        altLabel={confirmDelete && confirmDelete.redemptions > 0 && confirmDelete.isActive ? "Switch it off instead" : undefined}
+        altLabel={confirmDelete && confirmDelete.linkedOrders > 0 && confirmDelete.isActive ? "Switch it off instead" : undefined}
         onAlt={confirmDelete ? () => deactivateInstead(confirmDelete) : undefined}
         busy={busy}
         onConfirm={() => confirmDelete && removeCoupon(confirmDelete)}
@@ -708,6 +730,20 @@ export function CouponsScreen({ initial, nowIso }: { initial: AdminCouponRow[]; 
       />
     </div>
   );
+}
+
+/**
+ * Digits and at most one point, with at most two figures after it.
+ *
+ * A bare `[^0-9.]` strip lets "1.2.3" through, which `Number` reads as NaN — and
+ * the field then reports "set a percentage above 0", which is not the problem
+ * the person has.
+ */
+function decimalInput(value: string): string {
+  const cleaned = value.replace(/[^0-9.]/g, "");
+  const [whole, ...rest] = cleaned.split(".");
+  if (rest.length === 0) return whole;
+  return `${whole}.${rest.join("").slice(0, 2)}`;
 }
 
 const fieldClass =

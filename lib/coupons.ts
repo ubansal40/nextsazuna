@@ -83,12 +83,15 @@ function toMinor(value: string | null): number | null {
  * rows rather than scanning every order ever placed.
  */
 async function redemptionsByPhone(code: string, phone: string): Promise<number> {
+  // Placeholders are counted from the list rather than written out, so adding a
+  // status cannot silently shift every parameter after it by one.
+  const gaps = NON_REDEMPTION_STATUSES.map(() => "?").join(", ");
   const [row] = await query<RowDataPacket & { used: number }>(
     `SELECT COUNT(*) AS used
        FROM orders
       WHERE coupon_code = ?
         AND deleted_at IS NULL
-        AND status NOT IN (?, ?)
+        AND status NOT IN (${gaps})
         AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', ''), 10) = ?`,
     [code, ...NON_REDEMPTION_STATUSES, phone],
   );

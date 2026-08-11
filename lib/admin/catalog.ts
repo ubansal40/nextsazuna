@@ -298,16 +298,37 @@ export interface ProductEditorOptions {
   purities: string[];
 }
 
-/** The vocabularies the product editor's selects need — categories and tags by
- *  id (the write layer keys on id), materials and purities as the free strings
- *  the catalogue uses until they become managed vocabularies in the taxonomy
- *  phase. */
+/**
+ * The vocabularies the product editor's selects need.
+ *
+ * Categories and tags by id, because the write layer keys on id. Materials and
+ * purities come from the `materials` and `purities` tables — **the taxonomy the
+ * admin manages** — not from `SELECT DISTINCT material FROM products`, which is
+ * what this used to do.
+ *
+ * That distinction is the whole point. Distinct-on-products is a list of what
+ * has been used before, so the vocabulary the owner curates had no effect on
+ * what they could pick: adding "Yellow Gold" in Taxonomy left it unofferable
+ * until some product already had it, which was impossible by definition, while
+ * a legacy string like "Gold" stayed on offer forever even though it was in no
+ * vocabulary at all.
+ *
+ * Hidden entries are excluded and `sort_order` is honoured, so switching one off
+ * or reordering the list in Taxonomy is visible here immediately. A product or
+ * rule already carrying a value that is no longer offered keeps it —
+ * `withCurrentValue` in `vocab-options.ts` is what guarantees that, at the one
+ * place it matters, rather than by quietly widening this list.
+ *
+ * Filters are deliberately NOT changed to match: `getProductFilterOptions`
+ * still reads the catalogue, because a filter answers "what is in here" and
+ * would otherwise be unable to find the 752 products still on "Gold".
+ */
 export async function getProductEditorOptions(): Promise<ProductEditorOptions> {
   const [categories, tags, materials, purities] = await Promise.all([
     query<IdNameRow>("SELECT id, name FROM categories ORDER BY name"),
     query<IdNameRow>("SELECT id, name FROM tags ORDER BY name"),
-    query<VocabRow>("SELECT DISTINCT material AS value FROM products WHERE material IS NOT NULL AND material <> '' ORDER BY material"),
-    query<VocabRow>("SELECT DISTINCT purity AS value FROM products WHERE purity IS NOT NULL AND purity <> '' ORDER BY purity"),
+    query<VocabRow>("SELECT name AS value FROM materials WHERE is_visible = 1 ORDER BY sort_order, name"),
+    query<VocabRow>("SELECT name AS value FROM purities WHERE is_visible = 1 ORDER BY sort_order, name"),
   ]);
   return {
     categories: categories.map((c) => ({ id: c.id, name: c.name })),

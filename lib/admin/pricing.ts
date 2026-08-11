@@ -197,3 +197,64 @@ function numberOr0(value: unknown): number {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
 }
+
+/* --------------------------------------------------------------------------
+ * MRP
+ * ------------------------------------------------------------------------ */
+
+/**
+ * The MRP is twice the selling price — the owner's rule, and the shop's whole
+ * pricing story: every piece lists at double and sells at half.
+ *
+ * It replaces deriving the MRP from a pricing rule, which sounded better than it
+ * worked. The rule that derives the MRP is the same rule that derives the sale
+ * price, so when one matched, the two came out identical and the piece showed no
+ * markdown at all; and 3,077 of 3,078 active products match no rule, so the MRP
+ * fell back to the sale price and showed no markdown either. A number nobody
+ * could set, that came out equal to the price in every real case, is worse than
+ * a rule that is at least honest about being a rule.
+ */
+export const MRP_MULTIPLIER = 2;
+
+/**
+ * The MRP for a selling price, as the DECIMAL string the column stores.
+ *
+ * Rounded to whole rupees, because the admin's price field is whole rupees and
+ * `formatPrice` shows no paisa anywhere on the storefront — a `.50` here could
+ * only ever be invisible.
+ */
+export function mrpFromSalePrice(salePrice: string | number): string {
+  const sale = Number(salePrice);
+  if (!Number.isFinite(sale) || sale <= 0) return "0.00";
+  return (Math.round(sale) * MRP_MULTIPLIER).toFixed(2);
+}
+
+/**
+ * A price field's value as whole rupees.
+ *
+ * DECIMAL(10,2) comes back as "1400.00", and putting that in an input asks the
+ * operator to read past two zeroes that never mean anything: every price in the
+ * catalogue is already whole, and the storefront rounds them for display in any
+ * case. Blank stays blank — an empty field is not a zero.
+ */
+export function wholeRupees(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  return String(Math.round(n));
+}
+
+/**
+ * A money field mid-typing: digits, and at most one decimal point.
+ *
+ * The point survives keystroke by keystroke and is rounded away by
+ * `wholeRupees` when the field is left. Dropping it on every keystroke instead
+ * would turn "5500.75" into "550075" — a hundredfold price, entered by someone
+ * who typed exactly what they meant.
+ */
+export function keepOneDot(value: string): string {
+  const cleaned = String(value ?? "").replace(/[^0-9.]/g, "");
+  const first = cleaned.indexOf(".");
+  if (first === -1) return cleaned;
+  return cleaned.slice(0, first + 1) + cleaned.slice(first + 1).replace(/\./g, "");
+}

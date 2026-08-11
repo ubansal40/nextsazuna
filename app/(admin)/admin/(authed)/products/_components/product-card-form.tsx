@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
 import { MAX_PRODUCT_PHOTOS } from "@/lib/admin/product-limits";
 import type { ProductEditorOptions } from "@/lib/admin/catalog";
+import { withCurrentValue, type VocabOption } from "@/lib/admin/vocab-options";
 import { skuLocked, type EditorCard } from "./editor-model";
 
 /**
@@ -45,16 +46,14 @@ const fieldClass =
  */
 const PHOTO_DRAG_TYPE = "application/x-sazuna-photo-index";
 
-function unique(values: (string | undefined | null)[]): string[] {
-  return [...new Set(values.filter((v): v is string => !!v))];
-}
-
 export interface CardHandlers {
   patch: (patch: Partial<EditorCard>) => void;
   /** A field the admin edited by hand — marks it typed, so autofill leaves it. */
   edit: (patch: Partial<EditorCard>) => void;
   onSkuChange: (value: string) => void;
   onPriceChange: (value: string) => void;
+  /** Rounds the price to whole rupees once the field is left. */
+  onPriceBlur: () => void;
   useRulePrice: () => void;
   useSheetValues: () => void;
   duplicate: () => void;
@@ -89,8 +88,15 @@ export function ProductCardForm({
    * id used by `aria-describedby` has to be.
    */
   const lockNoteId = useId();
-  const materialOptions = unique([card.material, ...options.materials]);
-  const purityOptions = unique([card.purity, ...options.purities]);
+  /*
+   * The taxonomy, in the order the owner arranged it — plus whatever this
+   * product already carries, if that is no longer part of it. 752 products are
+   * still on "Gold", which is in no vocabulary; dropping it from the list would
+   * make the select display "—" and turn a save into a silent erasure of the
+   * material on a product nobody meant to touch.
+   */
+  const materialOptions = withCurrentValue(options.materials, card.material);
+  const purityOptions = withCurrentValue(options.purities, card.purity);
   const locked = card.status === "saved" || card.status === "saving";
 
   const hasSku = card.sku.trim().length > 0;
@@ -404,6 +410,7 @@ export function ProductCardForm({
                 value={card.salePrice}
                 disabled={locked}
                 onChange={(e) => handlers.onPriceChange(e.target.value)}
+                onBlur={handlers.onPriceBlur}
                 inputMode="decimal"
                 aria-invalid={!!card.errors.salePrice}
                 className={cn(fieldClass, "font-mono", card.errors.salePrice && "border-error")}
@@ -525,7 +532,9 @@ function BarSelect({
 }: {
   label: string;
   value: string;
-  options: string[];
+  /** Value and label differ only for a value that has left the taxonomy, which
+   *  says so in its label while still posting the string it stores. */
+  options: VocabOption[];
   disabled: boolean;
   mono?: boolean;
   onChange: (value: string) => void;
@@ -547,8 +556,8 @@ function BarSelect({
       >
         <option value="">—</option>
         {options.map((o) => (
-          <option key={o} value={o}>
-            {o}
+          <option key={o.value} value={o.value}>
+            {o.label}
           </option>
         ))}
       </select>

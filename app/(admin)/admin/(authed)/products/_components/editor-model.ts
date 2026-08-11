@@ -1,3 +1,4 @@
+import { wholeRupees } from "@/lib/admin/pricing";
 import type { AdminProductDetail } from "@/lib/admin/product-detail";
 import type { SkuAutofill } from "../_editor-actions";
 
@@ -178,7 +179,9 @@ export function cardFromProduct(product: AdminProductDetail): EditorCard {
     sku: product.sku,
     material: product.material,
     purity: product.purity,
-    salePrice: product.salePrice || product.price,
+    // Whole rupees: DECIMAL(10,2) hands back "1400.00", and two zeroes that
+    // never mean anything are two characters to read past on every edit.
+    salePrice: wholeRupees(product.salePrice || product.price),
     gross: product.grossWeight,
     net: product.netWeight,
     diamond: product.diamondWeight,
