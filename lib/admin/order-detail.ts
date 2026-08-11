@@ -460,11 +460,15 @@ export async function updateOrderPayment(
 /**
  * Apply a promo code to an existing order.
  *
- * The coupon's own rules are honoured — active, in window, min subtotal, and
- * the percent cap — because an admin applying a code by hand should not be able
- * to grant more than the code itself allows. `used_count` is deliberately NOT
- * incremented: this is an admin adjustment, not a customer redemption, and
- * inflating it would exhaust a limited-use code.
+ * The coupon's own rules are honoured — active, in window, within its usage
+ * limit, min subtotal, and the percent cap — because an admin applying a code by
+ * hand should not be able to grant more than the code itself allows.
+ *
+ * `used_count` is deliberately NOT incremented: this is an admin adjustment, not
+ * a customer redemption, and inflating it would exhaust a limited-use code. It
+ * is still *read*, so a code a customer could no longer use cannot be handed out
+ * here either — that asymmetry was the gap, and it meant a sold-out promotion
+ * stayed available to anyone who phoned the shop.
  */
 export async function applyOrderPromo(admin: AdminContext, orderId: number, code: string): Promise<void> {
   const wanted = code.trim().toUpperCase().slice(0, 50);
@@ -481,9 +485,12 @@ export async function applyOrderPromo(admin: AdminContext, orderId: number, code
         is_active: number;
         starts_at: Date | null;
         expires_at: Date | null;
+        max_uses: number | null;
+        used_count: number;
       })[]
     >(
-      `SELECT code, discount_type, discount_value, min_subtotal, max_discount, is_active, starts_at, expires_at
+      `SELECT code, discount_type, discount_value, min_subtotal, max_discount, is_active, starts_at, expires_at,
+              max_uses, used_count
          FROM coupons WHERE code = ? LIMIT 1`,
       [wanted],
     );
@@ -493,6 +500,9 @@ export async function applyOrderPromo(admin: AdminContext, orderId: number, code
     const now = Date.now();
     if (coupon.starts_at && new Date(coupon.starts_at).getTime() > now) throw new Error("That promo code isn't live yet.");
     if (coupon.expires_at && new Date(coupon.expires_at).getTime() < now) throw new Error("That promo code has expired.");
+    if (coupon.max_uses !== null && coupon.used_count >= coupon.max_uses) {
+      throw new Error("That promo code has been fully redeemed.");
+    }
 
     const subtotal = await subtotalMinor(connection, orderId);
     if (subtotal < toMinor(coupon.min_subtotal)) {
