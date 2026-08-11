@@ -19,7 +19,7 @@ import {
   mrpFromSalePrice,
   wholeRupees,
 } from "../lib/admin/pricing";
-import { OFF_VOCABULARY_SUFFIX, withCurrentValue } from "../lib/admin/vocab-options";
+import { OFF_VOCABULARY_SUFFIX, withCurrentValue, withValuesInUse } from "../lib/admin/vocab-options";
 
 const checks: [string, boolean][] = [];
 const approx = (a: number, b: number) => Math.abs(a - b) < 0.001;
@@ -248,6 +248,49 @@ checks.push(
   [
     "an empty taxonomy still offers what a rule already stores",
     withCurrentValue([], "Yellow Gold").map((o) => o.value).join(",") === "Yellow Gold",
+  ],
+);
+
+/* --- the same rule, applied to a filter drawer ----------------------------
+ * The filters offer the taxonomy, in its curated order. But a filter also has
+ * to be able to FIND things, and 752 products still carry "Gold", which is in
+ * no vocabulary — offering the taxonomy alone would put a quarter of the
+ * catalogue out of reach with nothing on screen to say so.
+ */
+const IN_USE = ["Gold", "White Gold", "Silver", "Gold Plated Silver"];
+
+checks.push(
+  [
+    "the filter leads with the taxonomy, in its order",
+    withValuesInUse(VOCAB, IN_USE).slice(0, 3).map((o) => o.value).join(",") === "Yellow Gold,White Gold,Silver",
+  ],
+  [
+    "a value in use but not in the taxonomy stays findable",
+    withValuesInUse(VOCAB, IN_USE).some((o) => o.value === "Gold"),
+  ],
+  [
+    "...appended after the vocabulary, not mixed into it",
+    withValuesInUse(VOCAB, IN_USE).slice(3).every((o) => !VOCAB.includes(o.value)),
+  ],
+  [
+    "...and labelled as the odd one out",
+    withValuesInUse(VOCAB, IN_USE).find((o) => o.value === "Gold")?.label === `Gold${OFF_VOCABULARY_SUFFIX}`,
+  ],
+  [
+    "a value in both appears once — the filter posts one string per option",
+    withValuesInUse(VOCAB, IN_USE).filter((o) => o.value === "Silver").length === 1,
+  ],
+  [
+    "a duplicate among the in-use values is collapsed",
+    withValuesInUse(VOCAB, ["Gold", "Gold"]).filter((o) => o.value === "Gold").length === 1,
+  ],
+  [
+    "blanks and whitespace never become an option",
+    withValuesInUse(VOCAB, ["", "   "]).length === VOCAB.length,
+  ],
+  [
+    "nothing in use leaves the taxonomy exactly as it is",
+    withValuesInUse(VOCAB, []).map((o) => o.value).join(",") === VOCAB.join(","),
   ],
 );
 

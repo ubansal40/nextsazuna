@@ -18,6 +18,12 @@
  * sorted in, and labelled, because an entry that is not in the vocabulary is
  * worth noticing: it is either history to leave alone or a gap in the taxonomy
  * to fill.
+ *
+ * The same rule serves the filter drawers, for a different reason. There the
+ * taxonomy decides what is offered and in what order, but a value it no longer
+ * contains has to stay reachable: 752 products still carry "Gold", and a filter
+ * that cannot find a quarter of the catalogue is not a working filter. Appending
+ * them keeps every product findable and puts the cleanup work on screen.
  */
 
 export interface VocabOption {
@@ -29,18 +35,33 @@ export interface VocabOption {
 export const OFF_VOCABULARY_SUFFIX = " — not in taxonomy";
 
 /**
- * The vocabulary as options, guaranteed to contain `current`.
+ * The vocabulary as options, followed by any of `alsoInUse` that has left it.
  *
- * A blank `current` means "nothing chosen" and adds no option — every caller
- * renders its own empty choice ("—", "Any", "— none —") with its own wording.
- * Matching is exact: these strings are compared against product and rule columns
- * elsewhere, and a case-insensitive match here would offer a value that then
- * matches nothing there.
+ * Blank entries add nothing — every caller renders its own empty choice ("—",
+ * "Any", "All materials") with its own wording. Matching is exact: these strings
+ * are compared against product and rule columns elsewhere, and a
+ * case-insensitive match here would offer a value that then matches nothing
+ * there.
  */
-export function withCurrentValue(vocabulary: readonly string[], current: string): VocabOption[] {
+export function withValuesInUse(
+  vocabulary: readonly string[],
+  alsoInUse: readonly string[],
+): VocabOption[] {
   const options = vocabulary.map((name) => ({ value: name, label: name }));
-  const value = (current ?? "").trim();
-  if (!value) return options;
-  if (vocabulary.some((name) => name === value)) return options;
-  return [...options, { value, label: `${value}${OFF_VOCABULARY_SUFFIX}` }];
+  const known = new Set(vocabulary);
+  const seen = new Set<string>();
+
+  for (const raw of alsoInUse) {
+    const value = (raw ?? "").trim();
+    if (!value || known.has(value) || seen.has(value)) continue;
+    seen.add(value);
+    options.push({ value, label: `${value}${OFF_VOCABULARY_SUFFIX}` });
+  }
+  return options;
+}
+
+/** The vocabulary as options, guaranteed to contain the one stored value an
+ *  editor is showing. */
+export function withCurrentValue(vocabulary: readonly string[], current: string): VocabOption[] {
+  return withValuesInUse(vocabulary, current ? [current] : []);
 }

@@ -6,6 +6,7 @@ import { query, transaction } from "../db";
 import { EFFECTIVE_PRICE } from "../catalog/sql";
 import type { SqlParam } from "../db";
 import { recordAdminAction } from "./audit";
+import { withValuesInUse } from "./vocab-options";
 import type { AdminContext } from "./rbac";
 import {
   toAdminProductListItem,
@@ -191,14 +192,32 @@ interface VocabRow extends RowDataPacket {
 }
 
 /**
- * The options that populate the list's filter drawer. Materials and purities
- * are read distinct from the catalogue for now — they become managed
- * vocabularies in the taxonomy phase, at which point this reads the tables.
+ * The options that populate the filter drawers — the products list and the
+ * product picker share this one function.
+ *
+ * **Every list is the taxonomy**: hidden entries are excluded and `sort_order`
+ * is honoured, so what the owner curates in Taxonomy is what they can filter by,
+ * arranged the way they arranged it. This used to order everything by name and
+ * ignore visibility entirely, and materials and purities came from
+ * `SELECT DISTINCT material FROM products` — the catalogue's history rather than
+ * the vocabulary. (The comment that stood here promised exactly this change
+ * "in the taxonomy phase"; the tables have existed since migration 0010.)
+ *
+ * **With one addition.** A filter has a job the editors do not: finding things.
+ * 752 products still carry "Gold", which is in no vocabulary, and dropping it
+ * would make a quarter of the catalogue unreachable through the material filter.
+ * So a value that is still in use but no longer in the taxonomy is appended and
+ * labelled rather than hidden — findable, and visibly waiting to be tidied up.
+ *
+ * Categories and tags need no such union: they are joined by id and slug from
+ * these very tables, so a product cannot carry one that is not here.
  */
 export async function getProductFilterOptions(): Promise<AdminProductFilterOptions> {
-  const [categories, tags, materials, purities] = await Promise.all([
-    query<NameSlugRow>("SELECT slug, name FROM categories ORDER BY name"),
-    query<IdNameRow>("SELECT id, name FROM tags ORDER BY name"),
+  const [categories, tags, materials, purities, materialsInUse, puritiesInUse] = await Promise.all([
+    query<NameSlugRow>("SELECT slug, name FROM categories WHERE is_visible = 1 ORDER BY sort_order, name"),
+    query<IdNameRow>("SELECT id, name FROM tags WHERE is_visible = 1 ORDER BY sort_order, name"),
+    query<VocabRow>("SELECT name AS value FROM materials WHERE is_visible = 1 ORDER BY sort_order, name"),
+    query<VocabRow>("SELECT name AS value FROM purities WHERE is_visible = 1 ORDER BY sort_order, name"),
     query<VocabRow>(
       "SELECT DISTINCT material AS value FROM products WHERE material IS NOT NULL AND material <> '' ORDER BY material",
     ),
@@ -207,11 +226,13 @@ export async function getProductFilterOptions(): Promise<AdminProductFilterOptio
     ),
   ]);
 
+  const names = (rows: VocabRow[]) => rows.map((r) => r.value);
+
   return {
     categories: categories.map((c) => ({ value: c.slug, label: c.name })),
     tags: tags.map((t) => ({ value: t.id, label: t.name })),
-    materials: materials.map((m) => ({ value: m.value, label: m.value })),
-    purities: purities.map((p) => ({ value: p.value, label: p.value })),
+    materials: withValuesInUse(names(materials), names(materialsInUse)),
+    purities: withValuesInUse(names(purities), names(puritiesInUse)),
   };
 }
 
@@ -319,9 +340,9 @@ export interface ProductEditorOptions {
  * `withCurrentValue` in `vocab-options.ts` is what guarantees that, at the one
  * place it matters, rather than by quietly widening this list.
  *
- * Filters are deliberately NOT changed to match: `getProductFilterOptions`
- * still reads the catalogue, because a filter answers "what is in here" and
- * would otherwise be unable to find the 752 products still on "Gold".
+ * The filter drawers read the same tables, with one difference: they also list
+ * a value that is still in use but has left the vocabulary, because a filter has
+ * to be able to find every product. See `getProductFilterOptions`.
  */
 export async function getProductEditorOptions(): Promise<ProductEditorOptions> {
   const [categories, tags, materials, purities] = await Promise.all([
