@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { queryOne } from "@/lib/db";
 import type { CategoryRow, SlugKind, SlugRow, TaxonRow } from "./types";
 
@@ -24,7 +25,16 @@ export type ResolvedSlug =
   | { kind: "product"; slug: string }
   | null;
 
-export async function resolveSlug(slug: string): Promise<ResolvedSlug> {
+/**
+ * Memoised for the life of one request.
+ *
+ * `generateMetadata` and the page component each resolve the same slug, and
+ * neither knows the other exists — so every product page ran this four-query
+ * ladder twice, eight round trips to answer one question. React's `cache` is
+ * request-scoped, so the second caller gets the first one's answer and the
+ * behaviour is unchanged. Next dedupes `fetch`; it cannot dedupe mysql2.
+ */
+export const resolveSlug = cache(async function resolveSlug(slug: string): Promise<ResolvedSlug> {
   const category = await queryOne<CategoryRow>(
     "SELECT id, name, slug, parent_id FROM categories WHERE slug = ? LIMIT 1",
     [slug],
@@ -50,7 +60,7 @@ export async function resolveSlug(slug: string): Promise<ResolvedSlug> {
   if (product) return { kind: "product", slug: product.slug };
 
   return null;
-}
+});
 
 /**
  * Strip the `.html` suffix the canonical URLs carry.

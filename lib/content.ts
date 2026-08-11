@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { queryOne } from "./db";
 import type { RowDataPacket } from "mysql2";
 
@@ -18,7 +19,20 @@ interface ContentRow extends RowDataPacket {
   value: string | object | null;
 }
 
-export async function getContentBlock<T>(key: string): Promise<T | null> {
+/**
+ * Read and parse one block, once per request.
+ *
+ * `site_identity` is wanted by the shell (for the WhatsApp button), the JSON-LD
+ * schema, the footer and the PDP — four independent components that must not
+ * have to know about each other. Without memoisation that was four identical
+ * queries on every page in the shop; with it, three of them are free.
+ *
+ * The generic sits on the wrapper rather than inside `cache`, which memoises on
+ * arguments and cannot carry a type parameter. The value is shared by reference
+ * between callers within a request — treat it as frozen, as every reader
+ * already does.
+ */
+const readContentBlock = cache(async function readContentBlock(key: string): Promise<unknown> {
   let row: ContentRow | null;
 
   try {
@@ -48,12 +62,16 @@ export async function getContentBlock<T>(key: string): Promise<T | null> {
 
   // MariaDB stores JSON as LONGTEXT, so the driver may hand back either a
   // parsed object or the raw string depending on column type detection.
-  if (typeof row.value === "object") return row.value as T;
+  if (typeof row.value === "object") return row.value;
   try {
-    return JSON.parse(row.value) as T;
+    return JSON.parse(row.value);
   } catch {
     return null;
   }
+});
+
+export async function getContentBlock<T>(key: string): Promise<T | null> {
+  return (await readContentBlock(key)) as T | null;
 }
 
 /**

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import type { RowDataPacket } from "mysql2";
 import { query, queryOne, type SqlParam } from "@/lib/db";
 import { formatPrice } from "@/lib/format";
@@ -246,8 +247,16 @@ export async function listProducts(input: ListingQuery = {}): Promise<ProductLis
   };
 }
 
-/** A single product by slug, or null. Returns inactive products as null. */
-export async function getProductBySlug(slug: string): Promise<ProductDetail | null> {
+/**
+ * A single product by slug, or null. Returns inactive products as null.
+ *
+ * Memoised per request: `generateMetadata` and the page component both ask for
+ * the same product, so this and its three-query fan-out used to run twice on
+ * every product page — eight round trips for one product.
+ */
+export const getProductBySlug = cache(async function getProductBySlug(
+  slug: string,
+): Promise<ProductDetail | null> {
   const row = await queryOne<ProductRow>(
     `SELECT p.*, ${EFFECTIVE_PRICE} AS effective_price, ${IN_STOCK} AS in_stock
        FROM products p
@@ -305,7 +314,7 @@ export async function getProductBySlug(slug: string): Promise<ProductDetail | nu
     categories: categories.map(taxon),
     tags: tags.map(taxon),
   };
-}
+});
 
 /**
  * Products by id, for the bag.
