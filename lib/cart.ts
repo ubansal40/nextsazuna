@@ -74,7 +74,13 @@ function money(minor: number): string {
  */
 export async function priceCart(
   entries: CartEntry[],
-  options: { code?: string; giftWrap?: boolean } = {},
+  options: {
+    code?: string;
+    giftWrap?: boolean;
+    /** Only used to enforce a coupon's per-customer limit. The cart itself does
+     *  not know who is shopping; the checkout does, once the phone is typed. */
+    phone?: string | null;
+  } = {},
 ): Promise<PricedCart> {
   const products = await getProductsByIds(entries.map((entry) => entry.productId));
   const byId = new Map(products.map((product) => [product.id, product]));
@@ -105,7 +111,10 @@ export async function priceCart(
   // one is pointless work.
   const coupon =
     options.code && lines.length
-      ? { ...(await validateCoupon(options.code, subtotalMinor)), code: options.code }
+      ? {
+          ...(await validateCoupon(options.code, subtotalMinor, new Date(), { phone: options.phone })),
+          code: options.code,
+        }
       : null;
 
   const discountMinor = coupon?.ok ? coupon.discountMinor : 0;

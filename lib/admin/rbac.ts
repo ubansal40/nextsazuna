@@ -61,6 +61,10 @@ export const ADMIN_SECTIONS: readonly AdminSection[] = [
   // kept verbatim so a staff_roles row written by the old admin means here what
   // the owner meant then — the difference is that this one is enforced.
   { key: "content", label: "Site content", path: "/admin/content" },
+  // Same story: `coupons` was a grant in the reference that guarded no route.
+  // It guards one now, and that route is the only place in this admin where a
+  // staffer can change what a customer is charged.
+  { key: "coupons", label: "Coupons", path: "/admin/coupons" },
 ] as const;
 
 /** Fast membership set for validation and gating. */

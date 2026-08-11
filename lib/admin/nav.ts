@@ -75,6 +75,12 @@ export const ADMIN_NAV = {
       ],
     },
     {
+      label: "Marketing",
+      items: [
+        { section: "coupons", label: "Coupons", href: "/admin/coupons", icon: "pricetag" },
+      ],
+    },
+    {
       label: "Content",
       items: [
         { section: "content", label: "Homepage", href: "/admin/content", icon: "layout" },

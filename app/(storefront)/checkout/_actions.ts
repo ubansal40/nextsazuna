@@ -11,6 +11,7 @@ import { buildEsewaForm } from "@/lib/payments/esewa";
 import { buildCardForm } from "@/lib/payments/cybersource";
 import { initiateKhaltiPayment } from "@/lib/payments/khalti";
 import { formatPrice } from "@/lib/format";
+import { COUPON_MESSAGE } from "@/lib/coupon-messages";
 
 /**
  * Checkout.
@@ -59,14 +60,6 @@ function cleanEntries(entries: unknown): CartEntry[] {
     : [];
 }
 
-const COUPON_MESSAGE: Record<string, string> = {
-  invalid: "That code isn't valid. Check the spelling and try again.",
-  expired: "This code has expired.",
-  "not-started": "This code isn't active yet.",
-  "used-up": "This code has been fully redeemed.",
-  "min-subtotal": "Your bag doesn't reach this code's minimum.",
-};
-
 /**
  * Price a checkout, including the surcharge for the chosen method.
  *
@@ -78,11 +71,16 @@ async function quote(input: {
   code?: string;
   giftWrap?: boolean;
   method: string;
+  phone?: string | null;
 }) {
   const methods = await listCheckoutMethods();
   const method = methods.find((m) => m.code === input.method) ?? methods[0];
 
-  const cart = await priceCart(input.entries, { code: input.code, giftWrap: input.giftWrap });
+  const cart = await priceCart(input.entries, {
+    code: input.code,
+    giftWrap: input.giftWrap,
+    phone: input.phone,
+  });
 
   // Surcharge applies to what is actually being charged — after the discount,
   // and including gift wrap, since that is part of the amount taken.
@@ -102,13 +100,17 @@ async function quote(input: {
 
 export async function quoteCheckout(
   entries: unknown,
-  options: { code?: string; giftWrap?: boolean; method?: string } = {},
+  options: { code?: string; giftWrap?: boolean; method?: string; phone?: string } = {},
 ): Promise<CheckoutQuote> {
   const priced = await quote({
     entries: cleanEntries(entries),
     code: typeof options.code === "string" ? options.code.slice(0, 50) : undefined,
     giftWrap: options.giftWrap === true,
     method: typeof options.method === "string" ? options.method : "cod",
+    // Only so a per-customer limit can be reported at the field rather than at
+    // the button. `placeOrder` re-checks with the phone it validates itself, so
+    // a browser omitting or faking this cannot buy a second discount.
+    phone: typeof options.phone === "string" ? options.phone : null,
   });
 
   const coupon = priced.cart.coupon;
@@ -125,7 +127,7 @@ export async function quoteCheckout(
     methods: priced.methods,
     couponApplied: coupon?.ok === true,
     couponCode: coupon?.ok ? coupon.code : null,
-    couponError: coupon && !coupon.ok ? (COUPON_MESSAGE[coupon.reason] ?? COUPON_MESSAGE.invalid) : null,
+    couponError: coupon && !coupon.ok ? COUPON_MESSAGE[coupon.reason] : null,
     subtotal: priced.cart.totals.subtotal,
     discount: priced.cart.totals.discount,
     giftWrap: priced.cart.totals.giftWrap,
@@ -197,6 +199,9 @@ export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResu
       code: typeof input.code === "string" ? input.code.slice(0, 50) : undefined,
       giftWrap: input.giftWrap === true,
       method: input.method,
+      // The phone this function validated, not one the browser asserted in a
+      // quote. This is where a per-customer coupon limit is actually enforced.
+      phone,
     });
 
     if (!priced.cart.lines.length) return { ok: false, error: "empty" };

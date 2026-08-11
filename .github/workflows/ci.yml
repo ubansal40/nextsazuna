@@ -110,6 +110,17 @@ jobs:
       - name: Homepage content checks
         run: npm run check:content
 
+      # A coupon is the one thing an admin can author that changes what a
+      # customer is charged, and the drawer states the discount in a sentence
+      # before saving it. If that sentence and the checkout's arithmetic ever
+      # disagree, the shop gives a discount nobody authorised and nothing
+      # throws. Also pins the date boundaries: the fields are calendar days,
+      # the columns are DATETIME, and Nepal is UTC+05:45 — stored naively, a
+      # coupon dated "expires 31 Aug" would stop working on the evening of the
+      # 30th.
+      - name: Coupon checks
+        run: npm run check:coupons
+
       - name: Typecheck
         run: npm run typecheck
 

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { onCartChanged, readCart, type CartEntry } from "@/lib/cart-storage";
+import { normalisePhone } from "@/lib/order-lookup";
 import { Icon, type IconName } from "@/components/ui";
 import { placeOrder, quoteCheckout, type CheckoutQuote } from "../_actions";
 
@@ -158,13 +159,25 @@ export function CheckoutView({
     }
   }, [restored, name, address, phone, email]);
 
+  /*
+   * The phone, but only once it is a whole number, and reduced to its ten
+   * digits so a re-typed "+977" prefix is not a different value.
+   *
+   * A coupon can carry a per-customer limit, and the server can only tell us it
+   * bites if it knows who is asking. Deriving a stable key rather than passing
+   * `phone` straight through is what stops the quote re-firing on every
+   * keystroke: this changes exactly twice — once when the number completes, and
+   * again only if it is genuinely replaced.
+   */
+  const quotePhone = normalisePhone(phone).length === 10 ? normalisePhone(phone) : "";
+
   const refresh = useCallback(() => {
     const ticket = ++request.current;
     // Remember exactly what went to the server; `submit` refuses to order a bag
     // that no longer matches it.
     const entries = readCart();
     setPricing(true);
-    quoteCheckout(entries, { code: code ?? undefined, giftWrap, method })
+    quoteCheckout(entries, { code: code ?? undefined, giftWrap, method, phone: quotePhone })
       .then((next) => {
         if (ticket !== request.current) return;
         quoted.current = entries;
@@ -177,7 +190,7 @@ export function CheckoutView({
         setPricing(false);
         setFlow("failure");
       });
-  }, [code, giftWrap, method]);
+  }, [code, giftWrap, method, quotePhone]);
 
   // `refresh` raises the pending flag before it awaits — that is what a pending
   // flag is for, and the alternative is a button that looks live while a quote

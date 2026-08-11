@@ -18,20 +18,29 @@ export function ConfirmDialog({
   body,
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
+  altLabel,
   tone = "primary",
   busy = false,
   onConfirm,
   onCancel,
+  onAlt,
 }: {
   open: boolean;
   title: string;
   body?: React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  /**
+   * A third, softer way out — "Deactivate instead" beside "Delete coupon".
+   * Optional, and absent everywhere it is not passed: a destructive dialog that
+   * can offer a reversible alternative should, but most cannot.
+   */
+  altLabel?: string;
   tone?: "primary" | "danger";
   busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  onAlt?: () => void;
 }) {
   const { ref, onBackdropClick } = useDialog(open, onCancel);
 
@@ -44,7 +53,7 @@ export function ConfirmDialog({
       <div className="p-5">
         <h2 className="font-display text-lg font-medium text-heading">{title}</h2>
         {body && <div className="mt-2 text-[13.5px] leading-relaxed text-muted">{body}</div>}
-        <div className="mt-5 flex justify-end gap-2.5">
+        <div className="mt-5 flex flex-wrap justify-end gap-2.5">
           <button
             type="button"
             onClick={onCancel}
@@ -53,6 +62,16 @@ export function ConfirmDialog({
           >
             {cancelLabel}
           </button>
+          {altLabel && onAlt && (
+            <button
+              type="button"
+              onClick={onAlt}
+              disabled={busy}
+              className="inline-flex min-h-11 items-center rounded-[var(--sz-admin-radius-control)] border border-line bg-raised px-4 text-[13px] font-semibold text-primary-700 hover:border-primary-700 disabled:opacity-[var(--sz-disabled-opacity)]"
+            >
+              {altLabel}
+            </button>
+          )}
           <button
             type="button"
             onClick={onConfirm}
