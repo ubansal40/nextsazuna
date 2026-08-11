@@ -74,37 +74,49 @@ export function CartView({
 
   useEffect(refresh, [refresh]);
 
+  /*
+   * Restore first, then persist — and the gate is what enforces the order.
+   *
+   * These two effects used to run the other way round and the stored choice was
+   * destroyed on every visit to the bag. React flushes all passive effects
+   * before it drains the microtask queue, so the persist effect ran with the
+   * initial `giftWrap === false` and wrote "0" *before* the deferred read ever
+   * looked at the key; the read then found its own "0". A customer who ticked
+   * gift wrap, carried on shopping, and came back found it off — and checkout,
+   * which reads the same key, charged nothing for it.
+   *
+   * `restored` has to be state rather than a ref: a ref flips within the same
+   * passive-effect flush, so the persist effect would still see it set and run
+   * on the same pass. This is the gate `checkout-view.tsx` already uses, for
+   * exactly this bug.
+   */
+  const [restored, setRestored] = useState(false);
+
+  useEffect(() => {
+    try {
+      // Read after hydration, not during render: reading localStorage while
+      // rendering would make the server and client trees disagree. The hooks
+      // rule guards against cascading renders, which is the right default —
+      // this is the case it cannot express. It runs once, costs one extra
+      // render, and there is no SSR-safe render-time alternative.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setGiftWrap(window.localStorage.getItem("sazuna:gift-wrap") === "1");
+    } catch {
+      // Storage blocked — the bag still works for this visit.
+    }
+    setRestored(true);
+  }, []);
+
   // Carried to checkout, which reads the same key — otherwise the choice is
   // silently dropped at the moment it would be charged for.
   useEffect(() => {
+    if (!restored) return;
     try {
       window.localStorage.setItem("sazuna:gift-wrap", giftWrap ? "1" : "0");
     } catch {
       // Not worth failing the bag over.
     }
-  }, [giftWrap]);
-
-  // Deferred: the first render also happens on the server, where storage does
-  // not exist, so reading it synchronously would be a hydration mismatch.
-  useEffect(() => {
-    let active = true;
-    void Promise.resolve().then(() => {
-      if (!active) return;
-      try {
-        // Read after hydration, not during render: reading localStorage while
-      // rendering would make the server and client trees disagree. The hooks rule
-      // below guards against cascading renders, which is the right default — this
-      // is the case it cannot express. It runs once and costs one extra render,
-      // and there is no SSR-safe render-time alternative.
-      setGiftWrap(window.localStorage.getItem("sazuna:gift-wrap") === "1");
-      } catch {
-        // Ignore.
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
+  }, [restored, giftWrap]);
 
   // Another tab, or the header's own add-to-bag, changed the contents.
   useEffect(() => onCartChanged(refresh), [refresh]);
@@ -281,7 +293,7 @@ export function CartView({
                 }}
               >
                 {line.imageUrl ? (
-                  <Image src={line.imageUrl} alt="" fill sizes="84px" className="object-cover" />
+                  <Image src={line.imageUrl} alt="" fill sizes="84px" loading="eager" className="object-cover" />
                 ) : (
                   <span
                     aria-hidden="true"
