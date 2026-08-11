@@ -53,7 +53,9 @@ function usableImage(url: string | null | undefined): string | null {
   return null;
 }
 
-const DEFAULT_PAGE_SIZE = 24;
+/** Only a fallback — every listing surface passes its own `STEP`. Kept in step
+ *  with them so a caller that forgets does not silently get a different page. */
+const DEFAULT_PAGE_SIZE = 12;
 const MAX_PAGE_SIZE = 96;
 
 /**

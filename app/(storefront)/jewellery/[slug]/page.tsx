@@ -30,11 +30,13 @@ interface PageProps {
 /**
  * Batch size for the first render and each infinite-scroll page.
  *
- * The spec's logic uses 9, sized to its 24-item demo catalog. Real categories
- * run to several hundred, and 24 divides evenly into both the 2- and 3-column
- * grids so a batch never leaves a ragged final row.
+ * The spec's logic uses 9, sized to its 24-item demo catalog. 12 divides evenly
+ * into both the 2- and 3-column grids (six rows and four), so a batch never
+ * leaves a ragged final row — the same property 24 had, at half the first
+ * paint. The other three listing surfaces use the same number; they render the
+ * identical grid, and two of them differing would read as a bug.
  */
-const STEP = 24;
+const STEP = 12;
 
 function one(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;

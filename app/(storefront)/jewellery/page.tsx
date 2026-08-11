@@ -12,7 +12,8 @@ import { ProductListingView } from "./[slug]/_components/product-listing";
  * Same listing surface as a category page, with no taxonomy filter applied.
  */
 
-const STEP = 24;
+/** Kept in step with the category listing — see `[slug]/page.tsx`. */
+const STEP = 12;
 
 function one(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;

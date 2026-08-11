@@ -19,7 +19,8 @@ import { ProductListingView } from "@/app/(storefront)/jewellery/[slug]/_compone
  * search should actually rank is still an open product decision.
  */
 
-const STEP = 24;
+/** Kept in step with the category listing — see `jewellery/[slug]/page.tsx`. */
+const STEP = 12;
 
 interface PageProps {
   params: Promise<{ term?: string[] }>;
