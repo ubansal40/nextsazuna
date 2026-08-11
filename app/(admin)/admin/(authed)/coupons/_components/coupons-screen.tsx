@@ -247,7 +247,9 @@ export function CouponsScreen({ initial, nowIso }: { initial: AdminCouponRow[]; 
               onChange={(e) => setQuery(e.target.value.toUpperCase())}
               aria-label="Search coupons by code"
               placeholder="Search code"
-              className={cn(fieldClass, "pl-9 pr-9 font-mono uppercase")}
+              // `uppercase` is for what gets typed, not for the hint — without
+              // the reset the placeholder reads as "SEARCH CODE".
+              className={cn(fieldClass, "pl-9 pr-9 font-mono uppercase placeholder:normal-case")}
             />
             {query && (
               <button

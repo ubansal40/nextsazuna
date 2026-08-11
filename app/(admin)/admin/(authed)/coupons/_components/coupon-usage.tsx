@@ -155,14 +155,21 @@ export function CouponUsagePanel({
 
       {/* The counter and the orders disagree, and the counter is the one that
           decides whether the code still works — so it is named as such rather
-          than quietly reconciled. */}
+          than quietly reconciled.
+
+          The consequence depends on which way it drifted, and the two are
+          opposite: a counter that is too HIGH retires a live promotion early,
+          one that is too LOW lets it be redeemed past its limit. Stating only
+          one of them would be wrong half the time. */}
       {drift && (
         <div role="status" className="mt-2.5 rounded-xl border border-accent-soft bg-warning-soft px-3.5 py-3">
           <p className="text-[12.5px] leading-relaxed text-[var(--sz-admin-gold-ink)]">
             The counter says <strong>{gateCount.toLocaleString("en-IN")}</strong> but{" "}
             <strong>{usage.redemptions.toLocaleString("en-IN")}</strong>{" "}
-            {usage.redemptions === 1 ? "order carries" : "orders carry"} this code. The counter is what the checkout
-            refuses on, so while it is high the code can run out early.
+            {usage.redemptions === 1 ? "order carries" : "orders carry"} this code. The checkout refuses on the counter,
+            so {gateCount > usage.redemptions
+              ? "this code can stop working before it has really been used up."
+              : "this code can be redeemed more times than its limit allows."}
           </p>
           <button
             type="button"
