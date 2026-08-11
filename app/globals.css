@@ -383,7 +383,10 @@
   --sz-text-spec-key: 13.5px;
   --sz-text-trust: 12.5px;
   --sz-text-offer: 11.5px;
-  --sz-text-related-price: 15px;
+  /* --sz-text-related-price is gone: the PDP's "You may also like" row draws
+     the shared ProductCard now, which prices itself from --sz-text-price and
+     --sz-text-control like every other card. A separate size for one surface is
+     exactly the per-surface price styling the design project forbids. */
 
   --sz-radius-gallery: 16px;
   --sz-radius-thumb: 9px;
@@ -667,7 +670,6 @@
   --text-spec-key: var(--sz-text-spec-key);
   --text-trust: var(--sz-text-trust);
   --text-offer: var(--sz-text-offer);
-  --text-related-price: var(--sz-text-related-price);
   --text-footer-link: var(--sz-text-footer-link);
 
   /* Declared with the listing tokens but never bridged, so the PLP reaches for

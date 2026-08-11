@@ -1,6 +1,5 @@
-import Image from "next/image";
 import Link from "next/link";
-import { Accordion, Icon } from "@/components/ui";
+import { Accordion, Icon, ProductCard } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { staticOrigin } from "@/lib/site-url";
 import { getRelatedProducts, type ProductDetail } from "@/lib/catalog";
@@ -308,50 +307,36 @@ export async function ProductDetailView({ product }: { product: ProductDetail })
               )}
             </div>
 
+            {/*
+             * The listing's card, not a second one.
+             *
+             * This row used to be bespoke markup that rendered `item.price` in
+             * its own style and dropped the rest of the summary on the floor —
+             * so a discounted piece showed neither its struck original nor the
+             * Offer flag here, while the very same product on the listing page
+             * showed both. `getRelatedProducts` returns `ProductSummary`, the
+             * exact type the PLP grid consumes, so the data was always there.
+             *
+             * The design project makes this a hard rule: sale price is oxblood,
+             * weight 600, Geist Mono, original struck alongside — and never
+             * restyled per surface. Two implementations of one card is how that
+             * rule quietly stops being true on one of them.
+             */}
             <div className="grid grid-cols-4 gap-x-[22px] gap-y-[26px] pdp-carousel:flex pdp-carousel:snap-x pdp-carousel:snap-mandatory pdp-carousel:gap-3.5 pdp-carousel:overflow-x-auto pdp-carousel:pb-2">
               {related.map((item) => (
-                <Link
+                <ProductCard
                   key={item.id}
+                  title={item.name}
                   href={item.href}
-                  className="group block overflow-hidden rounded-[var(--sz-radius-lg)] border border-line bg-raised text-body no-underline transition-[box-shadow,transform] duration-[var(--sz-dur-slow)] ease-[var(--sz-ease-out)] hover:-translate-y-1 hover:shadow-lg hover:no-underline pdp-carousel:w-[var(--sz-pdp-related-card)] pdp-carousel:shrink-0 pdp-carousel:snap-start"
-                >
-                  <div
-                    className="relative aspect-square overflow-hidden"
-                    style={{
-                      background:
-                        "radial-gradient(120% 120% at 32% 22%, var(--sz-media-from), var(--sz-media-to))",
-                    }}
-                  >
-                    {item.imageUrl ? (
-                      <Image
-                        src={item.imageUrl}
-                        alt=""
-                        fill
-                        sizes="(max-width: 640px) 60vw, 20vw"
-                        className="object-cover transition-transform duration-[550ms] ease-[var(--sz-ease-out)] group-hover:scale-105"
-                      />
-                    ) : (
-                      <span
-                        aria-hidden="true"
-                        className="absolute left-1/2 top-1/2 aspect-square w-[24%] -translate-x-1/2 -translate-y-1/2 rotate-45 bg-accent opacity-50"
-                      />
-                    )}
-                    <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1.5 border-t border-[rgb(var(--sz-accent-rgb)/.4)] bg-[rgb(var(--sz-canvas-rgb)/.92)] py-1.5">
-                      <span aria-hidden="true" className="size-1.5 rotate-45 bg-accent" />
-                      <span className="font-mono text-micro uppercase tracking-caps text-primary-700">
-                        Certified
-                      </span>
-                    </span>
-                  </div>
-                  <div className="border-t border-surface px-[15px] pb-[15px] pt-[13px]">
-                    <p className="m-0 truncate text-spec-key leading-[1.3] text-body">
-                      {item.name}
-                    </p>
-                    <p className="m-0 mt-1.5 whitespace-nowrap font-mono text-related-price font-medium tabular-nums tracking-tight text-heading">
-                      {item.price}
-                    </p>
-                  </div>
-                </Link>
+                  price={item.price}
+                  compareAtPrice={item.compareAtPrice ?? undefined}
+                  image={item.imageUrl ? { src: item.imageUrl, alt: item.name } : undefined}
+                  outOfStock={!item.inStock}
+                  certified
+                  // Four across here, against the listing's three.
+                  sizes="(max-width: 640px) 60vw, 20vw"
+                  className="pdp-carousel:w-[var(--sz-pdp-related-card)] pdp-carousel:shrink-0 pdp-carousel:snap-start"
+                />
               ))}
             </div>
           </section>

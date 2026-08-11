@@ -18,8 +18,18 @@ export interface ProductCardProps {
    */
   offerLabel?: string;
   outOfStock?: boolean;
+  /**
+   * The `sizes` hint for the card's image, when the grid it sits in is not the
+   * listing grid. The default describes the PLP's 2-up/3-up layout; the PDP's
+   * related row is 4-up and denser, and inheriting a hint for a wider column
+   * makes the browser fetch a candidate about three times the pixels it draws.
+   */
+  sizes?: string;
   className?: string;
 }
+
+/** The listing grid: 2-up to 640, 2-up to 1100, 3-up above. */
+const DEFAULT_SIZES = "(max-width: 640px) 50vw, (max-width: 1100px) 50vw, 33vw";
 
 /**
  * Product card — spec §Component · Product card.
@@ -37,6 +47,7 @@ export function ProductCard({
   certified = false,
   offerLabel,
   outOfStock = false,
+  sizes = DEFAULT_SIZES,
   className,
 }: ProductCardProps) {
   const onSale = Boolean(compareAtPrice);
@@ -72,7 +83,7 @@ export function ProductCard({
               src={image.src}
               alt={image.alt}
               fill
-              sizes="(max-width: 640px) 50vw, (max-width: 1100px) 50vw, 33vw"
+              sizes={sizes}
               className="object-cover"
             />
           ) : (
