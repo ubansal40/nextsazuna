@@ -28,16 +28,33 @@ interface PageProps {
 }
 
 /**
- * The App Router hands `params` back already percent-decoded, so this must not
- * decode a second time. It used to, and the second pass was doing two things:
- * throwing URIError on any term containing a bare `%` — /search/100%25 gold
- * arrives here as `100% gold` and `decodeURIComponent("100% gold")` is a hard
- * 500 inside an async Server Component — and silently mangling anything that
- * merely *looked* like an escape, so a search for `50%20` became a search for
- * `50 `. Encoding still happens on the way out, when `basePath` is rebuilt.
+ * The page and its metadata are NOT handed the same string, and each reader
+ * below is correct only for its own caller.
+ *
+ * `generateMetadata` receives the segment percent-decoded: /search/100%25%20gold
+ * arrives as `100% gold`, and decoding that again is a URIError — a hard 500.
+ *
+ * The page component receives it still percent-encoded, because Next builds a
+ * page's `params` from the router tree's segment value, which it encodes
+ * (`getParamValue` in next/dist/shared/lib/router/utils/get-dynamic-param.js).
+ * Read raw, every multi-word search looked for the literal text
+ * `diamond%20ring`, found nothing, and printed "Results for “diamond%20ring”".
+ *
+ * So the page decodes exactly once. The fallback keeps a bare `%` from ever
+ * becoming a 500 should a future Next start handing pages decoded params too.
+ * Encoding happens again on the way out, when `basePath` is rebuilt.
  */
-function readTerm(segments: string[] | undefined): string {
+function termForMetadata(segments: string[] | undefined): string {
   return (segments?.[0] ?? "").trim();
+}
+
+function termForPage(segments: string[] | undefined): string {
+  const raw = segments?.[0] ?? "";
+  try {
+    return decodeURIComponent(raw).trim();
+  } catch {
+    return raw.trim();
+  }
 }
 
 function one(value: string | string[] | undefined): string | undefined {
@@ -45,7 +62,7 @@ function one(value: string | string[] | undefined): string | undefined {
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const term = readTerm((await params).term);
+  const term = termForMetadata((await params).term);
   return {
     title: term ? `Search: ${term}` : "Search",
     // Result pages are thin and infinitely variable. Keeping them out of the
@@ -55,7 +72,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function SearchPage({ params, searchParams }: PageProps) {
-  const term = readTerm((await params).term);
+  const term = termForPage((await params).term);
   const q = await searchParams;
   const filters = readFilters(q);
 
