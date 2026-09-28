@@ -7,9 +7,12 @@ import { cn } from "@/lib/cn";
 import {
   insertAt,
   onCartChanged,
+  readBagOptions,
   readCart,
   removeFromCart,
   setQuantity,
+  writeGiftWrap,
+  writePromo,
   type CartEntry,
 } from "@/lib/cart-storage";
 import type { PricedCart } from "@/lib/cart";
@@ -93,30 +96,27 @@ export function CartView({
   const [restored, setRestored] = useState(false);
 
   useEffect(() => {
-    try {
-      // Read after hydration, not during render: reading localStorage while
-      // rendering would make the server and client trees disagree. The hooks
-      // rule guards against cascading renders, which is the right default —
-      // this is the case it cannot express. It runs once, costs one extra
-      // render, and there is no SSR-safe render-time alternative.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setGiftWrap(window.localStorage.getItem("sazuna:gift-wrap") === "1");
-    } catch {
-      // Storage blocked — the bag still works for this visit.
-    }
+    // Read after hydration, not during render: reading localStorage while
+    // rendering would make the server and client trees disagree. The hooks
+    // rule guards against cascading renders, which is the right default —
+    // this is the case it cannot express. It runs once, costs one extra
+    // render, and there is no SSR-safe render-time alternative.
+    const options = readBagOptions();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setGiftWrap(options.giftWrap);
+    setCode(options.code);
+    setPromoInput(options.code ?? "");
     setRestored(true);
   }, []);
 
-  // Carried to checkout, which reads the same key — otherwise the choice is
-  // silently dropped at the moment it would be charged for.
+  // Carried to checkout, which reads the same keys — otherwise the choice is
+  // silently dropped at the moment it would be charged for, or, for a promo
+  // code, at the moment it would have been honoured.
   useEffect(() => {
     if (!restored) return;
-    try {
-      window.localStorage.setItem("sazuna:gift-wrap", giftWrap ? "1" : "0");
-    } catch {
-      // Not worth failing the bag over.
-    }
-  }, [restored, giftWrap]);
+    writeGiftWrap(giftWrap);
+    writePromo(code);
+  }, [restored, giftWrap, code]);
 
   // Another tab, or the header's own add-to-bag, changed the contents.
   useEffect(() => onCartChanged(refresh), [refresh]);
@@ -203,6 +203,26 @@ export function CartView({
 
   const lines = cart?.lines ?? [];
 
+  // Rendered by both branches below. Removing the LAST line is exactly when an
+  // undo matters most, and it used to live only in the populated branch — so
+  // the bag went empty and the offer to undo went with it.
+  const undoSnackbar = undo && (
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed bottom-8 left-1/2 z-[100000] inline-flex -translate-x-1/2 items-center gap-4 rounded-[var(--sz-radius-snackbar)] bg-body py-3 pl-5 pr-3.5 text-prose font-medium text-canvas shadow-lg animate-sheet-up"
+    >
+      Removed {undo.name}
+      <button
+        type="button"
+        onClick={restore}
+        className="cursor-pointer px-2 py-1.5 text-control-sm font-bold text-ann-text min-h-10"
+      >
+        Undo
+      </button>
+    </div>
+  );
+
   if (lines.length === 0) {
     return (
       <div className="px-6 pb-3 pt-[70px] text-center">
@@ -247,6 +267,7 @@ export function CartView({
             </div>
           </div>
         )}
+        {undoSnackbar}
       </div>
     );
   }
@@ -534,22 +555,7 @@ export function CartView({
         </Link>
       </div>
 
-      {undo && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-8 left-1/2 z-[100000] inline-flex -translate-x-1/2 items-center gap-4 rounded-[var(--sz-radius-snackbar)] bg-body py-3 pl-5 pr-3.5 text-prose font-medium text-canvas shadow-lg animate-sheet-up"
-        >
-          Removed {undo.name}
-          <button
-            type="button"
-            onClick={restore}
-            className="cursor-pointer px-2 py-1.5 text-control-sm font-bold text-ann-text min-h-10"
-          >
-            Undo
-          </button>
-        </div>
-      )}
+      {undoSnackbar}
     </>
   );
 }
