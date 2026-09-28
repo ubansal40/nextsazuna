@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { NextConfig } from "next";
+import { REMOTE_IMAGE_PATTERNS } from "./lib/image-hosts";
 import { CONTENT_ROUTES } from "./lib/site-pages";
 
 const nextConfig: NextConfig = {
@@ -65,18 +66,13 @@ const nextConfig: NextConfig = {
   output: "standalone",
 
   /**
-   * Product imagery is hosted on silveejewels.com (2,575 of 2,577 active
-   * products). next/image refuses unlisted hosts by design, so this is required
-   * rather than optional.
-   *
-   * Worth naming: the storefront's images depend on a separate site staying up.
-   * That coupling is inherited from the Express app, not introduced here, but it
-   * should move to storage this project controls before launch.
+   * next/image refuses unlisted hosts by design, so this is required rather
+   * than optional. The list lives in `lib/image-hosts.ts` because the catalog
+   * and homepage screen their URLs against the same list — a URL this config
+   * would refuse must never reach an `<Image>`.
    */
   images: {
-    remotePatterns: [
-      { protocol: "https", hostname: "silveejewels.com", pathname: "/wp-content/uploads/**" },
-    ],
+    remotePatterns: REMOTE_IMAGE_PATTERNS.map((pattern) => ({ ...pattern })),
     formats: ["image/avif", "image/webp"],
   },
 

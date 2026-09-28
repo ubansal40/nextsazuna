@@ -4,6 +4,7 @@ import { cache } from "react";
 import type { RowDataPacket } from "mysql2";
 import { query, queryOne, type SqlParam } from "@/lib/db";
 import { formatPrice } from "@/lib/format";
+import { servableImageUrl } from "@/lib/image-hosts";
 import { jewelleryUrl } from "@/lib/navigation";
 import { EFFECTIVE_PRICE, IN_STOCK, IS_VISIBLE, PRODUCT_COLUMNS, SORT_SQL, effectivePriceFor } from "./sql";
 import type {
@@ -22,36 +23,16 @@ interface ImageRow extends RowDataPacket {
 }
 
 /**
- * Keep only image URLs this deployment can actually serve.
+ * Keep only image URLs this deployment can actually serve — an allowlisted
+ * host (the legacy silveejewels.com photos) or an app-relative `/uploads/…`
+ * path the admin's pipeline wrote. See `lib/image-hosts.ts`.
  *
- * Two shapes are servable, and the distinction matters:
- *
- *   - An absolute `https://…` URL — the 2,575 legacy photos still on
- *     silveejewels.com.
- *   - An app-relative `/uploads/…` path — everything the admin's own image
- *     pipeline writes, served from `PRODUCT_IMAGE_UPLOAD_DIR` (under `public/`
- *     in development, the Hostinger storage dir behind a LiteSpeed alias in
- *     production).
- *
- * This originally allowed only the first, because at the time every relative
- * path was a stale pointer into the Express app's filesystem. That stopped
- * being true the moment the admin could upload: a freshly uploaded product
- * stores `/uploads/products/….avif`, and this guard was silently throwing it
- * away, so the product looked permanently photo-less on the storefront.
- *
- * Anything else — a bare filename, a `data:` or `javascript:` URI, a
- * protocol-relative `//host` — is still dropped rather than handed to
- * next/image.
+ * Relative paths were once dropped too, because every one was a stale pointer
+ * into the Express app's filesystem. That stopped being true the moment the
+ * admin could upload: a freshly uploaded product stores
+ * `/uploads/products/….avif`, and the product looked permanently photo-less.
  */
-function usableImage(url: string | null | undefined): string | null {
-  const value = url?.trim();
-  if (!value) return null;
-  if (/^https?:\/\//i.test(value)) return value;
-  // A single leading slash only: `//evil.com/x.png` is protocol-relative, not a
-  // local path, and would load from another origin entirely.
-  if (/^\/(?!\/)/.test(value)) return value;
-  return null;
-}
+const usableImage = servableImageUrl;
 
 /** Only a fallback — every listing surface passes its own `STEP`. Kept in step
  *  with them so a caller that forgets does not silently get a different page. */

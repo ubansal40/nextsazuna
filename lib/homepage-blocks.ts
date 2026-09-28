@@ -18,6 +18,8 @@
  * home page, which is the one page that must never be a stack trace.
  */
 
+import { servableImageUrl } from "./image-hosts";
+
 export interface HeroSlide {
   eyebrow: string;
   headline: string;
@@ -100,13 +102,10 @@ function str(value: unknown, fallback = ""): string {
 }
 
 function image(value: unknown): string | null {
-  const url = str(value);
-  // Absolute URLs (the legacy silveejewels.com photos) and app-relative
-  // `/uploads/…` paths (anything the admin pipeline wrote) are both servable.
-  // A protocol-relative `//host` is neither — it loads from another origin.
-  // Kept in step with `usableImage` in lib/catalog/products.ts.
-  if (/^https?:\/\//i.test(url)) return url;
-  return /^\/(?!\/)/.test(url) ? url : null;
+  // The same check the catalog applies: an allowlisted host or an app-relative
+  // `/uploads/…` path. A pasted URL on any other host would otherwise take the
+  // whole homepage down in development and draw a broken image in production.
+  return servableImageUrl(str(value));
 }
 
 /**
