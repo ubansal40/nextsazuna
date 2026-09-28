@@ -86,9 +86,17 @@ export const viewport: Viewport = {
   userScalable: false,
 };
 
+/**
+ * `data-scroll-behavior="smooth"` is not decoration. globals.css sets
+ * `html { scroll-behavior: smooth }` for in-page anchors (the policy pages'
+ * table of contents), and since Next 16 the router no longer
+ * suspends that during a route change unless this attribute asks it to. Without
+ * it, tapping a card at the bottom of a listing opened the product page and
+ * then visibly scrolled it up through the whole page to the top.
+ */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={fontVariables}>
+    <html lang="en" className={fontVariables} data-scroll-behavior="smooth">
       <body>{children}</body>
     </html>
   );
