@@ -3,7 +3,7 @@ import "server-only";
 import { getProductsByIds } from "./catalog";
 import { validateCoupon, type CouponResult } from "./coupons";
 import { formatPrice } from "./format";
-import { MAX_QUANTITY, type CartEntry } from "./cart-storage";
+import { MAX_QUANTITY, mergeEntries, type CartEntry } from "./cart-storage";
 
 /**
  * Pricing the bag.
@@ -82,11 +82,15 @@ export async function priceCart(
     phone?: string | null;
   } = {},
 ): Promise<PricedCart> {
-  const products = await getProductsByIds(entries.map((entry) => entry.productId));
+  // One line per product: a duplicated id must not become two lines that
+  // together exceed the per-line limit. The browser merges too; this is the
+  // copy that holds for a request nobody's browser sent.
+  const merged = mergeEntries(entries);
+  const products = await getProductsByIds(merged.map((entry) => entry.productId));
   const byId = new Map(products.map((product) => [product.id, product]));
 
   const lines: CartLine[] = [];
-  for (const entry of entries) {
+  for (const entry of merged) {
     const product = byId.get(entry.productId);
     if (!product) continue;
     const quantity = Math.min(Math.max(Math.floor(entry.quantity), 1), MAX_QUANTITY);
@@ -109,13 +113,14 @@ export async function priceCart(
 
   // An empty bag cannot carry a discount, and asking the coupons table about
   // one is pointless work.
-  const coupon =
-    options.code && lines.length
-      ? {
-          ...(await validateCoupon(options.code, subtotalMinor, new Date(), { phone: options.phone })),
-          code: options.code,
-        }
-      : null;
+  let coupon: PricedCart["coupon"] = null;
+  if (options.code && lines.length) {
+    const result = await validateCoupon(options.code, subtotalMinor, new Date(), { phone: options.phone });
+    // An accepted code keeps the coupon's own spelling — it is what the order
+    // row stores and what the admin searches by. It used to be overwritten with
+    // whatever the customer typed, so orders carried "save10" beside "SAVE10".
+    coupon = result.ok ? result : { ...result, code: options.code };
+  }
 
   const discountMinor = coupon?.ok ? coupon.discountMinor : 0;
   const giftWrapMinor = options.giftWrap && lines.length ? GIFT_WRAP_MINOR : 0;

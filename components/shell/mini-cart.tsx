@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
 import { Icon, Skeleton, useDialog } from "@/components/ui";
 
@@ -22,6 +23,8 @@ export interface MiniCartLine {
   price: string;
   /** The same amount in paisa, as an exact integer, for the subtotal. */
   priceMinor: number;
+  /** Struck original, present only on a genuine markdown. */
+  compareAtPrice?: string | null;
   quantity: number;
   href?: string;
   imageUrl?: string | null;
@@ -274,8 +277,25 @@ export function MiniCart({
                         </button>
                       </span>
 
-                      <span className="font-mono text-sm font-semibold tracking-tight text-primary-700">
-                        {line.price}
+                      {/* Sale pricing is a hard design rule — see CLAUDE.md. Every
+                          line used to be drawn in the sale style, so a full-price
+                          piece read as discounted here and as ink in the bag. */}
+                      <span className="text-right">
+                        <span
+                          className={cn(
+                            "block whitespace-nowrap font-mono text-sm tabular-nums",
+                            line.compareAtPrice
+                              ? "font-semibold tracking-[var(--sz-tracking-price)] text-primary-700"
+                              : "font-medium tracking-tight text-heading",
+                          )}
+                        >
+                          {line.price}
+                        </span>
+                        {line.compareAtPrice && (
+                          <s className="block whitespace-nowrap font-mono text-xs tabular-nums tracking-[var(--sz-tracking-price)] text-price-struck">
+                            {line.compareAtPrice}
+                          </s>
+                        )}
                       </span>
                     </div>
                   </div>

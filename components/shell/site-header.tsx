@@ -72,6 +72,8 @@ export function SiteHeader({
    * the page is interactive, without trusting the client for money.
    */
   const [lines, setLines] = useState<MiniCartLine[] | null>(null);
+  /** The product ids the request that produced `lines` asked about. */
+  const [pricedIds, setPricedIds] = useState<ReadonlySet<number>>(() => new Set());
   const [stored, setStored] = useState<CartEntry[]>([]);
   const [pricingFailed, setPricingFailed] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -255,6 +257,7 @@ export function SiteHeader({
       if (!entries.length) {
         setPricingFailed(false);
         setLines((current) => (current && !current.length ? current : []));
+        setPricedIds(new Set());
         return;
       }
 
@@ -263,12 +266,14 @@ export function SiteHeader({
           // A stale reply must not resurrect a line just removed.
           if (!active || mine !== ticket) return;
           setPricingFailed(false);
+          setPricedIds(new Set(entries.map((entry) => entry.productId)));
           setLines(
             priced.lines.map((line) => ({
               id: String(line.productId),
               name: line.name,
               price: line.price,
               priceMinor: line.priceMinor,
+              compareAtPrice: line.compareAtPrice,
               quantity: line.quantity,
               href: line.href,
               imageUrl: line.imageUrl,
@@ -316,19 +321,43 @@ export function SiteHeader({
     return () => window.removeEventListener(ADD_TO_BAG_EVENT, onAdd);
   }, []);
 
+  /*
+   * What the drawer draws: the server's prices, the browser's quantities.
+   *
+   * Storage changes the instant a button is pressed; the priced lines only
+   * after a round trip. Drawn from the priced lines alone, a quick second tap
+   * on "+" read the old quantity and wrote the same number again — three taps
+   * could land on 2 — and a removed line lingered until the reply. Quantities
+   * and removals are known locally, so they are taken from storage now.
+   */
+  const storedQuantity = new Map(stored.map((entry) => [String(entry.productId), entry.quantity]));
+  const shownLines = lines
+    ?.filter((line) => storedQuantity.has(line.id))
+    .map((line) => ({ ...line, quantity: storedQuantity.get(line.id) ?? line.quantity }));
+
+  /*
+   * A product the last pricing request never asked about — one just added —
+   * has no price yet. The drawer used to report such a bag as ready, and a
+   * first "Add to Bag" on an empty bag opened onto "Your bag is empty (0)" for
+   * the whole round trip; forever, if that request failed. A withdrawn product
+   * WAS asked about and simply did not come back, so it does not hold this up.
+   */
+  const awaitingPrice = stored.some((entry) => !pricedIds.has(entry.productId));
+
   // Until the server answers the count comes from storage, so the badge is
   // right the moment the page is interactive. After it, the priced lines win —
   // they are the ones that know a product has since been withdrawn.
-  const counted: { quantity: number }[] = lines ?? stored;
+  const counted: { quantity: number }[] = shownLines && !awaitingPrice ? shownLines : stored;
   const cartCount = counted.reduce((total, line) => total + line.quantity, 0);
 
-  const cartStatus: MiniCartStatus = lines
-    ? "ready"
-    : pricingFailed
-      ? "failed"
-      : stored.length
-        ? "pricing"
-        : "ready";
+  const cartStatus: MiniCartStatus =
+    shownLines && !awaitingPrice
+      ? "ready"
+      : pricingFailed
+        ? "failed"
+        : stored.length
+          ? "pricing"
+          : "ready";
 
   function openMega(category: NavCategory, trigger: HTMLAnchorElement) {
     megaTrigger.current = trigger;
@@ -593,7 +622,7 @@ export function SiteHeader({
       <MiniCart
         open={cartOpen}
         onClose={() => setCartOpen(false)}
-        lines={lines ?? []}
+        lines={shownLines ?? []}
         count={cartCount}
         status={cartStatus}
         onRetry={() => retryPricing.current()}
