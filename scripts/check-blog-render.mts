@@ -37,6 +37,14 @@ const fenced = render("```\n## not a heading\n- not a list\n```");
 const unterminated = render("```\nsome code that never closes");
 const inlineBits = render("**b** *i* `c`");
 const dupes = withHeadingIds(render("## Care\n\nx\n\n## Care\n\ny"));
+const codeStars = render("Run `a*b*c` then **stop**");
+const starUrl = render("[the edit](/jewellery?tag=*new*) and *more*");
+const starAlt = render("![a *cut* stone](/img/stone.png)");
+const richLabel = render("[**bold** and `code`](/x)");
+const forged = render("literal <0> and `c`");
+const tocEntities = withHeadingIds(
+  render("## What's in the box\n\n## Fish &amp; chips\n\n## 1 < 2 & **more**"),
+);
 
 const checks: [string, boolean][] = [
   // --- the security contract ------------------------------------------------
@@ -79,6 +87,24 @@ const checks: [string, boolean][] = [
     inlineBits.includes("<strong>b</strong>") && inlineBits.includes("<em>i</em>") && inlineBits.includes("<code>c</code>"),
   ],
   ["empty input renders nothing, not an empty tag", ["", "   ", null, undefined].every((v) => render(v) === "")],
+  // Rules must not run over each other's output.
+  [
+    "emphasis never reaches inside a code span",
+    codeStars.includes("<code>a*b*c</code>") && !codeStars.includes("<em>") && codeStars.includes("<strong>stop</strong>"),
+  ],
+  [
+    "a * in a link URL stays in the URL",
+    starUrl.includes('href="/jewellery?tag=*new*"') && (starUrl.match(/<em>/g) ?? []).length === 1 && starUrl.includes("<em>more</em>"),
+  ],
+  ["a * in image alt text stays text", starAlt.includes('alt="a *cut* stone"') && !starAlt.includes("<em>")],
+  [
+    "a link label is still formatted",
+    richLabel.includes('<a href="/x"><strong>bold</strong> and <code>code</code></a>'),
+  ],
+  [
+    "a placeholder cannot be forged from the source",
+    forged.includes("literal &lt;0&gt; and <code>c</code>") && (forged.match(/<code>/g) ?? []).length === 1,
+  ],
 
   // --- helpers --------------------------------------------------------------
   ["reading time is never zero", readingMinutes("") === 1],
@@ -95,6 +121,12 @@ const checks: [string, boolean][] = [
   ["duplicate headings get unique ids", dupes.toc[0].id !== dupes.toc[1].id],
   ["the toc lists both", dupes.toc.length === 2 && dupes.toc.every((t) => t.label === "Care")],
   ["a post with no headings has no toc", withHeadingIds(render("just words")).toc.length === 0],
+  // The rail renders labels as React text, which escapes them again.
+  [
+    "toc labels are the reader's text, not escaped HTML",
+    tocEntities.toc.map((t) => t.label).join(" | ") === "What's in the box | Fish &amp; chips | 1 < 2 & more",
+  ],
+  ["the heading itself stays escaped", tocEntities.html.includes("What&#39;s in the box") && tocEntities.html.includes("1 &lt; 2")],
 ];
 
 let failed = 0;

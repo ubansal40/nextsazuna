@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { ADD_TO_BAG_EVENT, type AddToBagDetail } from "@/lib/cart-events";
 import {
@@ -18,7 +18,7 @@ import { priceBag } from "@/app/(storefront)/cart/_actions";
 import { Icon } from "@/components/ui";
 import { jewelleryUrl, NAV_CATEGORIES, NAV_FEATURED, type NavCategory } from "@/lib/navigation";
 import { requestSignInCode, signOut, submitSignInCode } from "@/app/(storefront)/account/_actions";
-import { AccountMenu, type ShellCustomer } from "./account-menu";
+import { ACCOUNT_PANEL_ID, AccountMenu, type ShellCustomer } from "./account-menu";
 import { AnnouncementBar } from "./announcement-bar";
 import { MEGA_PANEL_ID, MegaMenu } from "./mega-menu";
 import { MiniCart, type MiniCartLine, type MiniCartStatus } from "./mini-cart";
@@ -88,12 +88,33 @@ export function SiteHeader({
   const accountButtonRef = useRef<HTMLButtonElement>(null);
   // The category link that opened the mega-menu, so Escape can hand focus back.
   const megaTrigger = useRef<HTMLAnchorElement | null>(null);
+  // Set only while Escape is handing focus back to that link. The link opens
+  // its panel on focus, so without this the panel reopened the instant it was
+  // closed and Escape took two presses.
+  const restoringMegaFocus = useRef(false);
   // Re-runs the pricing sync on demand. Held in a ref because the sync closes
   // over the effect's own cancellation state; nothing polls or retries by
   // itself, this only fires when a customer asks it to.
   const retryPricing = useRef(() => {});
   const router = useRouter();
-  const checkout = usePathname()?.startsWith("/checkout") ?? false;
+  const pathname = usePathname();
+  const checkout = pathname?.startsWith("/checkout") ?? false;
+
+  /**
+   * A route change closes the account panel and the mega-menu.
+   *
+   * The header sits in the layout, so it outlives every navigation — and so did
+   * an open panel, left hanging over the page the reader had just asked for.
+   * Compared during render rather than in an effect (React's pattern for
+   * resetting state when an input changes), so the new page never paints with
+   * the old panel over it.
+   */
+  const [panelsPath, setPanelsPath] = useState(pathname);
+  if (pathname !== panelsPath) {
+    setPanelsPath(pathname);
+    setAccountOpen(false);
+    setMega(null);
+  }
 
   /**
    * Sign-in wiring.
@@ -196,10 +217,10 @@ export function SiteHeader({
    * Escape closes the mega-menu.
    *
    * The panel is hover-opened but keyboard-reachable (it sits in the tab order
-   * directly after the category links), so a reader can be *inside* it when it
-   * closes. Focus goes back to the link that opened it in that case, rather
-   * than falling to <body> at the top of the document. When the panel does not
-   * hold focus — the ordinary hover case — focus is left exactly where it is.
+   * directly after the link that opened it), so a reader can be *inside* it
+   * when it closes. Focus goes back to that link in that case, rather than
+   * falling to <body> at the top of the document. When the panel does not hold
+   * focus — the ordinary hover case — focus is left exactly where it is.
    */
   useEffect(() => {
     if (!mega) return;
@@ -207,7 +228,13 @@ export function SiteHeader({
       if (event.key !== "Escape") return;
       const holdsFocus = document.activeElement?.closest(`#${MEGA_PANEL_ID}`);
       setMega(null);
-      if (holdsFocus) megaTrigger.current?.focus();
+      if (holdsFocus) {
+        // focus() runs the link's onFocus synchronously, so the guard is only
+        // ever up for exactly that call.
+        restoringMegaFocus.current = true;
+        megaTrigger.current?.focus();
+        restoringMegaFocus.current = false;
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
@@ -226,7 +253,12 @@ export function SiteHeader({
       setAccountOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setAccountOpen(false);
+      if (event.key !== "Escape") return;
+      // Same as the mega-menu: unmounting the panel under a reader standing in
+      // it would drop their focus on <body>, so it goes back to the button.
+      const holdsFocus = accountRef.current?.contains(document.activeElement);
+      setAccountOpen(false);
+      if (holdsFocus) accountButtonRef.current?.focus();
     };
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
@@ -482,31 +514,35 @@ export function SiteHeader({
               {NAV_CATEGORIES.map((category) => {
                 const open = mega?.slug === category.slug;
                 return (
-                  <Link
-                    key={category.slug}
-                    href={jewelleryUrl(category.slug)}
-                    onMouseEnter={(event) => openMega(category, event.currentTarget)}
-                    onFocus={(event) => openMega(category, event.currentTarget)}
-                    // The disclosure pair: `aria-controls` only while the panel
-                    // it names is actually in the document, or it points at
-                    // nothing. ARIA 1.2 supports both on role=link.
-                    aria-expanded={open}
-                    aria-controls={open ? MEGA_PANEL_ID : undefined}
-                    className={cn(navLinkClass, open && "bg-primary-50 text-primary-700")}
-                  >
-                    {category.label}
-                  </Link>
+                  <Fragment key={category.slug}>
+                    <Link
+                      href={jewelleryUrl(category.slug)}
+                      onMouseEnter={(event) => openMega(category, event.currentTarget)}
+                      onFocus={(event) => {
+                        if (!restoringMegaFocus.current) openMega(category, event.currentTarget);
+                      }}
+                      // The disclosure pair: `aria-controls` only while the panel
+                      // it names is actually in the document, or it points at
+                      // nothing. ARIA 1.2 supports both on role=link.
+                      aria-expanded={open}
+                      aria-controls={open ? MEGA_PANEL_ID : undefined}
+                      className={cn(navLinkClass, open && "bg-primary-50 text-primary-700")}
+                    >
+                      {category.label}
+                    </Link>
+
+                    {/* Directly after its own link, so Tab goes from the link
+                        into its panel. Rendered after the whole list, only the
+                        last category's panel was reachable: Tab from any other
+                        link focused the next link, which swapped the panel out
+                        for its own. Position is unaffected — `absolute` resolves
+                        against the header, not the nav, and the nav's overflow
+                        does not clip a box whose containing block is outside
+                        it — and an out-of-flow child takes no flex gap. */}
+                    {open && <MegaMenu category={category} />}
+                  </Fragment>
                 );
               })}
-
-              {/* Rendered here, inside the nav, so the panel follows its own
-                  trigger in the tab order — after </header> it could only be
-                  reached by tabbing past every action button, and the featured
-                  link closed it first. Position is unaffected: `absolute`
-                  resolves against the sticky wrapper either way, and the nav's
-                  overflow does not clip a box whose containing block is outside
-                  it. */}
-              {mega && <MegaMenu category={mega} />}
 
               <span aria-hidden="true" className="mx-1.5 h-4 w-px bg-line" />
 
@@ -538,12 +574,16 @@ export function SiteHeader({
                 <Icon name="search" size={21} strokeWidth={1.6} />
               </button>
 
+              {/* A disclosure, not a menu button: what it opens is a sign-in
+                  form or a short list of links, and `aria-haspopup="menu"`
+                  promised a role=menu with arrow-key navigation that neither
+                  of them is. */}
               <button
                 ref={accountButtonRef}
                 type="button"
                 aria-label="Account"
                 aria-expanded={accountOpen}
-                aria-haspopup="menu"
+                aria-controls={accountOpen ? ACCOUNT_PANEL_ID : undefined}
                 onClick={() => {
                   setAccountOpen((open) => !open);
                   setMega(null);
@@ -594,6 +634,9 @@ export function SiteHeader({
                   onRequestCode={onRequestCode}
                   onSubmitCode={onSubmitCode}
                   onLogOut={onLogOut}
+                  // A link to the page already open changes no route, so the
+                  // pathname check above cannot be what closes the panel then.
+                  onNavigate={() => setAccountOpen(false)}
                   devCode={devCode}
                 />
               </div>

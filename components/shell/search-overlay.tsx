@@ -182,12 +182,16 @@ export function SearchOverlay({ open, onClose, whatsappHref }: SearchOverlayProp
           <span className="text-primary-700">
             <Icon name="search" size={21} />
           </span>
+          {/* A plain search field, not a combobox. It claimed role=combobox
+              with aria-controls naming a list that exists only while there
+              are results, and the suggestions are links reached by Tab, not
+              a listbox of options driven by the arrow keys — the contract a
+              combobox announces. `aria-controls` stays, but only while the
+              node it names is in the document. */}
           <input
             ref={inputRef}
             type="search"
-            role="combobox"
-            aria-expanded={showResults}
-            aria-controls="search-suggestions"
+            aria-controls={showResults ? "search-suggestions" : undefined}
             aria-label="Search Sazuna"
             placeholder="Search rings, mangalsutra, gold colour…"
             value={query}

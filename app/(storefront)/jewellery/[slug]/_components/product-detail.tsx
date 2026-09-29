@@ -171,7 +171,10 @@ export async function ProductDetailView({ product }: { product: ProductDetail })
       {product.sku && <meta property="product:retailer_item_id" content={product.sku} />}
 
       {/* Structured data. Rendered from the same values the page shows, so the
-          two cannot disagree — a mismatched price is a Merchant Center error. */}
+          two cannot disagree — a mismatched price is a Merchant Center error.
+          The name and description are admin-authored, so `<` is escaped as
+          every other JSON-LD block does: a `</script>` in a description would
+          otherwise end this tag and spill the rest into the page. */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
@@ -193,7 +196,7 @@ export async function ProductDetailView({ product }: { product: ProductDetail })
                 ? "https://schema.org/InStock"
                 : "https://schema.org/OutOfStock",
             },
-          }),
+          }).replace(/</g, "\\u003c"),
         }}
       />
 

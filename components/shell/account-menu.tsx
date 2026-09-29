@@ -31,6 +31,8 @@ export interface AccountMenuProps {
   onRequestCode?: (identity: string) => Promise<string | void> | string | void;
   onSubmitCode?: (identity: string, code: string) => Promise<string | void> | string | void;
   onLogOut?: () => void;
+  /** Called when a link in the panel is followed, so the owner can close it. */
+  onNavigate?: () => void;
   /** Hidden while the loyalty scheme is switched off. */
   showLoyalty?: boolean;
   /**
@@ -40,6 +42,12 @@ export interface AccountMenuProps {
    */
   devCode?: string;
 }
+
+/**
+ * Names the panel for the `aria-controls` on the header's account button, the
+ * same way MEGA_PANEL_ID does for the category links. Only one is ever mounted.
+ */
+export const ACCOUNT_PANEL_ID = "sz-account-panel";
 
 const OTP_LENGTH = 6;
 const RESEND_SECONDS = 28;
@@ -72,6 +80,7 @@ export function AccountMenu({
   onRequestCode,
   onSubmitCode,
   onLogOut,
+  onNavigate,
   showLoyalty = false,
   devCode,
 }: AccountMenuProps) {
@@ -160,9 +169,14 @@ export function AccountMenu({
     if (event.key === "ArrowRight" && index < OTP_LENGTH - 1) boxes.current[index + 1]?.focus();
   }
 
+  /*
+   * Plain links and a button, not role=menu/menuitem. The items had
+   * role=menuitem with no role=menu around them and none of the arrow-key
+   * behaviour a menu promises; the header's button is a disclosure for them.
+   */
   if (customer) {
     return (
-      <div className={panelClass}>
+      <div id={ACCOUNT_PANEL_ID} className={panelClass}>
         <div className="flex items-center gap-3 border-b border-line-soft px-[22px] py-[18px]">
           <span className="inline-flex size-10 items-center justify-center rounded-[var(--sz-radius-pill)] bg-primary-800 font-[family-name:var(--sz-font-display)] text-avatar text-accent">
             {customer.name.trim().charAt(0).toUpperCase()}
@@ -180,19 +194,19 @@ export function AccountMenu({
         </div>
 
         <div className="p-2">
-          <Link href="/account/orders" role="menuitem" className={menuItemClass}>
+          <Link href="/account/orders" onClick={onNavigate} className={menuItemClass}>
             <Icon name="bag" size={18} strokeWidth={1.6} className="text-primary-700" />
             Orders
           </Link>
           {/* Hidden until the loyalty scheme is switched on — a menu entry to a
               page that says nothing is worse than no entry. */}
           {showLoyalty && (
-            <Link href="/account/loyalty" role="menuitem" className={menuItemClass}>
+            <Link href="/account/loyalty" onClick={onNavigate} className={menuItemClass}>
               <Icon name="star" size={18} strokeWidth={1.6} className="text-primary-700" />
               Loyalty
             </Link>
           )}
-          <Link href="/account" role="menuitem" className={menuItemClass}>
+          <Link href="/account/profile" onClick={onNavigate} className={menuItemClass}>
             <Icon name="account" size={18} strokeWidth={1.6} className="text-primary-700" />
             Profile
           </Link>
@@ -201,7 +215,6 @@ export function AccountMenu({
 
           <button
             type="button"
-            role="menuitem"
             onClick={onLogOut}
             className="flex w-full cursor-pointer items-center gap-[11px] rounded-[var(--sz-radius-control)] px-3 py-[11px] text-left text-sm text-error transition-colors duration-[var(--sz-dur-fast)] hover:bg-error-soft"
           >
@@ -213,7 +226,7 @@ export function AccountMenu({
   }
 
   return (
-    <div className={panelClass}>
+    <div id={ACCOUNT_PANEL_ID} className={panelClass}>
       <div className="px-[22px] py-5">
         {stage === "identity" ? (
           <>
@@ -263,11 +276,11 @@ export function AccountMenu({
 
             <p className="m-0 mt-3 text-center text-2xs text-muted-soft">
               By continuing you agree to our{" "}
-              <Link href="/terms" className="text-muted-soft underline">
+              <Link href="/terms" onClick={onNavigate} className="text-muted-soft underline">
                 Terms
               </Link>{" "}
               &amp;{" "}
-              <Link href="/privacy" className="text-muted-soft underline">
+              <Link href="/privacy" onClick={onNavigate} className="text-muted-soft underline">
                 Privacy
               </Link>
               .

@@ -64,7 +64,9 @@ export function Button({
   return (
     <button
       type="button"
-      disabled={disabled ?? loading}
+      // `||`, not `??`: an explicit disabled={false} must not re-enable a
+      // button that is loading.
+      disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cn(button({ variant, size }), loading && "cursor-progress", className)}
       {...props}

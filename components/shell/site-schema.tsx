@@ -70,10 +70,16 @@ export async function SiteSchema({ origin }: { origin: string }) {
   return (
     <script
       type="application/ld+json"
-      // Built from a literal above and admin-authored strings that JSON.stringify
-      // escapes; no markup can reach the page through it.
+      // The address and phone are admin-authored, and JSON.stringify escapes
+      // quotes but not `<`: a `</script>` in either closed this tag early and
+      // the rest of the graph landed in the page as markup. `<` is the
+      // same character to a JSON parser and inert to the HTML tokenizer —
+      // Next's JSON-LD guidance (docs/01-app/02-guides/json-ld.md).
       dangerouslySetInnerHTML={{
-        __html: JSON.stringify({ "@context": "https://schema.org", "@graph": graph }),
+        __html: JSON.stringify({ "@context": "https://schema.org", "@graph": graph }).replace(
+          /</g,
+          "\\u003c",
+        ),
       }}
     />
   );

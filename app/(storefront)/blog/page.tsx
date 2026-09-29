@@ -79,7 +79,9 @@ export default async function JournalPage({
     <div className="mx-auto max-w-[var(--sz-container)] px-10 pb-24 journal-narrow:px-5">
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+        // Titles are admin-authored; `<` escaped so a `</script>` in one cannot
+        // end the tag early. See Next's JSON-LD guidance.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(schema).replace(/</g, "\\u003c") }}
       />
 
       <header className="max-w-[680px] pt-[30px]">
