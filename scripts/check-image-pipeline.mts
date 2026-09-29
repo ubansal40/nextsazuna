@@ -151,8 +151,12 @@ checks.push(
   ["pango-significant characters are stripped", normaliseSku('SAZ<>&"001') === "SAZ001"],
   ["a decimal point in a SKU survives", normaliseSku("DLR10102-22KT-YG-0.75CT") === "DLR10102-22KT-YG-0.75CT"],
   ["a slash in a SKU survives", normaliseSku("SAZ/RING/001") === "SAZ/RING/001"],
+  ["punctuation pango does not parse survives", normaliseSku("RNG(12)+#3,A") === "RNG(12)+#3,A"],
   ["an empty SKU still stamps something", normaliseSku("   ") === "SKU"],
-  ["a SKU is capped at 64 characters", normaliseSku("A".repeat(200)).length === 64],
+  // The products.sku column's width: a longer cap is never needed, a shorter
+  // one stamps a code the catalogue accepts as a different, shorter code.
+  ["a SKU is capped at 80 characters, the column's width", normaliseSku("A".repeat(200)).length === 80],
+  ["...so an 80-character SKU is stamped whole", normaliseSku("B".repeat(80)) === "B".repeat(80)],
 );
 
 /* --- the stamp font ships with the repo ------------------------------------

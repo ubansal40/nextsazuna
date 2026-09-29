@@ -9,7 +9,13 @@ import { cn } from "@/lib/cn";
 import type { AdminProductDetail } from "@/lib/admin/product-detail";
 import type { ProductEditorOptions } from "@/lib/admin/catalog";
 import type { SkuSheetStatus } from "@/lib/admin/sku-weights";
-import { lookupSkuAction, previewPriceAction, saveProductAction } from "../_editor-actions";
+import {
+  lookupSkuAction,
+  previewPriceAction,
+  saveProductAction,
+  type SaveProductResult,
+  type SkuAutofill,
+} from "../_editor-actions";
 import { SkuSheetBar } from "./sku-sheet-bar";
 import { ProductCardForm, type CardHandlers, type EditorMode } from "./product-card-form";
 import {
@@ -21,9 +27,11 @@ import {
   effectiveName,
   hasAnyWeight,
   hasUploadingPhotos,
+  isLocked,
   nextPhotoId,
   priceSignature,
   readyPhotoUrls,
+  withdrawAutofill,
   type CardPhoto,
   type EditorCard,
 } from "./editor-model";
@@ -94,6 +102,13 @@ export function ProductEditor({
     cardsRef.current = cards;
   }, [cards]);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  /**
+   * Lookups and price previews whose timer has fired and whose answer has not
+   * come back yet, counted under the same `kind:key` id as `timers`. Between
+   * them, the two maps say whether a card is still waiting on something that
+   * may rewrite its weights or its price — which a save must not race.
+   */
+  const running = useRef(new Map<string, number>());
 
   // Timers outlive the cards that scheduled them (remove, clear all, unmount),
   // so they are cancelled centrally rather than per-callback.
@@ -144,7 +159,7 @@ export function ProductEditor({
     setCards((current) => current.map((c) => (c.key === key ? { ...c, ...next } : c)));
   }, []);
 
-  const schedule = useCallback((key: string, kind: "sku" | "price", run: () => void, delay: number) => {
+  const schedule = useCallback((key: string, kind: "sku" | "price", run: () => Promise<void>, delay: number) => {
     const id = `${kind}:${key}`;
     const existing = timers.current.get(id);
     if (existing) clearTimeout(existing);
@@ -152,32 +167,52 @@ export function ProductEditor({
       id,
       setTimeout(() => {
         timers.current.delete(id);
-        run();
+        running.current.set(id, (running.current.get(id) ?? 0) + 1);
+        void run().finally(() => {
+          const left = (running.current.get(id) ?? 1) - 1;
+          if (left > 0) running.current.set(id, left);
+          else running.current.delete(id);
+        });
       }, delay),
     );
   }, []);
+
+  /** Whether a card's lookup or price preview is scheduled or in flight. */
+  function waitingOn(key: string, kind: "sku" | "price"): boolean {
+    const id = `${kind}:${key}`;
+    return timers.current.has(id) || running.current.has(id);
+  }
 
   /* --- rule pricing -------------------------------------------------------- */
 
   const runPricePreview = useCallback(
     async (key: string) => {
       const card = cardsRef.current.find((c) => c.key === key);
-      if (!card || card.status === "saved" || !hasAnyWeight(card)) return;
+      if (!card || isLocked(card) || !hasAnyWeight(card)) return;
       const signature = priceSignature(card);
 
-      const price = await previewPriceAction({
-        material: card.material,
-        purity: card.purity,
-        categoryIds: card.categoryIds.map(Number).filter(Number.isFinite),
-        grossWeight: card.gross,
-        netWeight: card.net,
-        diamondWeight: card.diamond,
-        stoneWeight: card.stone,
-      });
+      let price: string | null;
+      try {
+        price = await previewPriceAction({
+          material: card.material,
+          purity: card.purity,
+          categoryIds: card.categoryIds.map(Number).filter(Number.isFinite),
+          grossWeight: card.gross,
+          netWeight: card.net,
+          diamondWeight: card.diamond,
+          stoneWeight: card.stone,
+        });
+      } catch {
+        // No answer at all — a dropped connection. That says nothing about the
+        // price, so the card is left exactly as it is.
+        return;
+      }
 
-      // The admin may have changed the question while the answer was in flight.
+      // The admin may have changed the question while the answer was in flight
+      // — or saved the card, which locks it at the price it was saved with. A
+      // late answer used to redraw a saved card with a number never saved.
       const live = cardsRef.current.find((c) => c.key === key);
-      if (!live || priceSignature(live) !== signature) return;
+      if (!live || isLocked(live) || priceSignature(live) !== signature) return;
       // No rule matched. Remember that, and leave the price field alone — a 0
       // here would publish the piece as free.
       if (price === null) {
@@ -193,7 +228,7 @@ export function ProductEditor({
   );
 
   const schedulePrice = useCallback(
-    (key: string) => schedule(key, "price", () => void runPricePreview(key), PRICE_DEBOUNCE_MS),
+    (key: string) => schedule(key, "price", () => runPricePreview(key), PRICE_DEBOUNCE_MS),
     [schedule, runPricePreview],
   );
 
@@ -202,15 +237,23 @@ export function ProductEditor({
   const runSkuLookup = useCallback(
     async (key: string) => {
       const card = cardsRef.current.find((c) => c.key === key);
-      if (!card || card.status === "saved") return;
+      if (!card || isLocked(card)) return;
       const sku = card.sku.trim();
       if (!sku) return;
 
-      const row = await lookupSkuAction(sku);
+      let row: SkuAutofill | null;
+      try {
+        row = await lookupSkuAction(sku);
+      } catch {
+        // A lookup that never answered fills nothing — the same silence as a
+        // SKU that is not on the sheet.
+        return;
+      }
 
       const live = cardsRef.current.find((c) => c.key === key);
-      if (!live || live.sku.trim().toUpperCase() !== sku.toUpperCase()) return;
-      // Not on the sheet. Completely normal for a new piece — say nothing.
+      if (!live || isLocked(live) || live.sku.trim().toUpperCase() !== sku.toUpperCase()) return;
+      // Not on the sheet. Completely normal for a new piece — say nothing. What
+      // the previous SKU filled was already withdrawn when the SKU changed.
       if (!row) {
         if (live.sheetRow) patch(key, { sheetRow: null, sheetFilled: false });
         return;
@@ -266,14 +309,14 @@ export function ProductEditor({
         toast("info", `Only ${accepted.length} of ${chosen.length} added — the limit is ${MAX_PRODUCT_PHOTOS}.`);
       }
 
-      const oversize = accepted.filter((f) => f.size > MAX_PHOTO_BYTES);
-      const usable = accepted.filter((f) => f.size <= MAX_PHOTO_BYTES);
-      if (oversize.length > 0) toast("error", photoSizeLimitMessage());
-      if (usable.length === 0) return;
+      // No size check here. The limit is on what is UPLOADED, and `preparePhoto`
+      // crops a 30 MB camera original down to ~150 KB — refusing on the
+      // original's size turned away exactly the photos the crop exists for. A
+      // file still over the limit once prepared fails on its own tile below.
 
       // Tiles first, upload second: the point of doing this per file is that the
       // operator sees the photo land instantly.
-      const tiles = usable.map((file) => {
+      const tiles = accepted.map((file) => {
         const url = URL.createObjectURL(file);
         blobUrls.current.add(url);
         return { file, photo: { id: nextPhotoId(), url, status: "uploading" as const, error: null } };
@@ -306,6 +349,12 @@ export function ProductEditor({
             // original whenever the browser can't do it (HEIC on desktop), so
             // this can only make the upload smaller, never make it fail.
             const prepared = await preparePhoto(file);
+            // Still too big — typically a HEIC the browser cannot decode, so it
+            // goes as it came. The server would refuse it with this message.
+            if (prepared.body.size > MAX_PHOTO_BYTES) {
+              settle(photo.id, { status: "failed", error: photoSizeLimitMessage() }, null);
+              continue;
+            }
             const body = new FormData();
             body.set("sku", sku);
             body.append("image", prepared.body, prepared.filename);
@@ -335,19 +384,26 @@ export function ProductEditor({
       edit: (next) => {
         setTouched(true);
         patch(card.key, { ...next, errors: {}, status: card.status === "failed" ? "editing" : card.status });
-        schedulePrice(card.key);
+        // Only an edit to something the price depends on asks for a new one. A
+        // renamed card costs the same, and a pending preview holds the save.
+        if (priceSignature({ ...card, ...next }) !== priceSignature(card)) schedulePrice(card.key);
       },
       onSkuChange: (value) => {
         setTouched(true);
+        const withdrawn = withdrawAutofill(card);
         patch(card.key, {
           sku: value,
           errors: {},
           status: card.status === "failed" ? "editing" : card.status,
-          // The sheet row belongs to the SKU that fetched it.
+          // The sheet row belongs to the SKU that fetched it — and so does
+          // everything it filled. See `withdrawAutofill`.
           sheetRow: null,
           sheetFilled: false,
+          ...withdrawn,
         });
-        schedule(card.key, "sku", () => void runSkuLookup(card.key), SKU_DEBOUNCE_MS);
+        schedule(card.key, "sku", () => runSkuLookup(card.key), SKU_DEBOUNCE_MS);
+        // Whatever weights the admin typed may still price the piece.
+        if (withdrawn) schedulePrice(card.key);
       },
       onPriceChange: (value) => {
         setTouched(true);
@@ -503,6 +559,15 @@ export function ProductEditor({
       return;
     }
 
+    // Same wait, for the sheet lookup and the rule price. Both land a moment
+    // after the typing that asked for them, so saving in that gap wrote the
+    // price the PREVIOUS weights derived. A card whose price was typed by hand
+    // only waits for its lookup: a preview never writes its price.
+    if (work.some((c) => waitingOn(c.key, "sku") || (!c.saleOverride && waitingOn(c.key, "price")))) {
+      toast("error", "Hold on — the weights and price are still being filled in.");
+      return;
+    }
+
     // A failed photo has no served URL, so `readyPhotoUrls` drops it — and the
     // card locks the moment it saves, taking the tile's remove button and the
     // Add tile with it, so there is no retrying it afterwards either. Reporting
@@ -556,53 +621,67 @@ export function ProductEditor({
     // no longer about sharp — it is so a card that fails to validate marks
     // itself while the rest keep going, and so the progress counter means
     // something.
-    for (let i = 0; i < work.length; i += 1) {
-      const card = work[i];
-      setProgress(`${i + 1} / ${work.length}`);
-      const result = await saveProductAction(card.productId, {
-        name: effectiveName(card, categoryLabel),
-        sku: card.sku,
-        material: card.material,
-        purity: card.purity,
-        stoneType: product?.stoneType ?? "",
-        description: product?.description ?? "",
-        salePrice: card.salePrice,
-        grossWeight: card.gross,
-        netWeight: card.net,
-        diamondWeight: card.diamond,
-        stoneWeight: card.stone,
-        categoryIds: card.categoryIds.map(Number),
-        tagIds: card.tagIds.map(Number),
-        imageUrls: readyPhotoUrls(card),
-        alwaysAvailable: card.alwaysAvailable,
-      });
+    try {
+      for (let i = 0; i < work.length; i += 1) {
+        const card = work[i];
+        setProgress(`${i + 1} / ${work.length}`);
+        let result: SaveProductResult;
+        try {
+          result = await saveProductAction(card.productId, {
+            name: effectiveName(card, categoryLabel),
+            sku: card.sku,
+            material: card.material,
+            purity: card.purity,
+            stoneType: product?.stoneType ?? "",
+            description: product?.description ?? "",
+            salePrice: card.salePrice,
+            grossWeight: card.gross,
+            netWeight: card.net,
+            diamondWeight: card.diamond,
+            stoneWeight: card.stone,
+            categoryIds: card.categoryIds.map(Number),
+            tagIds: card.tagIds.map(Number),
+            imageUrls: readyPhotoUrls(card),
+            alwaysAvailable: card.alwaysAvailable,
+          });
+        } catch {
+          // The action resolves for every failure it knows about, so a
+          // rejection means it never answered: a dropped connection, a 5xx, or
+          // a deploy that retired this action's id. Uncaught, it left the
+          // footer on "Saving…" with every card locked.
+          result = {
+            ok: false,
+            error: "The server didn't answer — check your connection and save again. If it keeps failing, reload the page.",
+          };
+        }
 
-      if (result.ok) {
-        saved += 1;
-        setCards((current) =>
-          current.map((c) =>
-            c.key === card.key ? { ...c, status: "saved", savedId: result.id, errors: {}, failure: null } : c,
-          ),
-        );
-      } else {
-        failed += 1;
-        setCards((current) =>
-          current.map((c) =>
-            c.key === card.key
-              ? {
-                  ...c,
-                  status: "failed",
-                  failure: result.error,
-                  errors: result.field ? { [result.field]: result.error } : {},
-                }
-              : c,
-          ),
-        );
+        if (result.ok) {
+          saved += 1;
+          setCards((current) =>
+            current.map((c) =>
+              c.key === card.key ? { ...c, status: "saved", savedId: result.id, errors: {}, failure: null } : c,
+            ),
+          );
+        } else {
+          failed += 1;
+          setCards((current) =>
+            current.map((c) =>
+              c.key === card.key
+                ? {
+                    ...c,
+                    status: "failed",
+                    failure: result.error,
+                    errors: result.field ? { [result.field]: result.error } : {},
+                  }
+                : c,
+            ),
+          );
+        }
       }
+    } finally {
+      setSaving(false);
+      setProgress(null);
     }
-
-    setSaving(false);
-    setProgress(null);
 
     if (failed > 0) {
       setBanner({ kind: "partial", text: `${saved} of ${work.length} saved · ${failed} failed` });

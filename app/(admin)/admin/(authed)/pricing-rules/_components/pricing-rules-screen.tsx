@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
 import type { PricingRuleRow, PricingRuleInput, WeightBand, RuleTestResult } from "@/lib/admin/pricing-rules";
 import type { ProductEditorOptions } from "@/lib/admin/catalog";
+import { formulaError } from "@/lib/admin/pricing";
 import { withCurrentValue } from "@/lib/admin/vocab-options";
 import {
   saveRuleAction,
@@ -118,7 +119,27 @@ export function PricingRulesScreen({
   const setInput = (patch: Partial<PricingRuleInput>) =>
     editing && setEditing({ ...editing, input: { ...editing.input, ...patch } });
 
-  const liveError = editing ? clientFormulaHint(editing.input.formula) : null;
+  /**
+   * The server's own check, run while the author types. `pricing.ts` is pure
+   * arithmetic with no server imports, so this is the very function that refuses
+   * the save — a hand-rolled approximation here approved `gwt*6500` and
+   * `net * * 2`, both of which the save then refused. (It evaluates through
+   * `Function`, as the server does: a Content-Security-Policy without
+   * 'unsafe-eval' would fail every formula here. The app sets none.)
+   */
+  const liveError = editing ? formulaError(editing.input.formula) : null;
+
+  /** Save, and close the drawer only once the server has accepted the rule — a
+   *  refusal must leave everything the author typed where it was. */
+  function saveEditing() {
+    if (!editing) return;
+    const { id, input } = editing;
+    startTransition(async () => {
+      const result = await saveRuleAction(id, input);
+      handle(result, id ? "Rule saved." : "Rule added.");
+      if (result.ok) setEditing((current) => (current?.id === id ? null : current));
+    });
+  }
 
   return (
     <div className="mx-auto max-w-[900px]">
@@ -423,12 +444,8 @@ export function PricingRulesScreen({
               </button>
               <button
                 type="button"
-                disabled={busy}
-                onClick={() => {
-                  const { id, input } = editing;
-                  setEditing(null);
-                  run(() => saveRuleAction(id, input), id ? "Rule saved." : "Rule added.");
-                }}
+                disabled={busy || liveError !== null}
+                onClick={saveEditing}
                 className="min-h-11 flex-1 rounded-[var(--sz-admin-radius-control)] bg-primary-700 text-[13px] font-semibold text-white hover:bg-primary-800 disabled:opacity-50"
               >
                 Save rule
@@ -555,27 +572,6 @@ function conditionChips(rule: PricingRuleRow): string[] {
     }
   }
   return chips;
-}
-
-/**
- * A cheap client-side read of formula validity, for the live "Formula is valid"
- * line. The authoritative check is `formulaError` on the server, which is what
- * actually refuses a save — this only exists so the author gets feedback while
- * typing, without a round trip per keystroke.
- */
-function clientFormulaHint(formula: string): string | null {
-  const trimmed = formula.trim();
-  if (!trimmed) return "A formula is required.";
-  if (trimmed.length > 500) return "That formula is too long.";
-  const stripped = trimmed.replace(/\b(gross_weight|net_weight|diamond_weight|stone_weight|gwt|nwt|dwt|stnwt|gross|net|diamond|stone)\b/g, "0");
-  if (/[^0-9+\-*/().\s]/.test(stripped)) return "Only weights, numbers and + − * / ( ) are allowed.";
-  let depth = 0;
-  for (const ch of stripped) {
-    if (ch === "(") depth += 1;
-    if (ch === ")") depth -= 1;
-    if (depth < 0) return "Unbalanced brackets.";
-  }
-  return depth === 0 ? null : "Unbalanced brackets.";
 }
 
 function toInput(rule: PricingRuleRow): PricingRuleInput {

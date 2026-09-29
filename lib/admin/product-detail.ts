@@ -67,7 +67,23 @@ export async function getAdminProduct(id: number): Promise<AdminProductDetail | 
   if (!row) return null;
 
   const [categoryRows, tagRows, imageRows] = await Promise.all([
-    query<IdRow>("SELECT category_id AS id FROM product_categories WHERE product_id = ?", [id]),
+    // The categories the admin PICKED. A parent stored beside one of its own
+    // children was added by `withAncestors` on save, not chosen — and loading it
+    // back as a pick made it permanent: move a product from Rings › Solitaire to
+    // Earrings › Studs and it stayed in Rings. Left out here, the save re-adds
+    // it for exactly as long as a child of it is still chosen.
+    query<IdRow>(
+      `SELECT pc.category_id AS id
+         FROM product_categories pc
+        WHERE pc.product_id = ?
+          AND NOT EXISTS (
+                SELECT 1
+                  FROM product_categories sibling
+                  JOIN categories child ON child.id = sibling.category_id
+                 WHERE sibling.product_id = pc.product_id
+                   AND child.parent_id = pc.category_id)`,
+      [id],
+    ),
     query<IdRow>("SELECT tag_id AS id FROM product_tags WHERE product_id = ?", [id]),
     query<UrlRow>("SELECT image_url FROM product_images WHERE product_id = ? ORDER BY sort_order", [id]),
   ]);

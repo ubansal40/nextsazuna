@@ -25,8 +25,9 @@ import {
  *
  * A load-more list (not numbered pages): search and filters replace the list,
  * "Load more" appends. Mutations update the loaded rows in place so the view
- * does not jump. Availability is `is_active`, so "publish"/"unpublish" is the
- * whole of visibility — there is no stock to move.
+ * does not jump — unless they move rows, see `reloadsList`. Availability is
+ * `is_active`, so "publish"/"unpublish" is the whole of visibility — there is
+ * no stock to move.
  */
 
 type DrawerFilters = Omit<AdminProductFilters, "q" | "page" | "pageSize">;
@@ -239,6 +240,16 @@ export function ProductsView({
     });
   }
 
+  /**
+   * Whether a status change MOVES rows rather than just relabelling them: under
+   * a status filter the row leaves the set, under a status sort it changes
+   * place. "Load more" pages by offset, so either shifts every row after it —
+   * the next page then skipped one, and the list could never reach `total`, so
+   * "Load more" stayed forever. Such a change reloads from the first page, as
+   * the bulk actions already do; any other is patched in place.
+   */
+  const reloadsList = Boolean(filters.status) || (filters.sort ?? "").startsWith("status_");
+
   function publish(ids: number[], isActive: boolean) {
     setMenu(null);
     startTransition(async () => {
@@ -247,12 +258,16 @@ export function ProductsView({
         toast("error", "Couldn't update those products.");
         return;
       }
+      setSelected(new Set());
+      toast("success", `${result.changed} ${result.changed === 1 ? "product" : "products"} ${isActive ? "published" : "unpublished"}.`);
+      if (reloadsList) {
+        apply(filters, q);
+        return;
+      }
       const idSet = new Set(ids);
       setItems((current) =>
         current.map((i) => (idSet.has(i.id) ? { ...i, status: isActive ? "published" : "draft" } : i)),
       );
-      setSelected(new Set());
-      toast("success", `${result.changed} ${result.changed === 1 ? "product" : "products"} ${isActive ? "published" : "unpublished"}.`);
     });
   }
 
@@ -269,13 +284,17 @@ export function ProductsView({
         return;
       }
       if (result.mode === "hard") {
-        setItems((current) => current.filter((i) => i.id !== target.id));
-        setTotal((t) => Math.max(0, t - 1));
         toast("success", "Product deleted.");
-      } else {
-        setItems((current) => current.map((i) => (i.id === target.id ? { ...i, status: "draft" } : i)));
-        toast("info", "This product has order history — it was unpublished instead of deleted.");
+        // Gone from the set, so every offset after it moved — see `reloadsList`.
+        apply(filters, q);
+        return;
       }
+      toast("info", "This product has order history — it was unpublished instead of deleted.");
+      if (reloadsList) {
+        apply(filters, q);
+        return;
+      }
+      setItems((current) => current.map((i) => (i.id === target.id ? { ...i, status: "draft" } : i)));
     });
   }
 
@@ -425,7 +444,10 @@ export function ProductsView({
                             <span className="text-price-struck line-through">{formatPrice(item.price)}</span>
                           </>
                         ) : (
-                          <span className="text-body">{formatPrice(item.price)}</span>
+                          // What the storefront charges — `sale_price ?? price`,
+                          // so a sale price at or above MRP is still the price.
+                          // This showed the MRP instead.
+                          <span className="text-body">{formatPrice(item.effectivePrice)}</span>
                         )}
                       </td>
                       <td className="px-3.5 py-2.5">

@@ -79,6 +79,67 @@ checks.push([
   detectColumns(noHeader).columns.gross_weight === 4 && detectColumns(noHeader).columns.sku === 0,
 ]);
 
+// The tag abbreviations. This exact header used to read the gross weight from
+// the DIAMOND column: G.Wt was not an alias, so gross fell back to its default
+// position, column 4 — which this header had just named D.Wt.
+const tagHeader: Cell[][] = [
+  ["Tag No", "Stamp", "G.Wt", "N.Wt", "D.Wt", "S.Wt"],
+  ["DGR-10", "18K", "5.5", "4.2", "0.35", "0.10"],
+];
+checks.push(
+  [
+    "tag abbreviations (G.Wt, N.Wt, D.Wt, S.Wt) each map to their own column",
+    eq(detectColumns(tagHeader).columns, {
+      sku: 0, purity: 1, gross_weight: 2, net_weight: 3, diamond_weight: 4, stone_weight: 5,
+    }),
+  ],
+  [
+    "...so the gross weight is the gross, not the diamond weight",
+    eq(
+      [parseSkuWeightSheet(tagHeader).rows[0].gross_weight, parseSkuWeightSheet(tagHeader).rows[0].diamond_weight],
+      [5.5, 0.35],
+    ),
+  ],
+  [
+    "carat headings resolve (Dia Ct, Stn Ct)",
+    detectColumns([["SKU", "Dia Ct", "Stn Ct"]]).columns.diamond_weight === 1 &&
+      detectColumns([["SKU", "Dia Ct", "Stn Ct"]]).columns.stone_weight === 2,
+  ],
+);
+
+// A header that names only some fields. The rest are ABSENT — the default
+// positions describe one export's layout, and lending them to a sheet whose
+// header says otherwise read this row's purity from its Net column.
+const partialHeader: Cell[][] = [
+  ["SKU", "Gross", "Net"],
+  ["DGR-11", "5.5", "4.2"],
+];
+const partial = detectColumns(partialHeader).columns;
+const partialRow = parseSkuWeightSheet(partialHeader).rows[0];
+checks.push(
+  [
+    "a field the header does not name is absent, not at its default position",
+    partial.purity === -1 && partial.diamond_weight === -1 && partial.stone_weight === -1,
+  ],
+  [
+    "...and reads as blank rather than as whatever sits at that position",
+    partialRow.purity === null && partialRow.diamond_weight === null && partialRow.stone_weight === null,
+  ],
+  ["...while the fields it does name still land", partialRow.gross_weight === 5.5 && partialRow.net_weight === 4.2],
+);
+
+// Two fields read from one column would both fill from the same number.
+const oneFieldPerColumn = (columns: Record<string, number>) => {
+  const used = Object.values(columns).filter((index) => index >= 0);
+  return new Set(used).size === used.length;
+};
+checks.push([
+  "no detected mapping reads two fields from one column",
+  [withHeader, offsetHeader, tagHeader, partialHeader, noHeader].every((rows) =>
+    oneFieldPerColumn(detectColumns(rows).columns),
+  ),
+]);
+
 /* --- rows ------------------------------------------------------------------ */
 
 const sheet = parseSkuWeightSheet(withHeader);

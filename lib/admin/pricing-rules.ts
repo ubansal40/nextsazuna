@@ -3,7 +3,7 @@ import "server-only";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { query, transaction } from "../db";
 import { recordAdminAction } from "./audit";
-import { formulaError, evaluateFormula, findMatchingRule, FORMULA_MAX_LENGTH, RULE_NAME_MAX_LENGTH, type PricingRuleCondition } from "./pricing";
+import { formulaError, evaluateFormula, findMatchingRule, RULE_NAME_MAX_LENGTH, weightForMatch, type PricingRuleCondition } from "./pricing";
 import type { AdminContext } from "./rbac";
 
 /**
@@ -143,7 +143,10 @@ export async function savePricingRule(
   const name = input.name.trim().slice(0, RULE_NAME_MAX_LENGTH);
   if (!name) throw new Error("A rule name is required.");
 
-  const formula = input.formula.trim().slice(0, FORMULA_MAX_LENGTH);
+  // Not sliced to the length limit: an over-long formula cut at 500 characters
+  // can still parse, and would then price from part of the author's arithmetic.
+  // `formulaError` refuses it whole instead.
+  const formula = input.formula.trim();
   // The formula is refused at the boundary rather than left to fail later on a
   // product save, where the author is no longer looking at it.
   const invalid = formulaError(formula);
@@ -166,6 +169,9 @@ export async function savePricingRule(
   ];
 
   await transaction(async (connection) => {
+    // The new row's id goes in its own variable: writing it back over `id`
+    // made every create read as an update by the time the audit line asked.
+    let ruleId = id;
     if (id) {
       await connection.execute(
         `UPDATE pricing_rules SET name = ?, formula = ?, priority = ?, is_active = ?,
@@ -183,12 +189,12 @@ export async function savePricingRule(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         values,
       );
-      id = result.insertId;
+      ruleId = result.insertId;
     }
     await recordAdminAction(connection, admin, {
       action: id ? "pricing_rules.update" : "pricing_rules.create",
       resourceType: "pricing_rules",
-      resourceId: id,
+      resourceId: ruleId,
       metadata: { name, formula },
     });
   });
@@ -269,14 +275,15 @@ export async function countUnpricedProducts(): Promise<number> {
 
   let unpriced = 0;
   for (const product of products) {
+    // A NULL weight is unknown, not zero — see `weightForMatch`.
     const match = findMatchingRule(conditions, {
       material: product.material,
       purity: product.purity,
       categoryIds: (product.category_ids ?? "").split(",").filter(Boolean).map(Number),
-      gross_weight: Number(product.gross_weight) || 0,
-      net_weight: Number(product.net_weight) || 0,
-      diamond_weight: Number(product.diamond_weight) || 0,
-      stone_weight: Number(product.stone_weight) || 0,
+      gross_weight: weightForMatch(product.gross_weight),
+      net_weight: weightForMatch(product.net_weight),
+      diamond_weight: weightForMatch(product.diamond_weight),
+      stone_weight: weightForMatch(product.stone_weight),
     });
     if (!match) unpriced += 1;
   }

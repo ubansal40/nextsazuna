@@ -8,8 +8,11 @@ export type { Cell };
  *
  * Pure, and deliberately free of `server-only`, so `scripts/check-sku-sheet.mts`
  * can hammer it. The workshop's export is the same file the old admin took, so
- * the header aliases and the default column positions are sazuna-unik 2's
- * verbatim — a sheet that worked there works here.
+ * the header aliases and the default column positions are sazuna-unik 2's,
+ * extended rather than changed. One deliberate divergence: a header row decides
+ * where every field is, or that it is absent. The reference lent a field the
+ * header did not name its default position, which could read one field from
+ * another's column — see `detectColumns`.
  *
  * Note this is the OPPOSITE of `stock-parse.ts`. Stock sync wants column A and
  * nothing else, and a SKU-only row is meaningful there. Here a row with a SKU
@@ -17,14 +20,28 @@ export type { Cell };
  * two jobs; sharing one would make both wrong.
  */
 
-/** Header text -> field. Compared after stripping non-alphanumerics. */
+/**
+ * Header text -> field. Compared after stripping non-alphanumerics, so `G.Wt`,
+ * `G Wt` and `GWT` are all `gwt`.
+ *
+ * The reference's list, plus the jewellery-tag abbreviations it lacked (`G.Wt`,
+ * `S.Wt`, `Dia Ct`, `Stn Ct`…). Those matter more here than they did there: a
+ * header row no longer lends a field it does not name a default position (see
+ * `detectColumns`), so a heading this list misses is a field left blank.
+ */
 const HEADER_ALIASES: Record<SkuField, ReadonlySet<string>> = {
   sku: new Set(["sku", "tagno", "tagnumber", "tagstock", "stockcode", "productcode"]),
   purity: new Set(["purity", "stamp", "karat", "carat", "kt"]),
-  gross_weight: new Set(["grosswt", "grossweight", "grwt", "grweight", "gross"]),
+  gross_weight: new Set(["grosswt", "grossweight", "grwt", "grweight", "gross", "gwt", "grswt"]),
   net_weight: new Set(["netwt", "netweight", "nwt", "net"]),
-  diamond_weight: new Set(["diawt", "diaweight", "diamondwt", "diamondweight", "dwt", "dia"]),
-  stone_weight: new Set(["stnwt", "stnweight", "stonewt", "stoneweight", "stwt", "stone"]),
+  diamond_weight: new Set([
+    "diawt", "diaweight", "diamondwt", "diamondweight", "dwt", "dia",
+    "diact", "diacts", "diamondct", "diamondcts",
+  ]),
+  stone_weight: new Set([
+    "stnwt", "stnweight", "stonewt", "stoneweight", "stwt", "stone",
+    "swt", "stnct", "stncts", "stonect", "stonects",
+  ]),
 };
 
 /** Where the columns sit when a sheet has no recognisable header row. */
@@ -35,6 +52,19 @@ const COLUMN_DEFAULTS: Record<SkuField, number> = {
   net_weight: 5,
   diamond_weight: 6,
   stone_weight: 7,
+};
+
+/** A field the sheet does not carry. */
+const ABSENT = -1;
+
+/** A header's starting point: nothing is anywhere until the header says so. */
+const NO_COLUMNS: Record<SkuField, number> = {
+  sku: ABSENT,
+  purity: ABSENT,
+  gross_weight: ABSENT,
+  net_weight: ABSENT,
+  diamond_weight: ABSENT,
+  stone_weight: ABSENT,
 };
 
 export type SkuField = "sku" | "purity" | "gross_weight" | "net_weight" | "diamond_weight" | "stone_weight";
@@ -78,6 +108,7 @@ export function normalisePurity(value: Cell): string | null {
 }
 
 export interface ColumnDetection {
+  /** Each field's column, or -1 when a recognised header does not name it. */
   columns: Record<SkuField, number>;
   /** Index of the recognised header row, or -1 when none was found. */
   headerRowIndex: number;
@@ -90,6 +121,16 @@ export interface ColumnDetection {
  * title and a blank line above the real header. A row counts as the header when
  * it names at least the SKU column plus one other field; anything weaker and a
  * data row containing the word "net" would be mistaken for one.
+ *
+ * Once a header is found, it is the whole truth: a field it does not name is
+ * ABSENT, not read from its default position. The defaults describe one
+ * particular export's layout, and lending them to a sheet whose header says
+ * something else read `Tag No | Stamp | G.Wt | N.Wt | D.Wt | S.Wt` as a gross
+ * weight taken from the diamond column. The defaults apply only to a sheet with
+ * no header at all.
+ *
+ * Throws if the mapping would read two fields from one column — both would fill
+ * from the same number, and nothing downstream could tell.
  */
 export function detectColumns(rows: readonly (readonly Cell[])[]): ColumnDetection {
   for (let r = 0; r < Math.min(rows.length, 20); r += 1) {
@@ -104,7 +145,12 @@ export function detectColumns(rows: readonly (readonly Cell[])[]): ColumnDetecti
       }
     });
     if (found.sku !== undefined && Object.keys(found).length >= 2) {
-      return { columns: { ...COLUMN_DEFAULTS, ...found }, headerRowIndex: r };
+      const columns = { ...NO_COLUMNS, ...found };
+      const used = FIELDS.map((f) => columns[f]).filter((index) => index !== ABSENT);
+      if (new Set(used).size !== used.length) {
+        throw new Error("The sheet's header names one column as two different fields. Rename it and upload again.");
+      }
+      return { columns, headerRowIndex: r };
     }
   }
   return { columns: { ...COLUMN_DEFAULTS }, headerRowIndex: -1 };
@@ -136,7 +182,8 @@ export function parseSkuWeightSheet(rows: readonly (readonly Cell[])[]): SkuWeig
       skippedRows += 1;
       continue;
     }
-    const sku = String(row[columns.sku] ?? "").trim().toUpperCase().slice(0, 80);
+    const cell = (field: SkuField): Cell => (columns[field] === ABSENT ? null : row[columns[field]]);
+    const sku = String(cell("sku") ?? "").trim().toUpperCase().slice(0, 80);
     // A repeated header mid-file is not a SKU.
     if (!sku || HEADER_ALIASES.sku.has(headerToken(sku))) {
       skippedRows += 1;
@@ -145,11 +192,11 @@ export function parseSkuWeightSheet(rows: readonly (readonly Cell[])[]): SkuWeig
 
     const entry: SkuWeightRow = {
       sku,
-      purity: normalisePurity(row[columns.purity]),
-      gross_weight: parseWeight(row[columns.gross_weight]),
-      net_weight: parseWeight(row[columns.net_weight]),
-      diamond_weight: parseWeight(row[columns.diamond_weight]),
-      stone_weight: parseWeight(row[columns.stone_weight]),
+      purity: normalisePurity(cell("purity")),
+      gross_weight: parseWeight(cell("gross_weight")),
+      net_weight: parseWeight(cell("net_weight")),
+      diamond_weight: parseWeight(cell("diamond_weight")),
+      stone_weight: parseWeight(cell("stone_weight")),
     };
 
     const hasSomething =

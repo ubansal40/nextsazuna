@@ -111,8 +111,9 @@ export function ProductCardForm({
 
   // The spec's `showAuto`: only once the admin has overridden the price, a rule
   // price exists, and the two disagree. Offering "Auto: रु X" against the number
-  // the rule itself just wrote would be noise.
-  const showAuto = card.saleOverride && card.rulePrice !== null && card.rulePrice !== card.salePrice;
+  // the rule itself just wrote would be noise. Never on a locked card — it would
+  // write a price onto a product that has already been saved without it.
+  const showAuto = !locked && card.saleOverride && card.rulePrice !== null && card.rulePrice !== card.salePrice;
 
   return (
     <div
@@ -393,11 +394,14 @@ export function ProductCardForm({
             )}
           </div>
           <Fw label="Categories *" required error={card.errors.categories}>
+            {/* Locked like every other field: a pick made on a saved card was
+                never written, and silently discarded. */}
             <MultiSelect
               ariaLabel="Categories"
               placeholder="Select categories…"
               options={options.categories.map((c) => ({ value: String(c.id), label: c.name }))}
               selected={card.categoryIds}
+              disabled={locked}
               onChange={(next) => handlers.edit({ categoryIds: next })}
             />
           </Fw>
@@ -433,17 +437,20 @@ export function ProductCardForm({
               placeholder="Select tags…"
               options={options.tags.map((t) => ({ value: String(t.id), label: t.name }))}
               selected={card.tagIds}
+              disabled={locked}
               onChange={(next) => handlers.edit({ tagIds: next })}
             />
           </Fw>
         </div>
 
-        {/* .adx-r4 — weights */}
+        {/* .adx-r4 — weights. Each carries its own error: the server names
+            the weight it refused, and only Net used to show it. */}
         <div className="grid grid-cols-4 gap-[11px]">
           <Weight
             label="Gross g"
             value={card.gross}
             disabled={locked}
+            error={card.errors.grossWeight}
             onChange={(v) => handlers.edit({ gross: v, origin: { ...card.origin, gross: "typed" } })}
           />
           <Weight
@@ -458,12 +465,14 @@ export function ProductCardForm({
             label="Dia ct"
             value={card.diamond}
             disabled={locked}
+            error={card.errors.diamondWeight}
             onChange={(v) => handlers.edit({ diamond: v, origin: { ...card.origin, diamond: "typed" } })}
           />
           <Weight
             label="Stn ct"
             value={card.stone}
             disabled={locked}
+            error={card.errors.stoneWeight}
             onChange={(v) => handlers.edit({ stone: v, origin: { ...card.origin, stone: "typed" } })}
           />
         </div>
