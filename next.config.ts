@@ -59,6 +59,8 @@ const nextConfig: NextConfig = {
   /**
    * Pin the workspace root. Without this, Turbopack walks up looking for a
    * lockfile and can latch onto an unrelated one outside the repository.
+   * Next also takes it as `outputFileTracingRoot`, so it pins the standalone
+   * trace of the webpack production build too (ADR 0011).
    */
   turbopack: { root: path.resolve(import.meta.dirname) },
 
