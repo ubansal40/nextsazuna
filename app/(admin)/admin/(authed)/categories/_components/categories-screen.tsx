@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/cn";
 import type { CategoryInput, CategoryRow, TaxonomyCounts } from "@/lib/admin/taxonomy";
 import { TaxonomyTabs } from "@/components/admin/taxonomy/taxonomy-tabs";
+import { settle, UNREACHABLE } from "@/components/admin/taxonomy/settle";
 import {
   saveCategoryAction,
   deleteCategoryAction,
@@ -61,6 +62,13 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
   // length of the round trip, and two taps inside that window used to create two
   // identical categories.
   const [busy, startTransition] = useTransition();
+  // Image uploads still running. Save waits for them: saved mid-upload, the
+  // category keeps its old image, and the new URL arrives after the drawer has
+  // closed, with nothing left to store it.
+  const [uploads, setUploads] = useState(0);
+  // Why the open delete was refused. Shown inside the confirm dialog rather than
+  // as a toast: the pricing-rule refusal names the rules, and needs reading.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const { ref: drawerRef, onBackdropClick } = useDialog(editing !== null, () => setEditing(null));
 
@@ -77,22 +85,40 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
     }
   }
 
+  /**
+   * Patch the draft of record `id` — as the drawer is when React applies it, and
+   * only while the drawer still shows that record. The image upload is why:
+   * it lands long after its file was picked, and rebuilding the draft from what
+   * it captured then reverted anything typed meanwhile, reopened a drawer that
+   * had been closed, and could put one category's draft over another's.
+   */
+  function setInput(id: number | null, patch: Partial<CategoryInput>) {
+    setEditing((current) => (current && current.id === id ? { ...current, input: { ...current.input, ...patch } } : current));
+  }
+
+  const trackUpload = (running: boolean) => setUploads((n) => Math.max(0, n + (running ? 1 : -1)));
+
   function save() {
-    if (!editing || busy) return;
+    if (!editing || busy || uploads > 0) return;
     const { id, input } = editing;
     if (!input.name.trim()) {
       toast("error", "A name is required.");
       return;
     }
     startTransition(async () => {
-      const result = await saveCategoryAction(id, input);
+      const result = await settle(saveCategoryAction(id, input), UNREACHABLE);
       if (result.ok) setEditing(null);
       handle(result, id ? "Category updated." : "Category created.");
     });
   }
 
   function toggleVisible(row: CategoryRow) {
-    startTransition(async () => handle(await setCategoryVisibilityAction(row.id, !row.isVisible)));
+    startTransition(async () => handle(await settle(setCategoryVisibilityAction(row.id, !row.isVisible), UNREACHABLE)));
+  }
+
+  function askDelete(row: CategoryRow) {
+    setDeleteError(null);
+    setConfirm(row);
   }
 
   function confirmDelete() {
@@ -100,10 +126,15 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
     const id = confirm.id;
     setBusyDelete(true);
     startTransition(async () => {
-      const result = await deleteCategoryAction(id);
+      const result = await settle(deleteCategoryAction(id), UNREACHABLE);
       setBusyDelete(false);
+      if (!result.ok) {
+        // The dialog stays open and says why, rather than closing on a toast.
+        setDeleteError(result.error);
+        return;
+      }
       setConfirm(null);
-      handle(result, "Category deleted — its products moved to Uncategorized.");
+      handle(result, "Category deleted.");
     });
   }
 
@@ -132,7 +163,7 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
   /** The action returns the whole refreshed tree, so nothing is applied
    *  optimistically here — the list can never be left ahead of the database. */
   function reorder(siblings: CategoryRow[]) {
-    startTransition(async () => handle(await reorderCategoriesAction(siblings.map((r) => r.id))));
+    startTransition(async () => handle(await settle(reorderCategoriesAction(siblings.map((r) => r.id)), UNREACHABLE)));
   }
 
   return (
@@ -177,7 +208,7 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
                     })
                   }
                   onEdit={() => setEditing({ id: parent.id, input: toInput(parent) })}
-                  onDelete={() => setConfirm(parent)}
+                  onDelete={() => askDelete(parent)}
                   onVisible={() => toggleVisible(parent)}
                   onMove={(delta) => move(parent, delta)}
                   canUp={parentIndex > 0}
@@ -195,7 +226,7 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
                       hasKids={false}
                       open={false}
                       onEdit={() => setEditing({ id: kid.id, input: toInput(kid) })}
-                      onDelete={() => setConfirm(kid)}
+                      onDelete={() => askDelete(kid)}
                       onVisible={() => toggleVisible(kid)}
                       onMove={(delta) => move(kid, delta)}
                       canUp={kidIndex > 0}
@@ -234,15 +265,15 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
             </div>
             <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
               <Labeled label="Name *">
-                <input value={editing.input.name} onChange={(e) => setEditing({ ...editing, input: { ...editing.input, name: e.target.value } })} placeholder="e.g. Diamond Rings" className={fieldClass} />
+                <input value={editing.input.name} onChange={(e) => setInput(editing.id, { name: e.target.value })} placeholder="e.g. Diamond Rings" className={fieldClass} />
               </Labeled>
               <Labeled label="Slug" hint="Leave blank to generate from the name.">
-                <input value={editing.input.slug} onChange={(e) => setEditing({ ...editing, input: { ...editing.input, slug: e.target.value } })} placeholder="diamond-rings" className={cn(fieldClass, "font-mono")} />
+                <input value={editing.input.slug} onChange={(e) => setInput(editing.id, { slug: e.target.value })} placeholder="diamond-rings" className={cn(fieldClass, "font-mono")} />
               </Labeled>
               <Labeled label="Parent category">
                 <select
                   value={editing.input.parentId ?? ""}
-                  onChange={(e) => setEditing({ ...editing, input: { ...editing.input, parentId: e.target.value ? Number(e.target.value) : null } })}
+                  onChange={(e) => setInput(editing.id, { parentId: e.target.value ? Number(e.target.value) : null })}
                   className={fieldClass}
                 >
                   <option value="">No parent (top level)</option>
@@ -254,23 +285,26 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
                 </select>
               </Labeled>
               <Labeled label="Description" hint="Shown on the storefront listing page.">
-                <textarea value={editing.input.description} onChange={(e) => setEditing({ ...editing, input: { ...editing.input, description: e.target.value } })} rows={4} className={cn(fieldClass, "resize-y py-2")} />
+                <textarea value={editing.input.description} onChange={(e) => setInput(editing.id, { description: e.target.value })} rows={4} className={cn(fieldClass, "resize-y py-2")} />
               </Labeled>
               <ImageField
                 kind="categories"
                 slug={editing.input.slug || editing.input.name || "category"}
                 value={editing.input.imageUrl}
-                onChange={(imageUrl) => setEditing({ ...editing, input: { ...editing.input, imageUrl } })}
+                onChange={(imageUrl) => setInput(editing.id, { imageUrl })}
+                onBusyChange={trackUpload}
                 hint="Shown on the storefront category card. Anything not square is centre-cropped."
               />
               <label className="flex items-center justify-between">
                 <span className="text-[13px] font-semibold text-body">Visible on the storefront</span>
-                <Switch checked={editing.input.isVisible} onChange={(v) => setEditing({ ...editing, input: { ...editing.input, isVisible: v } })} label="Visible" />
+                <Switch checked={editing.input.isVisible} onChange={(v) => setInput(editing.id, { isVisible: v })} label="Visible" />
               </label>
             </div>
             <div className="flex gap-2.5 border-t border-line px-4 py-3.5">
               <button type="button" onClick={() => setEditing(null)} disabled={busy} className="min-h-11 flex-1 rounded-[var(--sz-admin-radius-control)] border border-line text-[13px] font-semibold text-body hover:border-primary-700 disabled:opacity-[var(--sz-disabled-opacity)]">Cancel</button>
-              <button type="button" onClick={save} disabled={busy} aria-busy={busy || undefined} className="min-h-11 flex-1 rounded-[var(--sz-admin-radius-control)] bg-primary-700 text-[13px] font-semibold text-white hover:bg-primary-800 disabled:cursor-progress disabled:opacity-[var(--sz-disabled-opacity)]">Save</button>
+              <button type="button" onClick={save} disabled={busy || uploads > 0} aria-busy={busy || uploads > 0 || undefined} className="min-h-11 flex-1 rounded-[var(--sz-admin-radius-control)] bg-primary-700 text-[13px] font-semibold text-white hover:bg-primary-800 disabled:cursor-progress disabled:opacity-[var(--sz-disabled-opacity)]">
+                {uploads > 0 ? "Uploading image…" : "Save"}
+              </button>
             </div>
           </div>
         )}
@@ -284,7 +318,19 @@ export function CategoriesScreen({ initial, counts }: { initial: CategoryRow[]; 
         busy={busyDelete}
         onCancel={() => setConfirm(null)}
         onConfirm={confirmDelete}
-        body={confirm && (<><strong className="text-body">{confirm.name}</strong> will be removed. Its {confirm.productCount} product(s) move to Uncategorized; any sub-categories become top-level.</>)}
+        body={
+          confirm && (
+            <>
+              <strong className="text-body">{confirm.name}</strong> will be removed. Products filed only here move to
+              Uncategorized; the rest just lose this category. Any sub-categories become top-level.
+              {deleteError && (
+                <p role="alert" className="mt-3 rounded-[var(--sz-admin-radius-control)] border border-error-border bg-error-soft px-3 py-2.5 text-[12.5px] leading-relaxed text-error">
+                  {deleteError}
+                </p>
+              )}
+            </>
+          )
+        }
       />
     </div>
   );

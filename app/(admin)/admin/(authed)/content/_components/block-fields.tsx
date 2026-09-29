@@ -1,10 +1,11 @@
 "use client";
 
+import { flushSync } from "react-dom";
 import { Icon } from "@/components/ui";
 import { ImageField } from "@/components/admin/image-field";
 import { Switch } from "@/components/admin/switch";
 import { cn } from "@/lib/cn";
-import type { FieldDef } from "@/lib/admin/homepage-schema";
+import { ITEM_KEY, selectOptions, type FieldDef, type RepeaterItem } from "@/lib/admin/homepage-schema";
 
 /**
  * One renderer for every field in the homepage builder.
@@ -39,12 +40,17 @@ export function FieldRow({
   field,
   value,
   onChange,
+  onUploading,
   slug,
   required,
 }: {
   field: FieldDef;
   value: unknown;
+  /** For an image this fires when the upload lands, however much later — so it
+   *  must update the block or item it was rendered for, as it is by then. */
   onChange: (next: unknown) => void;
+  /** An image upload started (true) or settled (false); the builder holds Save. */
+  onUploading?: (busy: boolean) => void;
   /** Names the uploaded file readably. */
   slug: string;
   /** True when the parser drops this item without it. */
@@ -69,6 +75,7 @@ export function FieldRow({
           slug={slug}
           value={str(value) || null}
           onChange={(url) => onChange(url ?? "")}
+          onBusyChange={onUploading}
           hint={
             field.shape === "wide"
               ? "Shown edge-to-edge. Anything not 16:9 is centre-cropped."
@@ -90,12 +97,14 @@ export function FieldRow({
         </label>
       );
 
-    case "select":
+    case "select": {
+      // The stored value is always among the options — see `selectOptions`.
+      const current = str(value);
       return (
         <label className="block">
           {label}
-          <select value={str(value)} onChange={(e) => onChange(e.target.value)} className={fieldClass}>
-            {field.options.map((o) => (
+          <select value={current} onChange={(e) => onChange(e.target.value)} className={fieldClass}>
+            {selectOptions(field.options, current).map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
@@ -103,22 +112,30 @@ export function FieldRow({
           </select>
         </label>
       );
+    }
 
-    case "number":
+    case "number": {
+      // Typed in the field's unit, stored in the parser's — see `scale`.
+      const scale = field.scale ?? 1;
       return (
         <label className="block">
           {label}
           <input
             type="number"
-            inputMode="numeric"
+            inputMode={scale === 1 ? "numeric" : "decimal"}
             min={field.min}
             max={field.max}
-            value={typeof value === "number" ? value : ""}
-            onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
+            step={scale === 1 ? undefined : "any"}
+            value={typeof value === "number" ? value / scale : ""}
+            onChange={(e) => {
+              const typed = e.target.value;
+              onChange(typed === "" ? "" : scale === 1 ? Number(typed) : Math.round(Number(typed) * scale));
+            }}
             className={cn(fieldClass, "font-mono")}
           />
         </label>
       );
+    }
 
     case "cta": {
       const cta = ctaOf(value);
@@ -179,6 +196,10 @@ export function FieldRow({
   }
 }
 
+/** Keys for items added in this tab — a module counter, so no two Repeaters
+ *  (or two mounts of one) ever hand out the same key. */
+let addedItems = 0;
+
 /**
  * A repeatable list of sub-items — slides, tiles, badges, cards, quotes.
  *
@@ -186,93 +207,139 @@ export function FieldRow({
  * admin is used on a phone. Removal stops at the schema's `min` because below
  * it the parser drops the entire block, and losing a whole homepage section to
  * a stray tap is not a recoverable mistake.
+ *
+ * Every change is addressed to an item by its key (`ITEM_KEY`), never its
+ * position, and applied through an updater to the list as it is when React
+ * gets to it. The handlers are captured at render — an image upload's for as
+ * long as the upload takes — so a position or a list captured with them would,
+ * applied late, write into whichever item had moved there, put back items
+ * since removed, and undo edits made meanwhile.
  */
 export function Repeater({
   field,
   items,
   onChange,
+  onUploading,
   slug,
 }: {
   field: Extract<FieldDef, { kind: "repeater" }>;
-  items: Row[];
-  onChange: (next: Row[]) => void;
+  items: RepeaterItem[];
+  onChange: (update: (latest: RepeaterItem[]) => RepeaterItem[]) => void;
+  onUploading?: (busy: boolean) => void;
   slug: string;
 }) {
-  const move = (from: number, to: number) => {
-    if (to < 0 || to >= items.length) return;
-    const next = [...items];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
-    onChange(next);
+  // An item without a key (nothing should reach here unkeyed) falls back to its
+  // position, which is what every item was keyed by before.
+  const keyOf = (item: RepeaterItem, index: number) => item[ITEM_KEY] ?? `at-${index}`;
+  const indexOf = (list: RepeaterItem[], key: string) => list.findIndex((item, n) => keyOf(item, n) === key);
+
+  /**
+   * Move an item one place, and keep focus on the button that was pressed.
+   *
+   * Keyed, React moves the item's own element — and the browser drops focus
+   * from anything it moves. So the move is committed at once and focus handed
+   * back to that same button (or its twin, once the item reaches the end), and
+   * a keyboard user can keep pressing to walk the item along.
+   */
+  const move = (key: string, delta: number, button: HTMLButtonElement) => {
+    flushSync(() =>
+      onChange((latest) => {
+        const from = indexOf(latest, key);
+        const to = from + delta;
+        if (from < 0 || to < 0 || to >= latest.length) return latest;
+        const next = [...latest];
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved);
+        return next;
+      }),
+    );
+    const target = button.disabled ? button.parentElement?.querySelector<HTMLButtonElement>("button:not(:disabled)") : button;
+    target?.focus();
   };
+
+  // `min` is re-checked against the latest list, not only by the disabled
+  // button: two quick taps both land before the button re-renders.
+  const remove = (key: string) =>
+    onChange((latest) => (latest.length > field.min ? latest.filter((item, n) => keyOf(item, n) !== key) : latest));
+
+  const edit = (key: string, path: string, value: unknown) =>
+    onChange((latest) => latest.map((item, n) => (keyOf(item, n) === key ? { ...item, [path]: value } : item)));
+
+  function add() {
+    addedItems += 1;
+    const key = `added-${addedItems}`;
+    onChange((latest) => [...latest, { [ITEM_KEY]: key }]);
+  }
 
   return (
     <div>
       <p className="mb-1.5 text-xs font-semibold text-body">{field.label}</p>
       <div className="flex flex-col gap-2.5">
-        {items.map((item, i) => (
-          <div key={i} className="rounded-lg border border-line bg-canvas p-2.5">
-            <div className="mb-2.5 flex items-center gap-1">
-              <span className="font-mono text-[10px] font-semibold uppercase tracking-[.08em] text-muted">
-                {field.itemLabel} {i + 1}
-              </span>
-              <span className="ml-auto flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => move(i, i - 1)}
-                  disabled={i === 0}
-                  aria-label={`Move ${field.itemLabel} ${i + 1} up`}
-                  className={rowAction}
-                >
-                  <Icon name="chevron-up" size={15} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => move(i, i + 1)}
-                  disabled={i === items.length - 1}
-                  aria-label={`Move ${field.itemLabel} ${i + 1} down`}
-                  className={rowAction}
-                >
-                  <Icon name="chevron-down" size={15} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onChange(items.filter((_, n) => n !== i))}
-                  disabled={items.length <= field.min}
-                  title={
-                    items.length <= field.min
-                      ? `A ${field.label.toLowerCase().replace(/s$/, "")} block needs at least ${field.min}.`
-                      : `Remove ${field.itemLabel} ${i + 1}`
-                  }
-                  aria-label={`Remove ${field.itemLabel} ${i + 1}`}
-                  className={cn(rowAction, "text-error")}
-                >
-                  <Icon name="trash" size={15} />
-                </button>
-              </span>
-            </div>
+        {items.map((item, i) => {
+          const key = keyOf(item, i);
+          return (
+            <div key={key} className="rounded-lg border border-line bg-canvas p-2.5">
+              <div className="mb-2.5 flex items-center gap-1">
+                <span className="font-mono text-[10px] font-semibold uppercase tracking-[.08em] text-muted">
+                  {field.itemLabel} {i + 1}
+                </span>
+                <span className="ml-auto flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={(e) => move(key, -1, e.currentTarget)}
+                    disabled={i === 0}
+                    aria-label={`Move ${field.itemLabel} ${i + 1} up`}
+                    className={rowAction}
+                  >
+                    <Icon name="chevron-up" size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => move(key, 1, e.currentTarget)}
+                    disabled={i === items.length - 1}
+                    aria-label={`Move ${field.itemLabel} ${i + 1} down`}
+                    className={rowAction}
+                  >
+                    <Icon name="chevron-down" size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => remove(key)}
+                    disabled={items.length <= field.min}
+                    title={
+                      items.length <= field.min
+                        ? `A ${field.label.toLowerCase().replace(/s$/, "")} block needs at least ${field.min}.`
+                        : `Remove ${field.itemLabel} ${i + 1}`
+                    }
+                    aria-label={`Remove ${field.itemLabel} ${i + 1}`}
+                    className={cn(rowAction, "text-error")}
+                  >
+                    <Icon name="trash" size={15} />
+                  </button>
+                </span>
+              </div>
 
-            <div className="flex flex-col gap-2.5">
-              {field.fields.map((sub) => (
-                <FieldRow
-                  key={sub.path}
-                  field={sub}
-                  required={sub.path === field.requiredPath}
-                  slug={`${slug}-${field.itemLabel}-${i + 1}`}
-                  value={item[sub.path]}
-                  onChange={(next) =>
-                    onChange(items.map((row, n) => (n === i ? { ...row, [sub.path]: next } : row)))
-                  }
-                />
-              ))}
+              <div className="flex flex-col gap-2.5">
+                {field.fields.map((sub) => (
+                  <FieldRow
+                    key={sub.path}
+                    field={sub}
+                    required={sub.path === field.requiredPath}
+                    slug={`${slug}-${field.itemLabel}-${i + 1}`}
+                    value={item[sub.path]}
+                    onChange={(next) => edit(key, sub.path, next)}
+                    onUploading={onUploading}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <button
         type="button"
-        onClick={() => onChange([...items, {}])}
+        onClick={add}
         className="mt-2.5 inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-dashed border-line px-3 text-[12.5px] font-semibold text-primary-700 hover:border-primary-700 hover:bg-primary-50"
       >
         <Icon name="plus" size={14} /> Add {field.itemLabel}

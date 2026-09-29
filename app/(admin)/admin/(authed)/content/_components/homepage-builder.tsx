@@ -5,12 +5,16 @@ import { Icon, useToast } from "@/components/ui";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { Switch } from "@/components/admin/switch";
 import { useDialog } from "@/components/ui/use-dialog";
+import { settle } from "@/components/admin/taxonomy/settle";
 import { cn } from "@/lib/cn";
 import {
   BLOCK_DEFS,
   isKnownKind,
+  keyRepeaterItems,
   makeBlock,
+  toStoredLayout,
   type BlockKind,
+  type RepeaterItem,
   type StoredBlock,
   type StoredLayout,
 } from "@/lib/admin/homepage-schema";
@@ -41,12 +45,19 @@ export function HomepageBuilder({
   updatedAt: string | null;
 }) {
   const { toast } = useToast();
-  const [blocks, setBlocks] = useState<StoredBlock[]>(initial.blocks);
+  // Every repeater item gets its editing key on the way in — see ITEM_KEY. The
+  // keys are invisible to JSON, so `saved` (which has none) still compares equal.
+  const [blocks, setBlocks] = useState<StoredBlock[]>(() => initial.blocks.map(keyRepeaterItems));
   const [saved, setSaved] = useState<StoredBlock[]>(initial.blocks);
   const [editing, setEditing] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<StoredBlock | null>(null);
   const [busy, startTransition] = useTransition();
+  // Image uploads still running. Save waits for them: saved mid-upload, the
+  // layout goes live without the new image, and the page then reads "Unsaved
+  // changes" for a picture the operator believes is already on the shop.
+  const [uploads, setUploads] = useState(0);
+  const trackUpload = (running: boolean) => setUploads((n) => Math.max(0, n + (running ? 1 : -1)));
 
   const { ref: drawerRef, onBackdropClick } = useDialog(editing !== null, () => setEditing(null));
 
@@ -68,6 +79,18 @@ export function HomepageBuilder({
     );
   }
 
+  /** A repeater's list, changed by `update` as it is when React applies it —
+   *  the Repeater's handlers, a late upload's included, never send a list. */
+  function updateItems(id: string, key: string, update: (latest: RepeaterItem[]) => RepeaterItem[]) {
+    setBlocks((list) =>
+      list.map((b) => {
+        if (b.id !== id) return b;
+        const latest = Array.isArray(b.config[key]) ? (b.config[key] as RepeaterItem[]) : [];
+        return { ...b, config: { ...b.config, [key]: update(latest) } };
+      }),
+    );
+  }
+
   /** Buttons, not drag — HTML5 drag never fires on touch and this runs on a phone. */
   function move(from: number, to: number) {
     if (to < 0 || to >= blocks.length) return;
@@ -80,15 +103,27 @@ export function HomepageBuilder({
   }
 
   function save() {
-    if (busy) return;
+    if (busy || uploads > 0) return;
+    // Exactly what is being saved. The editor stays live while the request is
+    // out, so this snapshot — not whatever the screen holds when the reply
+    // lands — is what the reply confirms.
+    const submitted = blocks;
     startTransition(async () => {
-      const result = await saveHomepage({ blocks });
+      // A call that never came back is a failed save, said as such, rather than
+      // an error page that takes every unsaved edit with it.
+      const result = await settle(saveHomepage(toStoredLayout(submitted)), null);
+      if (!result) {
+        toast("error", "That didn't reach the server, so nothing was saved. Your edits are still here — try again.");
+        return;
+      }
       if (!result.ok) {
         toast("error", result.error);
         return;
       }
-      setBlocks(result.layout.blocks);
-      setSaved(result.layout.blocks);
+      // Only the snapshot is marked saved; `blocks` is left alone. Replacing it
+      // with the reply, as this used to, reverted anything edited while the
+      // save was in flight — and then said "Everything is saved".
+      setSaved(submitted);
       const skipped = result.warnings.length;
       toast(
         "success",
@@ -108,7 +143,9 @@ export function HomepageBuilder({
           {updatedAt && (
             <>
               {" "}
-              Last edited {new Date(updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+              {/* A fixed zone: rendered in the server's zone and hydrated in the
+                  browser's, an edit near midnight printed two different days. */}
+              Last edited {new Date(updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kathmandu" })}
               {updatedBy ? ` by ${updatedBy}` : ""}.
             </>
           )}
@@ -229,8 +266,9 @@ export function HomepageBuilder({
                     key={field.path}
                     field={field}
                     slug={current.id}
-                    items={Array.isArray(current.config[field.path]) ? (current.config[field.path] as Record<string, unknown>[]) : []}
-                    onChange={(next) => setConfig(current.id, field.path, next)}
+                    items={Array.isArray(current.config[field.path]) ? (current.config[field.path] as RepeaterItem[]) : []}
+                    onChange={(update) => updateItems(current.id, field.path, update)}
+                    onUploading={trackUpload}
                   />
                 ) : (
                   <FieldRow
@@ -240,6 +278,7 @@ export function HomepageBuilder({
                     required={field.path === currentDef.requiredPath}
                     value={current.config[field.path]}
                     onChange={(next) => setConfig(current.id, field.path, next)}
+                    onUploading={trackUpload}
                   />
                 ),
               )}
@@ -265,7 +304,7 @@ export function HomepageBuilder({
         open={picking}
         onClose={() => setPicking(false)}
         onPick={(kind: BlockKind) => {
-          const block = makeBlock(kind, blocks);
+          const block = keyRepeaterItems(makeBlock(kind, blocks));
           setBlocks((list) => [...list, block]);
           setPicking(false);
           setEditing(block.id);
@@ -289,7 +328,7 @@ export function HomepageBuilder({
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-raised/95 px-4 py-2.5 backdrop-blur">
         <div className="mx-auto flex max-w-[860px] items-center gap-3">
           <span className="min-w-0 flex-1 truncate text-[12px] text-muted">
-            {dirty ? "Unsaved changes" : "Everything is saved"}
+            {uploads > 0 ? "An image is still uploading" : dirty ? "Unsaved changes" : "Everything is saved"}
             {warnings.length > fatal.length && !fatal.length && (
               <span className="text-accent-strong"> · {warnings.length} incomplete {warnings.length === 1 ? "row" : "rows"} will be skipped</span>
             )}
@@ -297,11 +336,17 @@ export function HomepageBuilder({
           <button
             type="button"
             onClick={save}
-            disabled={busy || !dirty || fatal.length > 0}
-            title={fatal.length > 0 ? "Fix the sections that would not appear first." : undefined}
+            disabled={busy || !dirty || fatal.length > 0 || uploads > 0}
+            title={
+              fatal.length > 0
+                ? "Fix the sections that would not appear first."
+                : uploads > 0
+                  ? "Wait for the image to finish uploading."
+                  : undefined
+            }
             className="inline-flex min-h-10 shrink-0 items-center rounded-lg bg-primary-700 px-5 text-[13px] font-semibold text-white hover:bg-primary-800 disabled:opacity-[var(--sz-disabled-opacity)]"
           >
-            {busy ? "Saving…" : "Save homepage"}
+            {busy ? "Saving…" : uploads > 0 ? "Uploading…" : "Save homepage"}
           </button>
         </div>
       </div>

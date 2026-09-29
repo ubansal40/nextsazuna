@@ -54,7 +54,21 @@ export const SORT_OPTIONS = [
 
 export type FieldDef =
   | { kind: "text" | "textarea" | "href"; path: string; label: string; help?: string }
-  | { kind: "number"; path: string; label: string; min?: number; max?: number; help?: string }
+  | {
+      kind: "number";
+      path: string;
+      label: string;
+      /** In the unit the operator types — see `scale`. */
+      min?: number;
+      max?: number;
+      help?: string;
+      /**
+       * Stored value = typed value × scale. The hero's delay is typed in
+       * seconds, the unit its label names and an operator thinks in, and stored
+       * in the milliseconds the carousel runs on. Absent means 1.
+       */
+      scale?: number;
+    }
   | { kind: "select"; path: string; label: string; options: readonly { value: string; label: string }[] }
   | { kind: "image"; path: string; label: string; shape: "square" | "wide"; help?: string }
   /** A `{show,text,href}` object — the parser drops the CTA when `show` is
@@ -118,12 +132,16 @@ export const BLOCK_DEFS: Record<BlockKind, BlockDef> = {
     summary: (c) => count(c, "slides", "slide"),
     fields: [
       {
+        // The label said seconds while the field took milliseconds, so typing
+        // 6 stored 6 ms — under the parser's 1000 ms floor, silently replaced
+        // by 5200. Now 6 means six seconds.
         kind: "number",
         path: "autoplay_ms",
         label: "Seconds between slides",
-        min: 1000,
-        max: 20000,
-        help: "In milliseconds. Under 1000 falls back to 5200.",
+        min: 1,
+        max: 20,
+        scale: 1000,
+        help: "Under one second falls back to 5.2 seconds.",
       },
       {
         kind: "repeater",
@@ -374,6 +392,68 @@ export function readLayout(value: unknown): StoredLayout {
       }))
       .filter((b) => b.id && b.type),
   };
+}
+
+/**
+ * A select's options, always including the value it is showing.
+ *
+ * A `<select>` whose value matches no option does not error: it displays the
+ * first option. So a new trust badge with no icon yet read "diamond" while the
+ * shop drew the plain lozenge, a stored `sparkle` in a usp_strip read "diamond"
+ * too — and picking "diamond" then fired no change, because the browser thought
+ * it was already chosen. The rule `lib/admin/vocab-options.ts` applies to the
+ * taxonomy selects: the control never says something the data does not.
+ */
+export function selectOptions(
+  options: readonly { value: string; label: string }[],
+  current: string,
+): readonly { value: string; label: string }[] {
+  if (options.some((o) => o.value === current)) return options;
+  return current
+    ? [...options, { value: current, label: `${current} — not one of the choices` }]
+    : [{ value: "", label: "Not set" }, ...options];
+}
+
+/**
+ * A repeater item's identity while it is being edited.
+ *
+ * Items are plain JSON with no id of their own, and keyed by position they
+ * broke two ways: after a move, focus and an upload's "Uploading…" stayed at
+ * the old position (React reused the element for whichever item sat there
+ * now), and an upload finishing late wrote its URL into whichever item held
+ * that position by then.
+ *
+ * A Symbol-keyed property, because that is carried by every `{ ...item }` an
+ * edit makes yet is invisible to JSON — so it never reaches the stored layout
+ * or the dirty check. `toStoredLayout` strips it before a save all the same:
+ * React warns when a Server Function is handed symbol properties.
+ */
+export const ITEM_KEY: unique symbol = Symbol("homepage repeater item");
+
+export type RepeaterItem = Record<string, unknown> & { [ITEM_KEY]?: string };
+
+/** `block` with a key on every repeater item that lacks one. Derived from the
+ *  block, the field and the item's position now, so it is deterministic — and
+ *  from then on the key, not the position, is what travels with the item. */
+export function keyRepeaterItems(block: StoredBlock): StoredBlock {
+  if (!isKnownKind(block.type)) return block;
+  const config = { ...block.config };
+  for (const field of BLOCK_DEFS[block.type].fields) {
+    const items = config[field.path];
+    if (field.kind !== "repeater" || !Array.isArray(items)) continue;
+    config[field.path] = items.map((item: unknown, i) =>
+      item && typeof item === "object" && !(ITEM_KEY in item)
+        ? { ...item, [ITEM_KEY]: `${block.id}:${field.path}:${i}` }
+        : item,
+    );
+  }
+  return { ...block, config };
+}
+
+/** The layout exactly as it is stored: a JSON round trip, because the stored
+ *  shape IS JSON — and JSON never carries the editing keys. */
+export function toStoredLayout(blocks: readonly StoredBlock[]): StoredLayout {
+  return { blocks: JSON.parse(JSON.stringify(blocks)) as StoredBlock[] };
 }
 
 /** A new block of `kind`, with an id nothing else is using. */

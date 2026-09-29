@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { Icon, ProductCard } from "@/components/ui";
 import type { ProductSummary } from "@/lib/catalog";
@@ -29,6 +29,12 @@ export function ProductEdit({
 }) {
   const [active, setActive] = useState(0);
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  // Ids per instance: the homepage can hold more than one edit, and fixed
+  // `hp-tab-N` / `hp-tabpanel` ids pointed every tab's aria-controls at the
+  // first edit's panel.
+  const idBase = useId();
+  const tabId = (i: number) => `${idBase}-tab-${i}`;
+  const panelId = `${idBase}-panel`;
 
   function onKeyDown(event: React.KeyboardEvent) {
     const delta = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
@@ -65,9 +71,9 @@ export function ProductEdit({
               }}
               type="button"
               role="tab"
-              id={`hp-tab-${i}`}
+              id={tabId(i)}
               aria-selected={i === active}
-              aria-controls="hp-tabpanel"
+              aria-controls={panelId}
               tabIndex={i === active ? 0 : -1}
               onClick={() => setActive(i)}
               className={cn(
@@ -94,9 +100,9 @@ export function ProductEdit({
       </div>
 
       <div
-        id="hp-tabpanel"
+        id={panelId}
         role="tabpanel"
-        aria-labelledby={`hp-tab-${active}`}
+        aria-labelledby={tabId(active)}
         className="mt-[30px] grid grid-cols-4 gap-x-[22px] gap-y-[30px] home-wide:grid-cols-3 home-carousel:flex home-carousel:snap-x home-carousel:snap-mandatory home-carousel:gap-3.5 home-carousel:overflow-x-auto home-carousel:pb-2"
       >
         {products.map((product) => (

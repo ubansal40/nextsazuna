@@ -23,10 +23,20 @@ import { cn } from "@/lib/cn";
  * reason — there `kind` is the section key, and the homepage also needs a shape
  * the taxonomy route cannot produce. A hero is 16:9; squaring it throws away the
  * composition the photograph was taken for.
+ *
+ * **`onChange` fires when the upload finishes, which can be long after the file
+ * was picked** — the drawer may have been edited, closed, or reopened on
+ * another record by then. So the caller's `onChange` must apply the URL to the
+ * record as it is NOW (a functional update, keyed to the record or item it was
+ * rendered for), never rebuild state from what it captured at render.
+ * `onBusyChange` lets the form hold its Save until the URL exists: a save made
+ * mid-upload stores the old image, and the new one then lands in a drawer
+ * that has already closed.
  */
 export function ImageField({
   value,
   onChange,
+  onBusyChange,
   kind,
   slug,
   shape = "square",
@@ -35,6 +45,8 @@ export function ImageField({
 }: {
   value: string | null;
   onChange: (url: string | null) => void;
+  /** Called with true when an upload starts and false when it settles. */
+  onBusyChange?: (busy: boolean) => void;
   kind: "categories" | "collections" | "content";
   slug: string;
   /** The frame the upload is cropped to. Homepage heroes and banners are wide. */
@@ -49,6 +61,7 @@ export function ImageField({
 
   async function upload(file: File) {
     setBusy(true);
+    onBusyChange?.(true);
     try {
       const body = new FormData();
       body.append("image", file);
@@ -67,6 +80,7 @@ export function ImageField({
       toast("error", "Upload failed. Please check your connection.");
     } finally {
       setBusy(false);
+      onBusyChange?.(false);
       // Clear the input so re-picking the same file fires `change` again.
       if (inputRef.current) inputRef.current.value = "";
     }

@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { cn } from "@/lib/cn";
 import type { TagsData, TagRow, TaxonomyCounts } from "@/lib/admin/taxonomy";
 import { TaxonomyTabs } from "@/components/admin/taxonomy/taxonomy-tabs";
+import { settle, UNREACHABLE } from "@/components/admin/taxonomy/settle";
 import {
   addTag,
   renameTagAction,
@@ -156,20 +157,37 @@ export function TagsScreen({ initial, counts }: { initial: TagsData; counts: Tax
     const name = (drafts[key] ?? "").trim();
     if (!name) return;
     setDrafts((d) => ({ ...d, [key]: "" }));
-    startTransition(async () => handle(await addTag(name, groupId)));
+    startTransition(async () => {
+      const result = await settle(addTag(name, groupId), UNREACHABLE);
+      // A refused or lost add hands the typed name back — unless something new
+      // has been typed into that box since.
+      if (!result.ok) setDrafts((d) => (d[key] ? d : { ...d, [key]: name }));
+      handle(result);
+    });
+  }
+
+  function addGroup() {
+    const name = groupDraft.trim();
+    if (!name) return;
+    setGroupDraft("");
+    startTransition(async () => {
+      const result = await settle(addTagGroup(name), UNREACHABLE);
+      if (!result.ok) setGroupDraft((d) => d || name);
+      handle(result, "Group added.");
+    });
   }
 
   function saveTagRename() {
     if (!editingTag) return;
     const { id, value } = editingTag;
     setEditingTag(null);
-    startTransition(async () => handle(await renameTagAction(id, value)));
+    startTransition(async () => handle(await settle(renameTagAction(id, value), UNREACHABLE)));
   }
   function saveGroupRename() {
     if (!editingGroup) return;
     const { id, value } = editingGroup;
     setEditingGroup(null);
-    startTransition(async () => handle(await renameTagGroupAction(id, value)));
+    startTransition(async () => handle(await settle(renameTagGroupAction(id, value), UNREACHABLE)));
   }
 
   function doMerge() {
@@ -177,7 +195,7 @@ export function TagsScreen({ initial, counts }: { initial: TagsData; counts: Tax
     const { source, destId } = merge;
     setBusy(true);
     startTransition(async () => {
-      const result = await mergeTagAction(source.id, destId);
+      const result = await settle(mergeTagAction(source.id, destId), UNREACHABLE);
       setBusy(false);
       setMerge(null);
       handle(result, "Tags merged.");
@@ -189,7 +207,7 @@ export function TagsScreen({ initial, counts }: { initial: TagsData; counts: Tax
     const { kind, id } = confirm;
     setBusy(true);
     startTransition(async () => {
-      const result = kind === "tag" ? await deleteTagAction(id) : await deleteTagGroupAction(id);
+      const result = await settle(kind === "tag" ? deleteTagAction(id) : deleteTagGroupAction(id), UNREACHABLE);
       setBusy(false);
       setConfirm(null);
       handle(result, kind === "tag" ? "Tag deleted." : "Group deleted — its tags are now ungrouped.");
@@ -202,7 +220,7 @@ export function TagsScreen({ initial, counts }: { initial: TagsData; counts: Tax
     const before = data;
     setData(applyMove(data, groupId, ordered));
     startTransition(async () => {
-      const result = await moveTagAction(tagId, groupId, ordered.map((t) => t.id));
+      const result = await settle(moveTagAction(tagId, groupId, ordered.map((t) => t.id)), UNREACHABLE);
       if (result.ok) {
         setData(result.data);
         if (ok) toast("success", ok);
@@ -316,7 +334,7 @@ export function TagsScreen({ initial, counts }: { initial: TagsData; counts: Tax
             onEditStart={() => setEditingGroup({ id: group.id, value: group.name })}
             onEditChange={(v) => setEditingGroup({ id: group.id, value: v })}
             onEditSave={saveGroupRename}
-            onVisible={() => startTransition(async () => handle(await setTagGroupVisibilityAction(group.id, !group.isVisible)))}
+            onVisible={() => startTransition(async () => handle(await settle(setTagGroupVisibilityAction(group.id, !group.isVisible), UNREACHABLE)))}
             onDelete={() => setConfirm({ kind: "group", id: group.id, name: group.name })}
             {...dropZone(group.id)}
           >
@@ -331,8 +349,8 @@ export function TagsScreen({ initial, counts }: { initial: TagsData; counts: Tax
         </GroupCard>
 
         <div className="flex items-center gap-2 rounded-[var(--sz-admin-radius-card)] border border-dashed border-line bg-raised px-4 py-3">
-          <input value={groupDraft} onChange={(e) => setGroupDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && groupDraft.trim()) { const n = groupDraft.trim(); setGroupDraft(""); startTransition(async () => handle(await addTagGroup(n), "Group added.")); } }} placeholder="Add a tag group…" className="min-h-9 flex-1 rounded-[var(--sz-admin-radius-control)] border border-line bg-admin-canvas px-3 text-[13px] text-body outline-none placeholder:text-muted focus-visible:border-primary-700" />
-          <button type="button" onClick={() => { const n = groupDraft.trim(); if (!n) return; setGroupDraft(""); startTransition(async () => handle(await addTagGroup(n), "Group added.")); }} className="inline-flex min-h-9 items-center gap-1.5 rounded-[var(--sz-admin-radius-control)] border border-line px-3 text-[12.5px] font-semibold text-body hover:border-primary-700">
+          <input value={groupDraft} onChange={(e) => setGroupDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addGroup(); }} placeholder="Add a tag group…" className="min-h-9 flex-1 rounded-[var(--sz-admin-radius-control)] border border-line bg-admin-canvas px-3 text-[13px] text-body outline-none placeholder:text-muted focus-visible:border-primary-700" />
+          <button type="button" onClick={addGroup} className="inline-flex min-h-9 items-center gap-1.5 rounded-[var(--sz-admin-radius-control)] border border-line px-3 text-[12.5px] font-semibold text-body hover:border-primary-700">
             <Icon name="plus" size={14} /> Add group
           </button>
         </div>
@@ -499,7 +517,7 @@ function MergeDialog({
       {merge && (
         <div className="p-5">
           <h3 className="font-display text-lg font-medium text-heading">Merge “{merge.source.name}”</h3>
-          <p className="mt-1 text-[13px] text-muted">Every product tagged <strong className="text-body">{merge.source.name}</strong> ({merge.source.productCount}) gains the destination tag, and “{merge.source.name}” is deleted. This can&rsquo;t be undone.</p>
+          <p className="mt-1 text-[13px] text-muted">Every product tagged <strong className="text-body">{merge.source.name}</strong> ({merge.source.productCount}) gains the destination tag, as does any collection built on it, and “{merge.source.name}” is deleted. This can&rsquo;t be undone.</p>
           <p className="mb-1.5 mt-4 text-xs font-semibold text-body">Merge into</p>
           <select autoFocus value={merge.destId ?? ""} onChange={(e) => onDest(e.target.value ? Number(e.target.value) : null)} className={moveSelect}>
             <option value="">Choose a tag…</option>
