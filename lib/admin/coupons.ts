@@ -291,12 +291,33 @@ export async function saveCoupon(admin: AdminContext, id: number | null, rawInpu
          * exists — and `affectedRows` cannot be used to tell the two apart,
          * because a save that changes nothing reports 0 as well.
          */
-        const [existing] = await connection.execute<(RowDataPacket & { id: number })[]>(
-          "SELECT id FROM coupons WHERE id = ? LIMIT 1",
+        const [existing] = await connection.execute<(RowDataPacket & { id: number; code: string })[]>(
+          "SELECT id, code FROM coupons WHERE id = ? LIMIT 1 FOR UPDATE",
           [couponId],
         );
         if (!existing[0]) {
           throw new Error("That coupon no longer exists — it may have been deleted by someone else.");
+        }
+        /*
+         * Orders hold the code as a plain string, not an id. Renaming a code
+         * that orders already carry detaches every one of them: the usage panel
+         * loses them, "correct the counter" counts none, and the per-customer
+         * limit — which counts a phone's orders by code — starts over, so each
+         * customer gets the code again. A different code is a different coupon.
+         */
+        const previous = existing[0].code.trim().toUpperCase();
+        if (previous !== code) {
+          const [linked] = await connection.execute<(RowDataPacket & { n: number })[]>(
+            "SELECT COUNT(*) AS n FROM orders WHERE coupon_code = ?",
+            [previous],
+          );
+          const n = Number(linked[0]?.n ?? 0);
+          if (n > 0) {
+            throw new Error(
+              `${previous} is already on ${n} ${n === 1 ? "order" : "orders"}, so its code can't change — ` +
+                `those orders would lose their link to it. Create a new coupon for ${code} instead.`,
+            );
+          }
         }
         await connection.execute(
           `UPDATE coupons
