@@ -28,6 +28,16 @@ function createPool(): Pool {
     connectionLimit: config.DB_CONNECTION_LIMIT,
     waitForConnections: true,
     queueLimit: 0,
+    /**
+     * `execute` prepares every distinct SQL text once per connection and keeps
+     * it open on the server. mysql2's default cache is 16,000 per connection,
+     * and listing pages interpolate LIMIT/OFFSET, so each page of each sort and
+     * filter combination is a new statement that is never closed. The server's
+     * `max_prepared_stmt_count` is 16,382 for the WHOLE server — shared with
+     * every other tenant on shared hosting — and once it is reached every new
+     * statement fails with error 1461. A small LRU closes the oldest instead.
+     */
+    maxPreparedStatements: 256,
     // Money must never round-trip through a float. Return DECIMAL as a string
     // and parse it deliberately at the edge that needs a number.
     decimalNumbers: false,
@@ -38,7 +48,28 @@ function createPool(): Pool {
 }
 
 export function pool(): Pool {
-  if (!globalThis.__sazunaPool) globalThis.__sazunaPool = createPool();
+  if (!globalThis.__sazunaPool) {
+    const created = createPool();
+    /*
+     * `timezone: "Z"` only tells the driver how to turn JS Dates into strings
+     * and back; it does not change the session. The session keeps the server's
+     * own `time_zone`, which decides how TIMESTAMP columns read and what NOW()
+     * and CURDATE() mean. On a server that is not on UTC every created_at
+     * would come back shifted by its offset, and every Date bound into a query
+     * would compare against the wrong instant. Pinning each new connection to
+     * UTC makes the driver's assumption true instead of a matter of luck. It
+     * is queued on the connection, so it runs before anything the app sends.
+     *
+     * On the core pool: that is where the connection is created, and its event
+     * hands over the callback-style connection its typings describe.
+     */
+    created.pool.on("connection", (connection) => {
+      connection.query("SET time_zone = '+00:00'", (error: Error | null) => {
+        if (error) console.error("[db] could not pin the session time zone to UTC", error);
+      });
+    });
+    globalThis.__sazunaPool = created;
+  }
   return globalThis.__sazunaPool;
 }
 
