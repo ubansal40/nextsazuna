@@ -42,12 +42,13 @@ export interface TaxonRow extends RowDataPacket {
 }
 
 /**
- * Categories carry no description column — the taxonomy tables are deliberately
- * thin (id, name, slug, parent_id). Any editorial copy for a listing page lives
- * in `content_blocks`, not here.
+ * `description` is the copy the admin's category drawer promises is "shown on
+ * the storefront listing page" (migration 0012). The older `category_intros`
+ * content block still covers categories that have none.
  */
 export interface CategoryRow extends TaxonRow {
   parent_id: number | null;
+  description: string | null;
 }
 
 /** Scalar result shapes. mysql2 requires every row type to extend RowDataPacket. */
@@ -115,6 +116,12 @@ export type SortKey =
   | "price-desc"
   | "newest"
   | "bestselling";
+
+/**
+ * What a listing page IS — the taxonomy or search term it was opened on. The
+ * products and the sidebar's facet counts are both scoped by exactly this.
+ */
+export type ListingScope = Pick<ListingQuery, "categorySlug" | "tagSlugs" | "collectionIds" | "search">;
 
 export interface ListingQuery {
   /** The taxonomy the page itself represents — always applied. */

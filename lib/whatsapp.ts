@@ -26,7 +26,15 @@ export function whatsappHref(message: string, number: string = STORE_WHATSAPP): 
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
 }
 
-/** A wa.me link prefilled with the piece the reader is looking at. */
+/**
+ * A wa.me link prefilled with the piece the reader is looking at.
+ *
+ * `base` is getWhatsAppHref()'s link, which already carries `?text=` whenever
+ * the admin has set a default greeting (`site_identity.whatsapp_message`). This
+ * used to append a second `text`, and a query string with two reads as its
+ * first — the generic greeting — so the enquiry lost the product it was about.
+ * The piece's message replaces the greeting; any other parameter is kept.
+ */
 export function enquiryHref(
   base: string,
   productName: string,
@@ -35,6 +43,8 @@ export function enquiryHref(
 ): string {
   const subject = sku ? `${productName} (SKU ${sku})` : productName;
   const message = `Hi Sazuna — I'm interested in the ${subject}. ${url}`;
-  const separator = base.includes("?") ? "&" : "?";
-  return `${base}${separator}text=${encodeURIComponent(message)}`;
+  const at = base.indexOf("?");
+  const path = at === -1 ? base : base.slice(0, at);
+  const kept = at === -1 ? [] : base.slice(at + 1).split("&").filter((pair) => pair && !pair.startsWith("text="));
+  return `${path}?${[...kept, `text=${encodeURIComponent(message)}`].join("&")}`;
 }

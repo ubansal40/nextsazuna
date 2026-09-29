@@ -4,10 +4,12 @@ import { Icon } from "@/components/ui";
 import type { Facets } from "@/lib/catalog/facets";
 import {
   clearAllUrl,
+  isSelected,
   toggleUrl,
   type FilterKey,
   type FilterState,
 } from "@/lib/catalog/filter-params";
+import { ToggleLink } from "./toggle-link";
 
 interface Group {
   key: FilterKey;
@@ -34,7 +36,8 @@ export function buildGroups(facets: Facets): Group[] {
 /**
  * Filter option row. `role="checkbox"` matches the spec's semantics — these are
  * toggles, not navigation — while remaining a link so filtering works without
- * JavaScript and every combination is addressable.
+ * JavaScript and every combination is addressable. `ToggleLink` adds the Space
+ * key a checkbox promises; see there.
  */
 function Option({
   href,
@@ -53,7 +56,7 @@ function Option({
   onSelect?: () => void;
 }) {
   return (
-    <Link
+    <ToggleLink
       href={href}
       scroll={false}
       role="checkbox"
@@ -77,7 +80,7 @@ function Option({
       <span className={cn(mono && "font-mono text-[length:var(--sz-text-control-sm)]")}>
         {label}
       </span>
-    </Link>
+    </ToggleLink>
   );
 }
 
@@ -165,7 +168,7 @@ export function FilterSidebar({ facets, state, basePath, sort }: Props) {
               <Option
                 key={option.value}
                 href={toggleUrl(basePath, state, group.key, option.value, extra)}
-                checked={state[group.key].includes(option.value)}
+                checked={isSelected(state[group.key], option.value)}
                 label={option.label}
                 mono={group.mono}
                 compact

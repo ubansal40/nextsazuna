@@ -46,11 +46,29 @@ export type FilterState = Record<FilterKey, string[]>;
 
 export type RawParams = Record<string, string | string[] | undefined>;
 
-function readList(params: RawParams, key: string): string[] {
+/**
+ * Groups whose values are slugs or bracket ids — [a-z0-9-] by construction, so
+ * never containing a comma.
+ */
+const SLUG_KEYS: ReadonlySet<FilterKey> = new Set(["cat", "collection", "price"]);
+
+/**
+ * One value per occurrence of the parameter: `?material=Gold&material=Platinum`.
+ *
+ * Selections used to be joined into one comma-separated value and split back
+ * apart, but material and purity are free text the owner names — "Yellow,
+ * White Gold" came back as two values, neither of which exists, and the filter
+ * matched nothing. Repeated parameters need no separator at all.
+ *
+ * Commas are still split for the slug-valued groups, where they cannot be part
+ * of a value, so a bookmarked `?cat=rings,earrings` keeps working. A single
+ * value in any group — every link the menus build — reads as it always did.
+ */
+function readList(params: RawParams, key: FilterKey): string[] {
   const raw = params[key];
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  if (!value) return [];
-  return value.split(",").map((s) => s.trim()).filter(Boolean);
+  const values = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  const parts = SLUG_KEYS.has(key) ? values.flatMap((value) => value.split(",")) : values;
+  return [...new Set(parts.map((s) => s.trim()).filter(Boolean))];
 }
 
 export function readFilters(params: RawParams): FilterState {
@@ -67,16 +85,33 @@ export function activeFilterCount(state: FilterState): number {
   return FILTER_KEYS.reduce((n, key) => n + state[key].length, 0);
 }
 
-/** Build a querystring, dropping empty groups so URLs stay clean. */
+/**
+ * Build a querystring, dropping empty groups so URLs stay clean. Each selected
+ * value is its own parameter — see `readList` for why they are not joined.
+ */
 function toQuery(state: FilterState, extra: Record<string, string | undefined> = {}): string {
   const params = new URLSearchParams();
   for (const key of FILTER_KEYS) {
-    if (state[key].length) params.set(key, state[key].join(","));
+    for (const value of state[key]) params.append(key, value);
   }
   for (const [key, value] of Object.entries(extra)) {
     if (value) params.set(key, value);
   }
   return params.toString();
+}
+
+/**
+ * Whether `value` is among `selected`, compared the way the filter compares.
+ *
+ * The catalog's columns use a case-insensitive collation, so `?material=gold`
+ * filters exactly like `?material=Gold` — and a menu link or an old URL can
+ * carry either spelling. Compared exactly, the option for a filter that was
+ * plainly applied showed unticked, and ticking it appended a second copy
+ * instead of removing the first.
+ */
+export function isSelected(selected: readonly string[], value: string): boolean {
+  const wanted = value.toLowerCase();
+  return selected.some((v) => v.toLowerCase() === wanted);
 }
 
 /**
@@ -93,8 +128,8 @@ export function toggleUrl(
   extra: Record<string, string | undefined> = {},
 ): string {
   const current = state[key];
-  const next = current.includes(value)
-    ? current.filter((v) => v !== value)
+  const next = isSelected(current, value)
+    ? current.filter((v) => !isSelected([v], value))
     : [...current, value];
   const qs = toQuery({ ...state, [key]: next }, extra);
   return qs ? `${basePath}?${qs}` : basePath;

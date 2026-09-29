@@ -28,6 +28,27 @@ export function effectivePriceFor(alias: string): string {
 }
 
 /**
+ * "Does this product's effective price fall in `band`?" — the one definition the
+ * listing filter and the sidebar's price counts both use.
+ *
+ * Bands are half-open, [min, max), and the top band simply has no max. So a
+ * piece priced exactly रु 75,000 sits in "रु 75,000 – 1,50,000" and nowhere
+ * else, which is also what "Under रु 75,000" promises. The two used to disagree
+ * at every edge: the counts bucketed with `<=` while the filter took both ends,
+ * so a boundary price was counted in the lower band and returned by both.
+ *
+ * Bound, not interpolated, like every other value in a catalog WHERE clause.
+ */
+export function priceBandSql(band: { min: number; max: number | null }): {
+  sql: string;
+  params: number[];
+} {
+  return band.max === null
+    ? { sql: `${EFFECTIVE_PRICE} >= ?`, params: [band.min] }
+    : { sql: `(${EFFECTIVE_PRICE} >= ? AND ${EFFECTIVE_PRICE} < ?)`, params: [band.min, band.max] };
+}
+
+/**
  * A product is purchasable when it is flagged always-available, or has stock.
  * NULL stock is treated as out of stock: unknown inventory is not a promise we
  * can keep to a customer.

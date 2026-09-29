@@ -136,6 +136,13 @@ export async function ProductDetailView({ product }: { product: ProductDetail })
   const category = product.categories[0];
   // Bare number for the price tags; `price` is display-formatted.
   const amount = (product.priceMinor / 100).toFixed(2);
+  /**
+   * og:image and the JSON-LD `image` must be absolute: a scraper or a crawler
+   * resolves nothing against the page. Everything the admin uploads is stored
+   * app-relative (`/uploads/…`), so those photos previewed as nothing at all
+   * wherever a link was shared. The legacy absolute URLs pass through as-is.
+   */
+  const shareImages = product.images.map((image) => new URL(image, CANONICAL_ORIGIN).href);
   const description =
     product.description ?? `${product.name} — certified jewellery from Sazuna Jewellers.`;
 
@@ -150,7 +157,7 @@ export async function ProductDetailView({ product }: { product: ProductDetail })
       <meta property="og:title" content={product.name} />
       <meta property="og:description" content={description.slice(0, 200)} />
       <meta property="og:url" content={url} />
-      {product.images.map((image) => (
+      {shareImages.map((image) => (
         <meta key={image} property="og:image" content={image} />
       ))}
       <meta property="og:price:amount" content={amount} />
@@ -174,7 +181,7 @@ export async function ProductDetailView({ product }: { product: ProductDetail })
             name: product.name,
             sku: product.sku ?? undefined,
             description: product.description ?? undefined,
-            image: product.images.length ? product.images : undefined,
+            image: shareImages.length ? shareImages : undefined,
             brand: { "@type": "Brand", name: "Sazuna" },
             category: category?.name,
             offers: {

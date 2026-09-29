@@ -5,15 +5,17 @@ import { ErrorHomeLink, ErrorPage } from "@/components/content/error-page";
 /**
  * 500 — Sazuna Error Pages.dc.html.
  *
- * The root error boundary. `reset` re-renders the segment rather than reloading
- * the document, so a transient database hiccup recovers without the reader
- * losing their place — the same reason the PDP's boundary uses it.
+ * The root error boundary. `retry` re-fetches and re-renders the segment rather
+ * than reloading the document, so a transient database hiccup recovers without
+ * the reader losing their place — the same reason the PDP's boundary uses it.
+ * (`reset` would not: it only clears the boundary, re-rendering the server
+ * payload that already failed. See the PDP boundary.)
  *
  * The bag reassurance is not decoration. The bag lives in localStorage
  * (lib/cart-storage), so it genuinely survives a server fault, and the one
  * thing someone fears when a shop 500s mid-checkout is that it did not.
  */
-export default function RootError({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function RootError({ retry }: { error: Error & { digest?: string }; retry: () => void }) {
   return (
     <ErrorPage
       code="Error 500"
@@ -30,7 +32,7 @@ export default function RootError({ reset }: { error: Error & { digest?: string 
       <div className="mt-8 flex flex-wrap justify-center gap-3">
         <button
           type="button"
-          onClick={reset}
+          onClick={retry}
           className="inline-flex cursor-pointer items-center justify-center rounded-[var(--sz-radius-control)] bg-primary-700 px-[26px] text-control font-semibold text-white min-h-[52px] transition-colors duration-[var(--sz-dur-fast)] hover:bg-primary-800"
         >
           Try again

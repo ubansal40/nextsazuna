@@ -1,7 +1,9 @@
 import "server-only";
 
-import { query } from "@/lib/db";
-import { EFFECTIVE_PRICE, IS_VISIBLE } from "./sql";
+import { query, type SqlParam } from "@/lib/db";
+import { COLLECTION_MEMBERS, scopeFilter } from "./products";
+import { priceBandSql } from "./sql";
+import type { ListingScope } from "./types";
 import type { RowDataPacket } from "mysql2";
 
 /**
@@ -35,10 +37,16 @@ export interface Facets {
 
 interface FacetRow extends RowDataPacket {
   value: string | null;
+  /** The curated name, when the value has one; free text is labelled here. */
+  label: string | null;
   count: number;
 }
 
-/** Brackets from the design spec's own `_bracket()` helper. */
+/**
+ * Brackets from the design spec's own `_bracket()` helper. Each is the half-open
+ * range [min, max) — see `priceBandSql`, which both the counts below and the
+ * listing filter test against.
+ */
 const PRICE_BRACKETS: { value: string; label: string; min: number; max: number | null }[] = [
   { value: "b1", label: "Under रु 75,000", min: 0, max: 75_000 },
   { value: "b2", label: "रु 75,000 – 1,50,000", min: 75_000, max: 150_000 },
@@ -65,112 +73,121 @@ function label(value: string): string {
 function toOptions(rows: FacetRow[]): FacetOption[] {
   return rows
     .filter((row): row is FacetRow & { value: string } => Boolean(row.value?.trim()))
-    .map((row) => ({ value: row.value, label: label(row.value), count: Number(row.count) }))
+    .map((row) => ({ value: row.value, label: row.label ?? label(row.value), count: Number(row.count) }))
     .filter((option) => option.count > 0);
 }
 
 /**
- * All facets for a listing, scoped to the taxonomy the page is already showing.
+ * Material and purity options, read through their managed vocabularies
+ * (`materials`, `purities` — ADR 0010: "a hidden or reordered vocabulary entry
+ * changes the storefront"). The admin screens promise exactly that: these are
+ * "the options products can carry, in the order they list as storefront
+ * filters".
+ *
+ *   - A vocabulary entry the owner has hidden is not offered. Its products stay
+ *     listed; only the filter option goes.
+ *   - Entries list in the owner's order (`sort_order`, then name), under the
+ *     name as curated.
+ *   - A value products carry that is in no vocabulary is still offered, after
+ *     the curated ones, by count. The products columns are free strings and the
+ *     vocabulary was seeded from them, so the two drift; hiding the stragglers
+ *     would make pieces unreachable through the filter. This is the admin's own
+ *     rule for its filter drawers (`withValuesInUse`, lib/admin/vocab-options.ts)
+ *     minus its "not in taxonomy" label, which is for the owner, not a customer.
+ *
+ * Matching is SQL `=` under the column collation, the same comparison the
+ * listing filter (`p.material IN (…)`) and the admin's counts use, so a count
+ * is always what ticking its option returns.
+ */
+async function vocabularyFacet(
+  table: "materials" | "purities",
+  column: "material" | "purity",
+  where: string,
+  params: SqlParam[],
+): Promise<FacetOption[]> {
+  // `label` is the curated name, shown as the owner wrote it; it is null for a
+  // value in no vocabulary, which `toOptions` then tidies like any free text.
+  const rows = await query<FacetRow>(
+    `SELECT COALESCE(v.name, p.${column}) AS value, v.name AS label, COUNT(*) AS count
+       FROM products p
+       LEFT JOIN ${table} v ON v.name = p.${column}
+      WHERE ${where}
+        AND p.${column} IS NOT NULL AND p.${column} <> ''
+        AND (v.id IS NULL OR v.is_visible = 1)
+      GROUP BY v.id, v.name, v.sort_order, p.${column}
+      ORDER BY v.id IS NULL, v.sort_order, v.name, count DESC, value`,
+    params,
+  );
+  return toOptions(rows);
+}
+
+/**
+ * All facets for a listing, scoped to what the page is already showing.
+ *
+ * The scope is `scopeFilter` — the very predicate `listProducts` applies for
+ * the page's category, tag, collection or search term — so an option is only
+ * offered when ticking it returns something. It used to take a category and
+ * nothing else: a tag, collection or search page counted the whole catalogue,
+ * and /jewellery/wedding.html offered Necklaces, which led to the empty state.
  *
  * Counts are unfiltered by the *other* active filters — a deliberate
  * simplification. Fully cross-filtered counts need one query per group per
  * request; that cost is not worth paying on shared hosting until the sparse
  * fields are actually populated.
+ *
+ * Categories and collections list in the admin's stored order ("row order is
+ * the storefront order" on both screens), and hidden ones are not offered —
+ * their pages 404, so neither is a place to send a customer.
  */
-export async function getFacets(scope: { categorySlug?: string } = {}): Promise<Facets> {
-  /**
-   * Restricts `products p` to the taxonomy this page is showing. Every group's
-   * query must carry it. Category and collection used not to — they counted the
-   * whole catalogue — so /jewellery/rings.html offered Necklaces in its Category
-   * group, and ticking it asked for products that are both a ring and a
-   * necklace: the empty state, every time. That is precisely the dead-end
-   * `count > 0` exists to prevent, and it defeated it for the only two groups
-   * whose options are themselves taxonomies.
-   */
-  const scoped = scope.categorySlug
-    ? `JOIN product_categories spc ON spc.product_id = p.id
-       JOIN categories sc ON sc.id = spc.category_id
-       AND (sc.slug = ? OR sc.parent_id = (SELECT id FROM categories WHERE slug = ? LIMIT 1))`
-    : "";
-  const scopeParams = scope.categorySlug ? [scope.categorySlug, scope.categorySlug] : [];
+export async function getFacets(scope: ListingScope = {}): Promise<Facets> {
+  const { where, params } = scopeFilter(scope);
 
-  const [priceRows, categoryRows, materialRows, purityRows, collectionRows] = await Promise.all([
-    query<FacetRow>(
-      `SELECT
-         CASE
-           WHEN ${EFFECTIVE_PRICE} <= 75000 THEN 'b1'
-           WHEN ${EFFECTIVE_PRICE} <= 150000 THEN 'b2'
-           WHEN ${EFFECTIVE_PRICE} <= 500000 THEN 'b3'
-           WHEN ${EFFECTIVE_PRICE} <= 1000000 THEN 'b4'
-           ELSE 'b5'
-         END AS value,
-         COUNT(DISTINCT p.id) AS count
-       FROM products p ${scoped}
-       WHERE ${IS_VISIBLE}
-       GROUP BY value`,
-      scopeParams,
+  // One conditional count per bracket, each the exact test the filter applies.
+  const bands = PRICE_BRACKETS.map((bracket) => ({ value: bracket.value, ...priceBandSql(bracket) }));
+
+  const [priceRows, categoryRows, material, purity, collectionRows] = await Promise.all([
+    query<RowDataPacket>(
+      `SELECT ${bands.map((band) => `COUNT(CASE WHEN ${band.sql} THEN 1 END) AS ${band.value}`).join(", ")}
+         FROM products p
+        WHERE ${where}`,
+      [...bands.flatMap((band) => band.params), ...params],
     ),
+    // Stored order, as the admin's `listCategories` reads it: top-level
+    // categories first, then subcategories, each by position then name.
     query<FacetRow>(
-      `SELECT c.slug AS value, COUNT(DISTINCT p.id) AS count
+      `SELECT c.slug AS value, c.name AS label, COUNT(*) AS count
          FROM categories c
          JOIN product_categories pc ON pc.category_id = c.id
-         JOIN products p ON p.id = pc.product_id ${scoped}
-        WHERE ${IS_VISIBLE}
-        GROUP BY c.slug, c.name
-        ORDER BY count DESC`,
-      scopeParams,
+         JOIN products p ON p.id = pc.product_id
+        WHERE c.is_visible = 1 AND ${where}
+        GROUP BY c.id, c.slug, c.name, c.parent_id, c.sort_order
+        ORDER BY (c.parent_id IS NOT NULL), c.parent_id, c.sort_order, c.name`,
+      params,
     ),
+    vocabularyFacet("materials", "material", where, params),
+    vocabularyFacet("purities", "purity", where, params),
+    // The listing's own membership set, so a count is what ticking returns.
     query<FacetRow>(
-      `SELECT p.material AS value, COUNT(DISTINCT p.id) AS count
-         FROM products p ${scoped}
-        WHERE ${IS_VISIBLE} AND p.material IS NOT NULL AND p.material <> ''
-        GROUP BY p.material ORDER BY count DESC`,
-      scopeParams,
-    ),
-    query<FacetRow>(
-      `SELECT p.purity AS value, COUNT(DISTINCT p.id) AS count
-         FROM products p ${scoped}
-        WHERE ${IS_VISIBLE} AND p.purity IS NOT NULL AND p.purity <> ''
-        GROUP BY p.purity ORDER BY count DESC`,
-      scopeParams,
-    ),
-    query<FacetRow>(
-      `SELECT co.slug AS value, COUNT(DISTINCT p.id) AS count
-         FROM collections co
-         JOIN collection_categories cc ON cc.collection_id = co.id
-         JOIN product_categories pc ON pc.category_id = cc.category_id
-         JOIN products p ON p.id = pc.product_id ${scoped}
-        WHERE co.is_active = 1 AND ${IS_VISIBLE}
-        GROUP BY co.slug, co.name
-        ORDER BY count DESC`,
-      scopeParams,
+      `SELECT col.slug AS value, col.name AS label, COUNT(*) AS count
+         FROM collections col
+         JOIN ${COLLECTION_MEMBERS} cm ON cm.collection_id = col.id
+         JOIN products p ON p.id = cm.product_id
+        WHERE col.is_active = 1 AND ${where}
+        GROUP BY col.id, col.slug, col.name, col.sort_order
+        ORDER BY col.sort_order, col.name`,
+      params,
     ),
   ]);
 
-  const priceCounts = new Map(priceRows.map((r) => [r.value, Number(r.count)]));
-
-  // Category and collection facets carry slugs; show the human name.
-  const [categoryNames, collectionNames] = await Promise.all([
-    query<RowDataPacket & { slug: string; name: string }>(
-      "SELECT slug, name FROM categories",
-      [],
-    ),
-    query<RowDataPacket & { slug: string; name: string }>(
-      "SELECT slug, name FROM collections WHERE is_active = 1",
-      [],
-    ),
-  ]);
-  const nameBySlug = new Map([...categoryNames, ...collectionNames].map((r) => [r.slug, r.name]));
-  const named = (options: FacetOption[]) =>
-    options.map((o) => ({ ...o, label: nameBySlug.get(o.value) ?? o.label }));
+  const priceCounts: RowDataPacket | undefined = priceRows[0];
 
   return {
-    price: PRICE_BRACKETS.map((b) => ({ ...b, count: priceCounts.get(b.value) ?? 0 })).filter(
+    price: PRICE_BRACKETS.map((b) => ({ ...b, count: Number(priceCounts?.[b.value] ?? 0) })).filter(
       (b) => b.count > 0,
     ),
-    category: named(toOptions(categoryRows)),
-    material: toOptions(materialRows),
-    purity: toOptions(purityRows),
-    collection: named(toOptions(collectionRows)),
+    category: toOptions(categoryRows),
+    material,
+    purity,
+    collection: toOptions(collectionRows),
   };
 }

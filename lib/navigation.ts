@@ -60,10 +60,17 @@ export const NAV_FEATURED = {
  *
  * Labels are the spec's; `bracket` is the id `lib/catalog/facets.ts` filters
  * on, so the link lands on a real filtered listing rather than an invented
- * min/max query the page ignores.
+ * min/max query the page ignores. Each band is [min, max) there, which is what
+ * these labels say.
+ *
+ * Except the first, which is a deliberate departure: the spec reads "रु 40k –
+ * 75k", but no such band exists — `b1` is everything under 75,000 — so the link
+ * promised a floor it never applied. The label now says what the link does.
+ * A real 40k floor needs a bracket in the facets first, and a sidebar option
+ * to match; until then the menu must not advertise one.
  */
 export const MEGA_PRICE_BANDS = [
-  { label: "रु 40k – 75k", bracket: "b1" },
+  { label: "Under रु 75k", bracket: "b1" },
   { label: "रु 75k – 1.5L", bracket: "b2" },
   { label: "रु 1.5L – 5L", bracket: "b3" },
   { label: "रु 5L – 10L", bracket: "b4" },

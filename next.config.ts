@@ -26,6 +26,17 @@ const nextConfig: NextConfig = {
       { source: "/order-success.html", destination: "/order-status", permanent: true },
 
       /**
+       * The Express app's all-products listings. The homepage parser already
+       * rewrites them where admin-authored blocks still carry them (`href()` in
+       * lib/homepage-blocks.ts); this catches every other copy — bookmarks,
+       * search results, WhatsApp threads. The query string passes through
+       * untouched — Next forwards it on every redirect — so `?cat=…&sort=…`
+       * lands on the same filtered view.
+       */
+      { source: "/jewellery.html", destination: "/jewellery", permanent: true },
+      { source: "/products.html", destination: "/jewellery", permanent: true },
+
+      /**
        * Journal posts. The slug pattern is explicit because a bare `:slug`
        * matches dots too, so it would swallow the `.html` and never match.
        */
