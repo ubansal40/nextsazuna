@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { useSearchParams } from "next/navigation";
 import { Icon, useToast } from "@/components/ui";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { ProductThumb } from "@/components/admin/product-thumb";
@@ -16,9 +17,12 @@ import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
 import type { AdminOrderFilters, AdminOrderPage, AdminOrderRow } from "@/lib/admin/orders";
 import type { OrderStatusRow } from "@/lib/admin/order-statuses";
+import { CANCEL_REASONS, CancelFields } from "./cancel-fields";
+import { filtersOf, queryOf } from "./order-filters";
 import { STATUS_CHIP } from "./status-badge";
 import { StatusManager } from "./status-manager";
 import {
+  cancelOrdersAction,
   loadOrdersAction,
   setOrdersStatusAction,
   softDeleteOrdersAction,
@@ -43,22 +47,6 @@ import {
  * time they opened an order.
  */
 
-/**
- * The filters, as the URL carries them. Defaults are omitted rather than
- * written, so the common case is a bare `/admin/orders` and the query string
- * only ever names what was actually chosen.
- */
-function queryOf(filters: AdminOrderFilters): string {
-  const params = new URLSearchParams();
-  if (filters.status && filters.status !== "all") params.set("status", filters.status);
-  if (filters.search) params.set("q", filters.search);
-  if (filters.paymentStatus && filters.paymentStatus !== "all") params.set("payment", filters.paymentStatus);
-  if (filters.sort && filters.sort !== "newest") params.set("sort", filters.sort);
-  if (filters.page && filters.page > 1) params.set("page", String(filters.page));
-  const query = params.toString();
-  return query ? `?${query}` : "";
-}
-
 export function OrdersScreen({
   initialPage,
   initialStatuses,
@@ -79,7 +67,67 @@ export function OrdersScreen({
   const [confirmBulk, setConfirmBulk] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [managing, setManaging] = useState(false);
+  // The orders a cancel dialog is open for: one row's, or the bulk selection.
+  const [cancelIds, setCancelIds] = useState<number[] | null>(null);
+  const [cancelReason, setCancelReason] = useState(CANCEL_REASONS[0]);
+  const [cancelNote, setCancelNote] = useState("");
   const [busy, startTransition] = useTransition();
+
+  /*
+   * Arriving from outside this screen — the sidebar's Orders link, Back, a link
+   * to `?q=CODE` — must show what the URL now asks for. `useState` reads its
+   * initial value once, so the list went on showing the last tab and search
+   * under a bare /admin/orders. Two paths, because Next takes two:
+   *
+   *   - When Next re-renders the page, the new `initialPage` is adopted as is.
+   *   - When it does not — it keeps the page it has if the URL matches what that
+   *     page was server-rendered for, and this screen rewrites its URL with
+   *     `replaceState`, which the server never sees — the URL is followed here
+   *     instead: a query that no longer matches the filters on screen is loaded
+   *     as if the admin had chosen it. This is also why keying the screen on its
+   *     filters would not do: that navigation brings no new props to key on.
+   */
+  const [seededFrom, setSeededFrom] = useState(initialPage);
+  const freshRender = initialPage !== seededFrom;
+  if (freshRender) {
+    setSeededFrom(initialPage);
+    setPage(initialPage);
+    setStatuses(initialStatuses);
+    setFilters(initialFilters);
+    setSearch(initialFilters.search ?? "");
+    setSelected(new Set());
+    setBulkTo("");
+  }
+
+  // Only a MOVE of the URL is acted on, and the screen's own writes arrive
+  // already matching the filters it set a render earlier, so they pass through.
+  const urlQuery = useSearchParams().toString();
+  const [seenQuery, setSeenQuery] = useState(urlQuery);
+  // Filters taken from the URL whose rows have not been fetched yet.
+  const [adopted, setAdopted] = useState<AdminOrderFilters | null>(null);
+  if (urlQuery !== seenQuery) {
+    setSeenQuery(urlQuery);
+    const wanted = filtersOf(Object.fromEntries(new URLSearchParams(urlQuery)));
+    // Compared with what this render is about to show — the server's filters,
+    // when it has just rendered them, so its rows are not fetched a second time.
+    if (queryOf(wanted) !== queryOf(freshRender ? initialFilters : filters)) {
+      setFilters(wanted);
+      setSearch(wanted.search ?? "");
+      setSelected(new Set());
+      setBulkTo("");
+      setAdopted(wanted);
+    }
+  }
+  useEffect(() => {
+    if (!adopted) return;
+    startTransition(async () => {
+      handle(await loadOrdersAction(adopted));
+      setAdopted(null);
+    });
+    // `handle` is recreated every render and only reads stable setters and
+    // `toast`; the fetch must run once per adoption, not once per render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adopted]);
 
   function handle(result: OrdersResult, ok?: string) {
     if (result.ok) {
@@ -94,22 +142,38 @@ export function OrdersScreen({
    * Every list change goes through here, so the filters the server sees, the
    * ones the UI shows and the ones the URL carries can never drift apart.
    *
-   * The search box's live value is folded in on every apply: changing the sort
-   * or the payment filter with a term typed used to drop that term from the
-   * query while leaving it sitting in the input, which reads as a search that
-   * simply stopped working.
-   *
    * The URL is written with `replaceState` rather than a router navigation: it
    * costs no fetch (the list is already being loaded by the action below), and
    * it keeps Back pointing at wherever the admin came from instead of stacking
    * one history entry per filter change.
    */
-  function apply(next: AdminOrderFilters) {
-    const merged: AdminOrderFilters = { ...next, search: search.trim() || undefined };
-    setFilters(merged);
+  function load(next: AdminOrderFilters) {
+    setFilters(next);
     setSelected(new Set());
-    window.history.replaceState(null, "", `${window.location.pathname}${queryOf(merged)}`);
-    startTransition(async () => handle(await loadOrdersAction(merged)));
+    window.history.replaceState(null, "", `${window.location.pathname}${queryOf(next)}`);
+    startTransition(async () => handle(await loadOrdersAction(next)));
+  }
+
+  /**
+   * A filter change, which starts again from page one.
+   *
+   * The search box's live value is folded in: changing the sort or the payment
+   * filter with a term typed used to drop that term from the query while
+   * leaving it sitting in the input, which reads as a search that simply
+   * stopped working.
+   */
+  function apply(next: AdminOrderFilters) {
+    load({ ...next, search: search.trim() || undefined });
+  }
+
+  /**
+   * Paging moves through the list already on screen, so it keeps the search
+   * that list was made from. Folding in the box's unsubmitted text here ran it
+   * as a new search that opened on page 2 — skipping its first page, or landing
+   * past its end on nothing.
+   */
+  function goToPage(n: number) {
+    load({ ...filters, page: n });
   }
 
   function toggle(id: number) {
@@ -126,12 +190,20 @@ export function OrdersScreen({
   }
 
   function changeStatus(orderIds: number[], statusKey: string, label: string) {
+    // Cancelling needs a reason, so it opens the cancel dialog rather than
+    // moving the orders bare — from a row's dropdown and the bulk bar alike.
+    if (statusKey === "cancelled") {
+      setCancelIds(orderIds);
+      return;
+    }
     startTransition(async () => {
       const result = await setOrdersStatusAction(orderIds, statusKey, filters);
       if (result.ok) setSelected(new Set());
       handle(result, `Moved to ${label}.`);
     });
   }
+
+  const cancelMany = (cancelIds?.length ?? 0) > 1;
 
   const tabs = [
     { key: "all", label: "All", count: page.tabCounts.all ?? 0 },
@@ -173,8 +245,8 @@ export function OrdersScreen({
             onKeyDown={(e) => {
               if (e.key === "Enter") apply({ ...filters, search, page: 1 });
             }}
-            aria-label="Search orders by number, customer name or phone"
-            placeholder="Order #, name or phone"
+            aria-label="Search orders by number, customer name, phone or promo code"
+            placeholder="Order #, name, phone or promo code"
             className="min-h-11 w-full rounded-[var(--sz-admin-radius-control)] border border-line bg-admin-canvas pl-9 pr-3 text-[13px] text-body outline-none placeholder:text-muted focus-visible:border-primary-700"
           />
         </div>
@@ -291,7 +363,7 @@ export function OrdersScreen({
           <button
             type="button"
             disabled={page.page <= 1 || busy}
-            onClick={() => apply({ ...filters, page: page.page - 1 })}
+            onClick={() => goToPage(page.page - 1)}
             className={pagerButton}
           >
             Previous
@@ -299,7 +371,7 @@ export function OrdersScreen({
           <button
             type="button"
             disabled={page.page >= page.totalPages || busy}
-            onClick={() => apply({ ...filters, page: page.page + 1 })}
+            onClick={() => goToPage(page.page + 1)}
             className={pagerButton}
           >
             Next
@@ -339,7 +411,8 @@ export function OrdersScreen({
           <button
             type="button"
             disabled={!bulkTo || busy}
-            onClick={() => setConfirmBulk(true)}
+            // The cancel dialog is its own confirmation, so Cancelled skips this one.
+            onClick={() => (bulkTo === "cancelled" ? setCancelIds([...selected]) : setConfirmBulk(true))}
             className="min-h-10 rounded-[9px] bg-primary-700 px-4 text-[12.5px] font-semibold text-white hover:bg-primary-800 disabled:opacity-50"
           >
             Apply
@@ -406,6 +479,33 @@ export function OrdersScreen({
         }
       />
 
+      <ConfirmDialog
+        open={cancelIds !== null}
+        title={cancelMany ? `Cancel ${cancelIds?.length} orders?` : "Cancel this order?"}
+        tone="danger"
+        confirmLabel={cancelMany ? "Cancel orders" : "Cancel order"}
+        busy={busy}
+        onCancel={() => setCancelIds(null)}
+        onConfirm={() => {
+          const ids = cancelIds ?? [];
+          setCancelIds(null);
+          startTransition(async () => {
+            const result = await cancelOrdersAction(ids, cancelReason, cancelNote, filters);
+            if (result.ok) {
+              setSelected(new Set());
+              setCancelNote("");
+            }
+            handle(result, ids.length === 1 ? "Order cancelled." : "Orders cancelled.");
+          });
+        }}
+        body={
+          <>
+            {cancelMany && <p className="mb-3">They all get the same reason. Orders already cancelled are left alone.</p>}
+            <CancelFields reason={cancelReason} note={cancelNote} onReason={setCancelReason} onNote={setCancelNote} />
+          </>
+        }
+      />
+
       {managing && (
         <StatusManager
           statuses={statuses}
@@ -459,7 +559,9 @@ function OrderTr({
         {/* The mono face sits on the value, not the cell — the cell's `::before`
           * carries the column name, and that label is UI text. */}
         <span className="font-mono text-[11.5px] text-muted">
-          {date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" })}
+          {/* The shop's zone: this renders on the server and again in the
+            * browser, and a zone-less date gave each its own day. */}
+          {date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit", timeZone: "Asia/Kathmandu" })}
         </span>
       </StackedCell>
       <StackedCell label="Customer">

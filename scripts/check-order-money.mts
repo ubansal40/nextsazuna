@@ -9,7 +9,14 @@
  *
  * Run: npx tsx scripts/check-order-money.mts
  */
-import { toMinor, toDecimal, computeTotals, couponDiscountMinor } from "../lib/admin/order-money";
+import {
+  toMinor,
+  toDecimal,
+  computeTotals,
+  couponDiscountMinor,
+  parseAdminMoney,
+  clampDiscounts,
+} from "../lib/admin/order-money";
 
 const checks: [string, boolean][] = [];
 
@@ -150,6 +157,75 @@ checks.push(
   // 10% of 42.67 is 4.267: whole rupees, like every figure a customer is shown.
   ["its 10% promo is whole rupees", toDecimal(promo) === "4.00"],
   ["its total is exact", toDecimal(order.totalMinor) === "188.67"],
+);
+
+/* --- what an admin types --------------------------------------------------- */
+
+// A price typed the way it is printed ("1,500", "रु 1500") used to become रु 0,
+// and "0x10" became रु 16. The parser forgives how money is written in Nepal
+// and nothing else — a wrong guess here is a wrong bill.
+const refuses = (value: unknown): boolean => {
+  try {
+    parseAdminMoney(value);
+    return false;
+  } catch (error) {
+    return error instanceof Error && error.message.length > 0;
+  }
+};
+
+checks.push(
+  ["plain digits parse", parseAdminMoney("1500") === 150000],
+  ["grouping commas are stripped", parseAdminMoney("1,500") === 150000],
+  ["lakh grouping is stripped", parseAdminMoney("1,50,000") === 15000000],
+  ["grouping spaces are stripped", parseAdminMoney("1 500") === 150000],
+  ["a रु prefix is allowed", parseAdminMoney("रु 1500") === 150000],
+  ["a रु prefix with no space and paise", parseAdminMoney("रु1,500.50") === 150050],
+  ["an Rs. prefix is allowed, any case", parseAdminMoney("Rs. 1500") === 150000 && parseAdminMoney("rs1500") === 150000],
+  ["one decimal place is paise, not a typo", parseAdminMoney(" 1500.5 ") === 150050],
+  ["zero is an amount", parseAdminMoney("0") === 0],
+  ["the float trap survives the parser", parseAdminMoney("8.70") === 870],
+  ["hex is refused, not read as 16", refuses("0x10")],
+  ["an exponent is refused", refuses("1e3")],
+  ["a negative is refused", refuses("-100")],
+  ["words are refused", refuses("abc") && refuses("12abc")],
+  ["blank is refused", refuses("") && refuses("   ") && refuses(null)],
+  ["a third decimal place is refused", refuses("1.234")],
+  ["a dangling point is refused", refuses("1500.")],
+  ["Infinity and NaN are refused", refuses("Infinity") && refuses("NaN")],
+  ["a currency sign alone is refused", refuses("रु")],
+);
+
+/* --- discounts stay inside the goods ---------------------------------------- */
+
+// computeTotals floors the total at zero, but a discount bigger than the items
+// would otherwise eat the delivery charge first.
+checks.push(
+  [
+    "a discount inside the subtotal is untouched",
+    clampDiscounts(100000, 20000, 0).discountMinor === 20000,
+  ],
+  [
+    "a discount bigger than the subtotal is cut to it",
+    clampDiscounts(30000, 50000, 0).discountMinor === 30000,
+  ],
+  [
+    "loyalty keeps its value and the discount takes what is left",
+    JSON.stringify(clampDiscounts(30000, 25000, 10000)) === JSON.stringify({ discountMinor: 20000, loyaltyMinor: 10000 }),
+  ],
+  [
+    "loyalty alone is cut to the subtotal",
+    JSON.stringify(clampDiscounts(30000, 5000, 40000)) === JSON.stringify({ discountMinor: 0, loyaltyMinor: 30000 }),
+  ],
+  ["a negative discount becomes zero", clampDiscounts(30000, -500, 0).discountMinor === 0],
+  [
+    "an over-sized discount no longer waives delivery",
+    computeTotals({
+      subtotalMinor: 30000,
+      ...clampDiscounts(30000, 50000, 0),
+      taxMinor: 0,
+      shippingMinor: 15000,
+    }).totalMinor === 15000,
+  ],
 );
 
 let failed = 0;

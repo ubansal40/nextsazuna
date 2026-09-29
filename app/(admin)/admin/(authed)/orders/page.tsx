@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { requireSection } from "@/lib/admin/require";
-import { listAdminOrders, type AdminOrderFilters } from "@/lib/admin/orders";
+import { listAdminOrders } from "@/lib/admin/orders";
 import { listOrderStatuses } from "@/lib/admin/order-statuses";
+import { filtersOf, type OrderQuery } from "./_components/order-filters";
 import { OrdersScreen } from "./_components/orders-screen";
 
 export const metadata: Metadata = { title: "Orders", robots: { index: false, follow: false } };
@@ -15,20 +16,9 @@ export const metadata: Metadata = { title: "Orders", robots: { index: false, fol
  * page-one every time they opened an order. The screen mirrors its filters into
  * the URL as it goes; this is the half that reads them back.
  */
-export default async function OrdersPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ status?: string; q?: string; payment?: string; sort?: string; page?: string }>;
-}) {
+export default async function OrdersPage({ searchParams }: { searchParams: Promise<OrderQuery> }) {
   await requireSection("orders");
-  const { status, q, payment, sort, page: pageParam } = await searchParams;
-  const filters: AdminOrderFilters = {
-    status,
-    search: q,
-    paymentStatus: payment,
-    sort,
-    page: Number(pageParam) || 1,
-  };
+  const filters = filtersOf(await searchParams);
   const [page, statuses] = await Promise.all([listAdminOrders(filters), listOrderStatuses()]);
   return <OrdersScreen initialPage={page} initialStatuses={statuses} initialFilters={filters} />;
 }

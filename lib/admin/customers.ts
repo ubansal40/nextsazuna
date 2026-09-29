@@ -51,6 +51,26 @@ const PAGE_SIZE = 25;
  */
 export const NON_SPEND_STATUSES = ["pending_payment", "payment_failed", "cancelled"] as const;
 
+/**
+ * Payment states that undo a sale whatever the order's status says.
+ *
+ * A refund is recorded on `payment_status`, not as an order status — an order
+ * can be Completed and refunded — so the status denylist alone went on counting
+ * money the shop had handed back as spend and as revenue.
+ */
+export const NON_SPEND_PAYMENT_STATUSES = ["refunded"] as const;
+
+/**
+ * "This order is a sale", over an `orders` row aliased `o` — the one test
+ * behind lifetime spend here and revenue on the dashboard, so the two figures
+ * cannot disagree about what a sale is. Every value is bound: pass
+ * `SALE_PARAMS` for its placeholders, in this order.
+ */
+export const SALE_SQL =
+  `(o.status NOT IN (${NON_SPEND_STATUSES.map(() => "?").join(",")})` +
+  ` AND o.payment_status NOT IN (${NON_SPEND_PAYMENT_STATUSES.map(() => "?").join(",")}))`;
+export const SALE_PARAMS: readonly string[] = [...NON_SPEND_STATUSES, ...NON_SPEND_PAYMENT_STATUSES];
+
 /** Timestamps cross to the client as ISO strings; the client formats to the
  *  viewer's locale. A `Date` would survive the boundary but arrive as a
  *  different type on either side of a Server Action. */
@@ -115,9 +135,9 @@ interface CustomerListDbRow extends RowDataPacket {
  * that was typed carries a prefix the column does not: `+977`, `00977`, or a
  * trunk `0`. Taking the last ten digits makes `+977 9803-999930` find
  * `9803999930`, while a plain ten-digit number — including one that genuinely
- * starts `977` — is left exactly as it was typed.
+ * starts `977` — is left exactly as it was typed. The orders search uses it too.
  */
-function phoneDigits(search: string): string {
+export function phoneDigits(search: string): string {
   const digits = search.replace(/\D/g, "");
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
@@ -158,7 +178,6 @@ export async function listAdminCustomers(filters: AdminCustomerFilters = {}): Pr
   const page = Math.max(1, filters.page ?? 1);
   const orderBy = SORTS[filters.sort ?? "recent"] ?? SORTS.recent;
   const { where, params } = buildWhere(filters);
-  const spendGaps = NON_SPEND_STATUSES.map(() => "?").join(",");
 
   // One LEFT JOIN with conditional aggregation gives both figures in a single
   // pass. Correlated subqueries per column would run once per customer BEFORE
@@ -167,7 +186,7 @@ export async function listAdminCustomers(filters: AdminCustomerFilters = {}): Pr
     query<CustomerListDbRow>(
       `SELECT c.id, c.phone, c.name, c.email, c.loyalty_points, c.created_at,
               COUNT(o.id) AS order_count,
-              COALESCE(SUM(CASE WHEN o.status NOT IN (${spendGaps}) THEN o.total_amount ELSE 0 END), 0) AS lifetime_spend
+              COALESCE(SUM(CASE WHEN ${SALE_SQL} THEN o.total_amount ELSE 0 END), 0) AS lifetime_spend
          FROM customers c
          LEFT JOIN orders o ON o.customer_id = c.id AND o.deleted_at IS NULL
         WHERE ${where}
@@ -177,7 +196,7 @@ export async function listAdminCustomers(filters: AdminCustomerFilters = {}): Pr
       // Every grouped column is listed explicitly rather than relying on the
       // server detecting the primary-key functional dependency, so the query is
       // correct with ONLY_FULL_GROUP_BY on or off.
-      [...NON_SPEND_STATUSES, ...params, PAGE_SIZE, (page - 1) * PAGE_SIZE],
+      [...SALE_PARAMS, ...params, PAGE_SIZE, (page - 1) * PAGE_SIZE],
     ),
     query<RowDataPacket & { n: number }>(`SELECT COUNT(*) AS n FROM customers c WHERE ${where}`, params),
   ]);
@@ -291,7 +310,6 @@ interface CustomerDbRow extends RowDataPacket {
  */
 export async function getCustomerDetail(id: number): Promise<CustomerDetail | null> {
   if (!Number.isInteger(id) || id <= 0) return null;
-  const spendGaps = NON_SPEND_STATUSES.map(() => "?").join(",");
 
   // The two aggregates ride along with the profile rather than being summed in
   // JS over the (capped) order list: it keeps them identical to the list's
@@ -307,9 +325,9 @@ export async function getCustomerDetail(id: number): Promise<CustomerDetail | nu
               WHERE o.customer_id = c.id AND o.deleted_at IS NULL) AS order_count,
             (SELECT COALESCE(SUM(o.total_amount), 0) FROM orders o
               WHERE o.customer_id = c.id AND o.deleted_at IS NULL
-                AND o.status NOT IN (${spendGaps})) AS lifetime_spend
+                AND ${SALE_SQL}) AS lifetime_spend
        FROM customers c WHERE c.id = ? LIMIT 1`,
-    [...NON_SPEND_STATUSES, id],
+    [...SALE_PARAMS, id],
   );
   if (!customer) return null;
 

@@ -143,7 +143,9 @@ export function CouponUsagePanel({
           note={left === null ? "no limit set" : `${left.toLocaleString("en-IN")} left of ${maxUses?.toLocaleString("en-IN")}`}
         />
         <Stat label="Discount given" value={formatPrice(usage.discountGiven) ?? "—"} note="across every order" />
-        <Stat label="Revenue" value={formatPrice(usage.revenue) ?? "—"} note="orders that were paid for" />
+        {/* Not "paid for": the figure counts every order that isn't cancelled,
+            failed or an abandoned checkout, unpaid cash-on-delivery included. */}
+        <Stat label="Revenue" value={formatPrice(usage.revenue) ?? "—"} note="excl. cancelled, failed & abandoned" />
         <Stat label="Customers" value={usage.customers.toLocaleString("en-IN")} note="distinct phone numbers" />
       </div>
 
@@ -201,8 +203,16 @@ export function CouponUsagePanel({
               </Link>
             ))}
           </div>
+          {/* The orders search matches promo codes, so this is a real search
+              rather than advice to go and try one. */}
           <p className="mt-1.5 text-[11px] text-muted">
-            Search orders for <span className="font-mono">{code}</span> to see them all.
+            <Link
+              href={`/admin/orders?q=${encodeURIComponent(code)}`}
+              className="font-semibold text-primary-700 underline underline-offset-2"
+            >
+              Search orders for <span className="font-mono">{code}</span>
+            </Link>{" "}
+            to see them all.
           </p>
         </div>
       )}

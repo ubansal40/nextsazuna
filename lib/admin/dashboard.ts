@@ -2,7 +2,10 @@ import "server-only";
 
 import type { RowDataPacket } from "mysql2";
 import { query, queryOne } from "../db";
-import { NON_SPEND_STATUSES } from "./customers";
+// Nepal-day ⇄ instant, the rule the coupon dates already use and check-coupons
+// already pins — this screen's days are the shop's days, not UTC's.
+import { startInstant, toDayInput } from "./coupon-rules";
+import { SALE_PARAMS, SALE_SQL } from "./customers";
 import { normaliseColour, type StatusColour } from "./order-status-colours";
 
 /**
@@ -18,10 +21,11 @@ import { normaliseColour, type StatusColour } from "./order-status-colours";
  * configurable (migration 0013), so an allowlist of "statuses that count as a
  * sale" would value every newly-added status at zero the moment someone adds
  * one — the trap `lib/admin/customers.ts` already avoids for lifetime spend.
- * This imports that same `NON_SPEND_STATUSES` rather than restating it, so the
- * two figures can never disagree about what a sale is. (The previous version of
- * this file excluded only `cancelled`, which counted every unpaid and failed
- * order as money earned. On the live data that is 6 of 28 orders.)
+ * This imports that same test (`SALE_SQL`: the status denylist, plus refunded
+ * payments) rather than restating it, so the two figures can never disagree
+ * about what a sale is. (The previous version of this file excluded only
+ * `cancelled`, which counted every unpaid and failed order as money earned. On
+ * the live data that is 6 of 28 orders.)
  *
  * **Money never becomes a number.** Every total, average and percentage change
  * is computed by MySQL and arrives as a `DECIMAL` string (ADR 0003), so no
@@ -36,52 +40,66 @@ export type DashboardPeriod = (typeof DASHBOARD_PERIODS)[number];
 /**
  * The window definitions, keyed by the spec's own period tokens.
  *
- * `start`, `prevStart` and `bucket` are interpolated into SQL, so they must
- * never be reachable from a request: `parsePeriod` narrows an arbitrary string
- * to one of the three keys below before anything here is read, and these are
- * compile-time constants. No user value is ever interpolated — the status
- * denylist and everything else is bound.
+ * `bucket` is interpolated into SQL, so it must never be reachable from a
+ * request: `parsePeriod` narrows an arbitrary string to one of the three keys
+ * below before anything here is read, and these are compile-time constants. No
+ * user value is ever interpolated — the window instants, today's date, the sale
+ * test's statuses and everything else are bound.
  *
  * Windows are aligned to calendar days rather than to `NOW()` so that the KPI
  * window and the chart's buckets describe exactly the same span; a rolling
  * `NOW() - INTERVAL 30 DAY` would slice today's first bucket in half.
+ *
+ * **The days are Nepal's.** `created_at` is a UTC instant, so `CURDATE()` and
+ * `DATE(o.created_at)` filed every order placed between midnight and 05:45 in
+ * Kathmandu under the day before — the night's orders landed in yesterday's
+ * bar and a new month began at 05:45 on the 1st. Window starts are now the
+ * instants Nepal's days begin, worked out here and bound, and orders are
+ * bucketed by their Nepal date (`NEPAL_DAY`). That converts by offset rather
+ * than by zone name: a MySQL without its zone tables loaded answers
+ * `CONVERT_TZ(…, 'Asia/Kathmandu')` with NULL, and Nepal keeps no daylight
+ * saving for a fixed offset to miss.
  */
 interface PeriodSpec {
   readonly label: string;
-  /** First instant of the window. */
-  readonly start: string;
-  /** First instant of the preceding, equally long window. */
-  readonly prevStart: string;
+  /** The window's first Nepal day, given Nepal's today — both `YYYY-MM-DD`. */
+  readonly firstDay: (today: string) => string;
+  /** The first day of the preceding window of the same span. */
+  readonly prevFirstDay: (today: string) => string;
   readonly buckets: number;
-  /** Yields 0 for the oldest bucket up to `buckets - 1` for the newest. */
+  /** Yields 0 for the oldest bucket up to `buckets - 1` for the newest. Its one
+   *  placeholder is Nepal's today. */
   readonly bucket: string;
   /** How a bucket index maps back to a date, for labelling. */
   readonly grain: "day" | "fiveDays" | "month";
 }
 
+/** An order's calendar day in Nepal (UTC+05:45). */
+const NEPAL_DAY = "DATE(CONVERT_TZ(o.created_at, '+00:00', '+05:45'))";
+
 const PERIODS: Record<DashboardPeriod, PeriodSpec> = {
   "7D": {
     label: "Last 7 days",
-    start: "CURDATE() - INTERVAL 6 DAY",
-    prevStart: "CURDATE() - INTERVAL 13 DAY",
+    firstDay: (today) => shiftDay(today, -6),
+    prevFirstDay: (today) => shiftDay(today, -13),
     buckets: 7,
-    bucket: "6 - DATEDIFF(CURDATE(), DATE(o.created_at))",
+    bucket: `6 - DATEDIFF(?, ${NEPAL_DAY})`,
     grain: "day",
   },
   "30D": {
     label: "Last 30 days",
-    start: "CURDATE() - INTERVAL 29 DAY",
-    prevStart: "CURDATE() - INTERVAL 59 DAY",
+    firstDay: (today) => shiftDay(today, -29),
+    prevFirstDay: (today) => shiftDay(today, -59),
     buckets: 6,
-    bucket: "5 - FLOOR(DATEDIFF(CURDATE(), DATE(o.created_at)) / 5)",
+    bucket: `5 - FLOOR(DATEDIFF(?, ${NEPAL_DAY}) / 5)`,
     grain: "fiveDays",
   },
   "12M": {
     label: "Last 12 months",
-    start: "DATE_FORMAT(CURDATE() - INTERVAL 11 MONTH, '%Y-%m-01')",
-    prevStart: "DATE_FORMAT(CURDATE() - INTERVAL 23 MONTH, '%Y-%m-01')",
+    firstDay: (today) => monthStart(today, -11),
+    prevFirstDay: (today) => monthStart(today, -23),
     buckets: 12,
-    bucket: "11 - PERIOD_DIFF(DATE_FORMAT(CURDATE(), '%Y%m'), DATE_FORMAT(o.created_at, '%Y%m'))",
+    bucket: `11 - PERIOD_DIFF(DATE_FORMAT(?, '%Y%m'), DATE_FORMAT(${NEPAL_DAY}, '%Y%m'))`,
     grain: "month",
   },
 };
@@ -101,9 +119,9 @@ export function parsePeriod(raw: string | string[] | undefined): DashboardPeriod
     : DEFAULT_PERIOD;
 }
 
-/** Orders that represent money actually earned. Bound, never interpolated. */
-const SALE = `o.status NOT IN (${NON_SPEND_STATUSES.map(() => "?").join(",")})`;
-const SALE_PARAMS: string[] = [...NON_SPEND_STATUSES];
+/** Orders that represent money actually earned — lifetime spend's own test.
+ *  Its values are bound (`SALE_PARAMS`), never interpolated. */
+const SALE = SALE_SQL;
 
 export interface DashboardKpis {
   /** Money as a string, and null when the viewer may not see money. */
@@ -161,7 +179,6 @@ export interface DashboardData {
 }
 
 interface KpiRow extends RowDataPacket {
-  today: string;
   cur_revenue: string;
   cur_orders: string;
   cur_sale_orders: string;
@@ -210,9 +227,21 @@ export async function getDashboard(
 ): Promise<DashboardData> {
   const spec = PERIODS[period];
 
+  // Nepal's today, and each window as the instant its first day begins there.
+  const now = new Date();
+  const today = toDayInput(now);
+  const start = startInstant(spec.firstDay(today))!;
+  const prevStart = startInstant(spec.prevFirstDay(today))!;
+  // The previous window stops as far into itself as this one has got. Measured
+  // against the whole of the one before, a window still in progress read as a
+  // slump every morning: 7D at 09:00 is six days and nine hours, and it was
+  // being compared with seven full days.
+  const prevEnd = new Date(prevStart.getTime() + (now.getTime() - start.getTime()));
+
   // Both windows in one pass, with the deltas and the average computed in SQL so
   // no rupee value is ever a JavaScript number. Aliases cannot be reused inside
-  // the same SELECT, hence the derived table.
+  // the same SELECT, hence the derived table. Orders between `prevEnd` and
+  // `start` are read but fall in neither window.
   const kpiRow = await queryOne<KpiRow>(
     `SELECT t.*,
             CASE WHEN t.prev_revenue > 0
@@ -222,23 +251,20 @@ export async function getDashboard(
             CASE WHEN t.cur_sale_orders > 0
                  THEN ROUND(t.cur_revenue / t.cur_sale_orders, 2) END                       AS aov
        FROM (
-         SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS today,
-                COALESCE(SUM(CASE WHEN o.created_at >= ${spec.start} AND ${SALE}
+         SELECT COALESCE(SUM(CASE WHEN o.created_at >= ? AND ${SALE}
                                   THEN o.total_amount ELSE 0 END), 0)              AS cur_revenue,
-                SUM(CASE WHEN o.created_at >= ${spec.start} THEN 1 ELSE 0 END)      AS cur_orders,
-                SUM(CASE WHEN o.created_at >= ${spec.start} AND ${SALE}
+                SUM(CASE WHEN o.created_at >= ? THEN 1 ELSE 0 END)                  AS cur_orders,
+                SUM(CASE WHEN o.created_at >= ? AND ${SALE}
                          THEN 1 ELSE 0 END)                                        AS cur_sale_orders,
-                COALESCE(SUM(CASE WHEN o.created_at < ${spec.start} AND ${SALE}
+                COALESCE(SUM(CASE WHEN o.created_at < ? AND ${SALE}
                                   THEN o.total_amount ELSE 0 END), 0)              AS prev_revenue,
-                SUM(CASE WHEN o.created_at < ${spec.start} THEN 1 ELSE 0 END)       AS prev_orders
+                SUM(CASE WHEN o.created_at < ? THEN 1 ELSE 0 END)                   AS prev_orders
            FROM orders o
           WHERE o.deleted_at IS NULL
-            AND o.created_at >= ${spec.prevStart}
+            AND o.created_at >= ?
        ) t`,
-    [...SALE_PARAMS, ...SALE_PARAMS, ...SALE_PARAMS],
+    [start, ...SALE_PARAMS, start, start, ...SALE_PARAMS, prevEnd, ...SALE_PARAMS, prevEnd, prevStart],
   );
-
-  const today = kpiRow?.today ?? null;
 
   const kpis: DashboardKpis = {
     revenue: money ? (kpiRow?.cur_revenue ?? "0") : null,
@@ -261,11 +287,11 @@ export async function getDashboard(
               COUNT(*)                         AS orders
          FROM orders o
         WHERE o.deleted_at IS NULL
-          AND o.created_at >= ${spec.start}
+          AND o.created_at >= ?
           AND ${SALE}
         GROUP BY bucket
         ORDER BY bucket`,
-      SALE_PARAMS,
+      [today, start, ...SALE_PARAMS],
     ),
     // Grouped by name as well as id: a custom line has no product_id, and every
     // one of them would otherwise collapse into a single phantom "product".
@@ -276,20 +302,21 @@ export async function getDashboard(
          FROM order_items i
          JOIN orders o ON o.id = i.order_id
         WHERE o.deleted_at IS NULL
-          AND o.created_at >= ${spec.start}
+          AND o.created_at >= ?
           AND ${SALE}
         GROUP BY i.product_id, i.product_name
         ORDER BY revenue DESC
         LIMIT 4`,
-      SALE_PARAMS,
+      [start, ...SALE_PARAMS],
     ),
     // Newest first, every status — this panel is the operator's inbox, so an
-    // order that failed payment is exactly the one they need to see.
+    // order that failed payment is exactly the one they need to see. Dated by
+    // its Nepal day, the same day the chart files it under.
     query<RecentRow>(
       `SELECT o.id, o.order_number, o.customer_name, o.total_amount,
               COALESCE(s.label, o.status)             AS status_label,
               s.colour                                AS colour,
-              DATE_FORMAT(o.created_at, '%d %b')      AS date_label
+              DATE_FORMAT(${NEPAL_DAY}, '%d %b')      AS date_label
          FROM orders o
          LEFT JOIN order_statuses s ON s.\`key\` = o.status
         WHERE o.deleted_at IS NULL
@@ -333,17 +360,17 @@ export async function getDashboard(
 }
 
 /**
- * Name a bucket, from the database's idea of today rather than the app server's.
- * The two can sit in different time zones, and a chart whose axis disagrees with
- * its own data by a day is worse than no axis.
+ * Name a bucket from the same Nepal `today` the bucket query was given, so the
+ * axis and the data it labels agree on the day: a chart whose axis disagrees
+ * with its own data by a day is worse than no axis.
  *
  * The short forms are the spec's own vocabulary — weekday names at 7D, `Wk1…Wk6`
  * at 30D, month initials at 12M. Because a 30D bucket is five days rather than a
  * calendar week, the long `range` carries the real span, and that is what the
  * figures table and the chart's description use.
  */
-function bucketNames(spec: PeriodSpec, index: number, today: string | null): { label: string; range: string } {
-  const base = today ? parseYmd(today) : new Date();
+function bucketNames(spec: PeriodSpec, index: number, today: string): { label: string; range: string } {
+  const base = parseYmd(today);
 
   if (spec.grain === "day") {
     const day = addDays(base, index - (spec.buckets - 1));
@@ -375,4 +402,16 @@ function parseYmd(value: string): Date {
 
 function addDays(from: Date, days: number): Date {
   return new Date(from.getFullYear(), from.getMonth(), from.getDate() + days);
+}
+
+/** A `YYYY-MM-DD` day moved by whole days — calendar arithmetic, no zone in it. */
+function shiftDay(day: string, days: number): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+/** The first day of the month `months` away from a `YYYY-MM-DD` day's month. */
+function monthStart(day: string, months: number): string {
+  const [y, m] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1 + months, 1)).toISOString().slice(0, 10);
 }

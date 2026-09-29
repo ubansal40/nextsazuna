@@ -112,6 +112,9 @@ export interface CustomerOrderRow extends RowDataPacket {
  * Column allowlist again — the list view has no business carrying the address
  * or the note. Capped rather than paginated, as the reference does: nobody has
  * two hundred orders, and a pager on a page nobody scrolls is furniture.
+ *
+ * Soft-deleted orders are left out: the shop deleted them (a duplicate, a test),
+ * and they must not go on appearing in the customer's own history.
  */
 export async function listCustomerOrders(
   customerId: number,
@@ -124,7 +127,7 @@ export async function listCustomerOrders(
             total_amount, currency, created_at,
             (SELECT COALESCE(SUM(quantity), 0) FROM order_items WHERE order_id = orders.id) AS item_count
        FROM orders
-      WHERE customer_id = ? AND status NOT IN (${placeholders})
+      WHERE customer_id = ? AND deleted_at IS NULL AND status NOT IN (${placeholders})
       ORDER BY id DESC
       LIMIT 200`,
     [customerId, ...hiddenStatuses],

@@ -1,10 +1,20 @@
 import "server-only";
 
 import type { PoolConnection, RowDataPacket, ResultSetHeader } from "mysql2/promise";
+import { NON_REDEMPTION_STATUSES, PAYMENT_WINDOW_MINUTES } from "../coupons";
 import { query, queryOne, transaction } from "../db";
+import { formatPrice } from "../format";
+import { normalisePhone } from "../order-lookup";
 import { recordAdminAction } from "./audit";
 import { normaliseColour, type StatusColour } from "./order-status-colours";
-import { toMinor, toDecimal, computeTotals, couponDiscountMinor } from "./order-money";
+import {
+  toMinor,
+  toDecimal,
+  computeTotals,
+  couponDiscountMinor,
+  parseAdminMoney,
+  clampDiscounts,
+} from "./order-money";
 import type { AdminContext } from "./rbac";
 
 // Re-exported so callers have one import for an order's money helpers.
@@ -21,6 +31,14 @@ export { toMinor, toDecimal, computeTotals, type OrderTotals } from "./order-mon
  * Every mutation recomputes the totals from the lines rather than trusting the
  * stored `total_amount`, so an order cannot drift into a state where its parts
  * do not add up to its total.
+ *
+ * **One discount column, two sources.** `discount_amount` is the order's whole
+ * discount, and `coupon_code` says where it came from: while a code is set the
+ * discount IS that code's discount on the current subtotal, and is re-priced
+ * whenever the lines change; with no code it is an amount an admin typed. A
+ * manual discount therefore replaces a promo (and takes its code off), and
+ * applying a promo replaces a manual discount — there is no column to hold both,
+ * and a code shown beside a figure it did not produce is a label that lies.
  */
 
 /* --- reads ----------------------------------------------------------------- */
@@ -217,6 +235,68 @@ export async function getOrderDetail(id: number): Promise<OrderDetail | null> {
 
 /* --- writes ---------------------------------------------------------------- */
 
+/** Said by every edit that finds the order soft-deleted under it. */
+export const DELETED_ORDER_MESSAGE = "This order has been deleted, so it can’t be edited.";
+
+interface LockedOrderRow extends RowDataPacket {
+  status: string;
+  phone: string;
+  coupon_code: string | null;
+  discount_amount: string;
+  loyalty_discount_npr: string;
+  deleted_at: Date | null;
+}
+
+/**
+ * Lock the order row for the rest of the transaction, refusing a deleted one.
+ *
+ * Every money edit reads the lines, recomputes and writes the totals. Without a
+ * lock, two tabs saving at once each compute from their own snapshot and the
+ * last to commit stores totals that disagree with the lines the other wrote.
+ * `FOR UPDATE` makes the second wait, and because it is each transaction's
+ * first read, the reads after it see what the first one committed.
+ *
+ * A soft-deleted order is refused rather than edited: it has left every list,
+ * and an edit nobody can find again is worse than an error that says why.
+ */
+async function lockOrder(connection: PoolConnection, orderId: number): Promise<LockedOrderRow> {
+  const [[row]] = await connection.execute<LockedOrderRow[]>(
+    `SELECT status, phone, coupon_code, discount_amount, loyalty_discount_npr, deleted_at
+       FROM orders WHERE id = ? LIMIT 1 FOR UPDATE`,
+    [orderId],
+  );
+  if (!row) throw new Error("That order no longer exists.");
+  if (row.deleted_at) throw new Error(DELETED_ORDER_MESSAGE);
+  return row;
+}
+
+/** Paisa as the admin reads it, for the sentences an edit hands back. */
+const money = (minor: number) => formatPrice(toDecimal(minor)) ?? toDecimal(minor);
+
+interface CouponRow extends RowDataPacket {
+  code: string;
+  discount_type: "percent" | "fixed";
+  discount_value: string;
+  min_subtotal: string;
+  max_discount: string | null;
+  is_active: number;
+  starts_at: Date | null;
+  expires_at: Date | null;
+  max_uses: number | null;
+  used_count: number;
+  per_customer_limit: number | null;
+}
+
+async function readCoupon(connection: PoolConnection, code: string): Promise<CouponRow | null> {
+  const [[coupon]] = await connection.execute<CouponRow[]>(
+    `SELECT code, discount_type, discount_value, min_subtotal, max_discount, is_active, starts_at, expires_at,
+            max_uses, used_count, per_customer_limit
+       FROM coupons WHERE code = ? LIMIT 1`,
+    [code],
+  );
+  return coupon ?? null;
+}
+
 /** Read the money columns an order needs for a recompute. */
 async function loadTotals(connection: PoolConnection, orderId: number) {
   const [[row]] = await connection.execute<
@@ -226,10 +306,9 @@ async function loadTotals(connection: PoolConnection, orderId: number) {
       tax_amount: string;
       shipping_amount: string;
       total_amount: string;
-      status: string;
     })[]
   >(
-    "SELECT discount_amount, loyalty_discount_npr, tax_amount, shipping_amount, total_amount, status FROM orders WHERE id = ? LIMIT 1",
+    "SELECT discount_amount, loyalty_discount_npr, tax_amount, shipping_amount, total_amount FROM orders WHERE id = ? LIMIT 1",
     [orderId],
   );
   if (!row) throw new Error("That order no longer exists.");
@@ -248,6 +327,10 @@ async function subtotalMinor(connection: PoolConnection, orderId: number): Promi
 /**
  * Recompute and persist subtotal + total from the current lines and discounts,
  * returning the new totals so the caller can log what changed.
+ *
+ * The discounts are held inside the subtotal first (`clampDiscounts`), so a
+ * discount left larger than the goods by an item edit cannot go on to eat the
+ * delivery charge.
  */
 async function rewriteTotals(
   connection: PoolConnection,
@@ -255,10 +338,14 @@ async function rewriteTotals(
   overrides: Partial<{ discountMinor: number; loyaltyMinor: number; taxMinor: number; shippingMinor: number }> = {},
 ): Promise<import("./order-money").OrderTotals> {
   const current = await loadTotals(connection, orderId);
+  const subtotal = await subtotalMinor(connection, orderId);
   const totals = computeTotals({
-    subtotalMinor: await subtotalMinor(connection, orderId),
-    discountMinor: overrides.discountMinor ?? toMinor(current.discount_amount),
-    loyaltyMinor: overrides.loyaltyMinor ?? toMinor(current.loyalty_discount_npr),
+    subtotalMinor: subtotal,
+    ...clampDiscounts(
+      subtotal,
+      overrides.discountMinor ?? toMinor(current.discount_amount),
+      overrides.loyaltyMinor ?? toMinor(current.loyalty_discount_npr),
+    ),
     taxMinor: overrides.taxMinor ?? toMinor(current.tax_amount),
     shippingMinor: overrides.shippingMinor ?? toMinor(current.shipping_amount),
   });
@@ -315,28 +402,39 @@ export interface OrderLineInput {
  *
  * A per-order price is legitimate — a discount agreed at the counter, a
  * remade piece — so the line price is free text rather than pinned to the
- * catalogue. Quantity is clamped at 1: a zero-quantity line is a removal, and
- * the UI removes it rather than storing it.
+ * catalogue. It is still read strictly (`parseAdminMoney`): "1,500" is रु 1,500,
+ * and "1,5o0" is refused rather than stored as nothing. Quantity is clamped at
+ * 1: a zero-quantity line is a removal, and the UI removes it rather than
+ * storing it.
+ *
+ * Returns a sentence when the edit moved a discount the admin did not touch —
+ * a promo that no longer qualifies, a manual discount cut to the new subtotal —
+ * so the screen can say so rather than let the total change without comment.
  */
 export async function updateOrderItems(
   admin: AdminContext,
   orderId: number,
   lines: OrderLineInput[],
-): Promise<void> {
+): Promise<string | null> {
   const clean = lines
     .map((line) => ({
       ...line,
-      name: line.name.trim().slice(0, 180),
-      sku: line.sku.trim().slice(0, 80),
-      quantity: Math.max(1, Math.floor(Number(line.quantity) || 1)),
-      unitMinor: toMinor(line.unitPrice),
+      name: String(line.name ?? "").trim().slice(0, 180),
+      sku: String(line.sku ?? "").trim().slice(0, 80),
     }))
-    .filter((line) => line.name.length > 0);
+    .filter((line) => line.name.length > 0)
+    // Parsed after the filter, so a blank row nobody filled in cannot fail the
+    // save over its empty price.
+    .map((line) => ({
+      ...line,
+      quantity: Math.max(1, Math.floor(Number(line.quantity) || 1)),
+      unitMinor: parseAdminMoney(line.unitPrice, `The price for “${line.name}”`),
+    }));
 
   if (clean.length === 0) throw new Error("An order needs at least one item.");
-  if (clean.some((line) => line.unitMinor < 0)) throw new Error("A line price cannot be negative.");
 
-  await transaction(async (connection) => {
+  return transaction(async (connection) => {
+    const order = await lockOrder(connection, orderId);
     const before = await subtotalMinor(connection, orderId);
 
     const keep = clean.filter((l) => l.id != null).map((l) => l.id as number);
@@ -366,11 +464,49 @@ export async function updateOrderItems(
       }
     }
 
-    const totals = await rewriteTotals(connection, orderId);
+    /*
+     * Re-price the promo against the goods as they now stand, using the coupon
+     * as it is today. Only its arithmetic and its minimum are re-applied: whether
+     * the code is active, in its window or under its usage limit was settled
+     * when it went on, and an item edit a week later must not quietly take back
+     * a promotion that was fairly given. Below the minimum the code comes off
+     * entirely — the checkout would refuse it, and a code sitting on the order at
+     * रु 0 reads as a promo that was applied. A code whose coupon has since been
+     * deleted cannot be re-priced, so its stored discount stands.
+     */
+    const after = await subtotalMinor(connection, orderId);
+    const coupon = order.coupon_code ? await readCoupon(connection, order.coupon_code) : null;
+    let repriced: number | undefined;
+    let notice: string | null = null;
+    if (coupon && after < toMinor(coupon.min_subtotal)) {
+      await connection.execute("UPDATE orders SET coupon_code = NULL WHERE id = ?", [orderId]);
+      repriced = 0;
+      notice = `Promo ${coupon.code} came off: it needs a subtotal of at least ${money(toMinor(coupon.min_subtotal))}.`;
+    } else if (coupon) {
+      repriced = couponDiscountMinor(after, {
+        discountType: coupon.discount_type,
+        discountValue: coupon.discount_value,
+        maxDiscount: coupon.max_discount,
+      });
+    }
+
+    const totals = await rewriteTotals(connection, orderId, repriced === undefined ? {} : { discountMinor: repriced });
+    const discountBefore = toMinor(order.discount_amount);
+    if (repriced === undefined && totals.discountMinor < discountBefore) {
+      notice = `The discount was more than the items now come to, so it is now ${money(totals.discountMinor)}.`;
+    }
+
     await logActivity(connection, admin, orderId, {
       kind: "edit",
-      message: "Items edited",
-      diff: { subtotalBefore: toDecimal(before), subtotalAfter: toDecimal(totals.subtotalMinor), lines: clean.length },
+      message: notice ? `Items edited. ${notice}` : "Items edited",
+      diff: {
+        subtotalBefore: toDecimal(before),
+        subtotalAfter: toDecimal(totals.subtotalMinor),
+        lines: clean.length,
+        ...(totals.discountMinor !== discountBefore
+          ? { discountBefore: toDecimal(discountBefore), discountAfter: toDecimal(totals.discountMinor) }
+          : {}),
+      },
     });
     await recordAdminAction(connection, admin, {
       action: "orders.items",
@@ -378,6 +514,7 @@ export async function updateOrderItems(
       resourceId: orderId,
       metadata: { lines: clean.length, total: toDecimal(totals.totalMinor) },
     });
+    return notice;
   });
 }
 
@@ -403,6 +540,7 @@ export async function updateOrderCustomer(
   if (!phone) throw new Error("A phone number is required.");
 
   await transaction(async (connection) => {
+    await lockOrder(connection, orderId);
     await connection.execute(
       `UPDATE orders SET customer_name = ?, phone = ?, email = ?, address_line1 = ?, address_line2 = ?,
               city = ?, state = ?, postal_code = ? WHERE id = ?`,
@@ -427,33 +565,71 @@ export async function updateOrderCustomer(
   });
 }
 
-/** Payment method / status, and the manual discount, which forces a recompute. */
+/**
+ * Payment method / status, and the order's discount, which forces a recompute.
+ *
+ * The discount field is the order's WHOLE discount, not an extra on top of a
+ * promo (see the note at the top of this file). A changed figure therefore
+ * replaces the promo's and takes its code off. `discount: null` means the field
+ * was not touched, and leaves the discount — and any promo — exactly as stored:
+ * an editor opened before an item edit re-priced the promo still holds the old
+ * figure, and sending that back must not read as a decision to replace it.
+ *
+ * A discount larger than the goods is refused rather than clamped: this is where
+ * the figure was typed, so the admin should see the mistake, not a quietly
+ * smaller number. Returns a sentence when the promo came off, or null.
+ */
 export async function updateOrderPayment(
   admin: AdminContext,
   orderId: number,
-  input: { paymentMethod: string; paymentStatus: string; discount: string },
-): Promise<void> {
-  const discountMinor = toMinor(input.discount);
-  if (discountMinor < 0) throw new Error("A discount cannot be negative.");
+  input: { paymentMethod: string; paymentStatus: string; discount: string | null },
+): Promise<string | null> {
+  // Blank is "no discount" — the one amount it is natural to clear a field for.
+  const typedMinor =
+    input.discount === null
+      ? null
+      : String(input.discount).trim() === ""
+        ? 0
+        : parseAdminMoney(input.discount, "The discount");
 
-  await transaction(async (connection) => {
-    await connection.execute("UPDATE orders SET payment_method = ?, payment_status = ? WHERE id = ?", [
-      input.paymentMethod,
-      input.paymentStatus,
-      orderId,
-    ]);
+  return transaction(async (connection) => {
+    const order = await lockOrder(connection, orderId);
+    const discountMinor = typedMinor ?? toMinor(order.discount_amount);
+    const loyaltyMinor = toMinor(order.loyalty_discount_npr);
+    const room = Math.max(0, (await subtotalMinor(connection, orderId)) - loyaltyMinor);
+    if (typedMinor !== null && typedMinor > room) {
+      throw new Error(
+        `The discount can’t be more than ${money(room)} — what the items come to${loyaltyMinor > 0 ? " after loyalty" : ""}.`,
+      );
+    }
+
+    const promo = order.coupon_code || null;
+    const replacesPromo = promo !== null && typedMinor !== null && typedMinor !== toMinor(order.discount_amount);
+    await connection.execute(
+      `UPDATE orders SET payment_method = ?, payment_status = ?${replacesPromo ? ", coupon_code = NULL" : ""} WHERE id = ?`,
+      [input.paymentMethod, input.paymentStatus, orderId],
+    );
     const totals = await rewriteTotals(connection, orderId, { discountMinor });
     await logActivity(connection, admin, orderId, {
       kind: "edit",
-      message: "Payment updated",
-      diff: { discount: toDecimal(discountMinor), total: toDecimal(totals.totalMinor) },
+      message: replacesPromo ? `Payment updated. A manual discount replaced promo ${promo}` : "Payment updated",
+      diff: {
+        discount: toDecimal(discountMinor),
+        total: toDecimal(totals.totalMinor),
+        ...(replacesPromo ? { promoRemoved: promo } : {}),
+      },
     });
     await recordAdminAction(connection, admin, {
       action: "orders.payment",
       resourceType: "orders",
       resourceId: orderId,
-      metadata: { paymentStatus: input.paymentStatus, total: toDecimal(totals.totalMinor) },
+      metadata: {
+        paymentStatus: input.paymentStatus,
+        total: toDecimal(totals.totalMinor),
+        ...(replacesPromo ? { promoRemoved: promo } : {}),
+      },
     });
+    return replacesPromo ? `Promo ${promo} came off — the discount is now the amount you entered.` : null;
   });
 }
 
@@ -468,32 +644,19 @@ export async function updateOrderPayment(
  * a customer redemption, and inflating it would exhaust a limited-use code. It
  * is still *read*, so a code a customer could no longer use cannot be handed out
  * here either — that asymmetry was the gap, and it meant a sold-out promotion
- * stayed available to anyone who phoned the shop.
+ * stayed available to anyone who phoned the shop. The per-customer limit is
+ * read for the same reason, counted exactly as the checkout counts it.
+ *
+ * The code's discount replaces the order's discount, including a manual one;
+ * returns a sentence saying so when it did, or null.
  */
-export async function applyOrderPromo(admin: AdminContext, orderId: number, code: string): Promise<void> {
+export async function applyOrderPromo(admin: AdminContext, orderId: number, code: string): Promise<string | null> {
   const wanted = code.trim().toUpperCase().slice(0, 50);
   if (!wanted) throw new Error("Enter a promo code.");
 
-  await transaction(async (connection) => {
-    const [[coupon]] = await connection.execute<
-      (RowDataPacket & {
-        code: string;
-        discount_type: "percent" | "fixed";
-        discount_value: string;
-        min_subtotal: string;
-        max_discount: string | null;
-        is_active: number;
-        starts_at: Date | null;
-        expires_at: Date | null;
-        max_uses: number | null;
-        used_count: number;
-      })[]
-    >(
-      `SELECT code, discount_type, discount_value, min_subtotal, max_discount, is_active, starts_at, expires_at,
-              max_uses, used_count
-         FROM coupons WHERE code = ? LIMIT 1`,
-      [wanted],
-    );
+  return transaction(async (connection) => {
+    const order = await lockOrder(connection, orderId);
+    const coupon = await readCoupon(connection, wanted);
     if (!coupon) throw new Error("No such promo code.");
     if (coupon.is_active !== 1) throw new Error("That promo code is not active.");
 
@@ -502,6 +665,39 @@ export async function applyOrderPromo(admin: AdminContext, orderId: number, code
     if (coupon.expires_at && new Date(coupon.expires_at).getTime() < now) throw new Error("That promo code has expired.");
     if (coupon.max_uses !== null && coupon.used_count >= coupon.max_uses) {
       throw new Error("That promo code has been fully redeemed.");
+    }
+
+    /*
+     * The per-customer cap, counted the way `validateCoupon` counts it at
+     * checkout: this customer's live orders carrying the code, less failed and
+     * cancelled ones and gateway attempts abandoned past the payment window,
+     * matched on the last ten digits of the phone so +977, a trunk 0 and spaces
+     * all name the same person. This order is left out —
+     * re-applying a code must not count against itself. A phone that does not
+     * reduce to ten digits identifies nobody, so the cap cannot be checked, the
+     * same as the checkout before it knows who is buying.
+     */
+    const phone = normalisePhone(order.phone);
+    if (coupon.per_customer_limit !== null && coupon.per_customer_limit > 0 && phone.length === 10) {
+      const [[prior]] = await connection.execute<(RowDataPacket & { used: number })[]>(
+        `SELECT COUNT(*) AS used
+           FROM orders
+          WHERE coupon_code = ?
+            AND id <> ?
+            AND deleted_at IS NULL
+            AND status NOT IN (${NON_REDEMPTION_STATUSES.map(() => "?").join(", ")})
+            AND NOT (status = 'pending_payment'
+                     AND created_at < NOW() - INTERVAL ${PAYMENT_WINDOW_MINUTES} MINUTE)
+            AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', ''), 10) = ?`,
+        [coupon.code, orderId, ...NON_REDEMPTION_STATUSES, phone],
+      );
+      const used = Number(prior?.used ?? 0);
+      if (used >= coupon.per_customer_limit) {
+        throw new Error(
+          `This customer has already used ${coupon.code} ${used === 1 ? "once" : `${used} times`} — ` +
+            `it allows ${coupon.per_customer_limit === 1 ? "one use" : `${coupon.per_customer_limit} uses`} per customer.`,
+        );
+      }
     }
 
     const subtotal = await subtotalMinor(connection, orderId);
@@ -515,44 +711,56 @@ export async function applyOrderPromo(admin: AdminContext, orderId: number, code
       maxDiscount: coupon.max_discount,
     });
 
+    // A discount already on the order with no code behind it was typed by hand.
+    const manualMinor = order.coupon_code ? 0 : toMinor(order.discount_amount);
+
     await connection.execute("UPDATE orders SET coupon_code = ? WHERE id = ?", [coupon.code, orderId]);
     const totals = await rewriteTotals(connection, orderId, { discountMinor });
     await logActivity(connection, admin, orderId, {
       kind: "edit",
-      message: `Promo ${coupon.code} applied`,
-      diff: { discount: toDecimal(discountMinor), total: toDecimal(totals.totalMinor) },
+      message: manualMinor > 0
+        ? `Promo ${coupon.code} applied, replacing a manual discount of ${money(manualMinor)}`
+        : `Promo ${coupon.code} applied`,
+      diff: {
+        discount: toDecimal(totals.discountMinor),
+        total: toDecimal(totals.totalMinor),
+        ...(manualMinor > 0 ? { replacedManualDiscount: toDecimal(manualMinor) } : {}),
+      },
     });
     await recordAdminAction(connection, admin, {
       action: "orders.promo_apply",
       resourceType: "orders",
       resourceId: orderId,
-      metadata: { code: coupon.code, discount: toDecimal(discountMinor) },
+      metadata: { code: coupon.code, discount: toDecimal(totals.discountMinor) },
     });
+    return manualMinor > 0 ? `It replaces the manual discount of ${money(manualMinor)}.` : null;
   });
 }
 
 export async function removeOrderPromo(admin: AdminContext, orderId: number): Promise<void> {
   await transaction(async (connection) => {
-    const [[row]] = await connection.execute<(RowDataPacket & { coupon_code: string | null })[]>(
-      "SELECT coupon_code FROM orders WHERE id = ? LIMIT 1",
-      [orderId],
-    );
+    const order = await lockOrder(connection, orderId);
     await connection.execute("UPDATE orders SET coupon_code = NULL WHERE id = ?", [orderId]);
     const totals = await rewriteTotals(connection, orderId, { discountMinor: 0 });
     await logActivity(connection, admin, orderId, {
       kind: "edit",
-      message: `Promo ${row?.coupon_code ?? ""} removed`.trim(),
+      message: `Promo ${order.coupon_code ?? ""} removed`.trim(),
       diff: { total: toDecimal(totals.totalMinor) },
     });
     await recordAdminAction(connection, admin, {
       action: "orders.promo_remove",
       resourceType: "orders",
       resourceId: orderId,
-      metadata: { code: row?.coupon_code ?? null },
+      metadata: { code: order.coupon_code ?? null },
     });
   });
 }
 
+/**
+ * An internal note. Deliberately allowed on a deleted order, unlike every edit
+ * above: a note changes nothing about the order, and why it was deleted is
+ * exactly the kind of thing someone will want to write down.
+ */
 export async function addOrderNote(admin: AdminContext, orderId: number, message: string): Promise<void> {
   const text = message.trim().slice(0, 500);
   if (!text) throw new Error("Write something first.");
@@ -569,31 +777,6 @@ export async function addOrderNote(admin: AdminContext, orderId: number, message
   });
 }
 
-/** Cancel with a reason. The reason is stored on the order, not just narrated
- *  in the feed, so a report can group by it later. */
-export async function cancelOrder(
-  admin: AdminContext,
-  orderId: number,
-  reason: string,
-  note: string,
-): Promise<void> {
-  const why = reason.trim().slice(0, 120);
-  if (!why) throw new Error("Pick a reason before cancelling.");
-
-  await transaction(async (connection) => {
-    const current = await loadTotals(connection, orderId);
-    await connection.execute("UPDATE orders SET status = 'cancelled', cancel_reason = ? WHERE id = ?", [why, orderId]);
-    await logActivity(connection, admin, orderId, {
-      kind: "cancel",
-      from: current.status,
-      to: "cancelled",
-      message: note.trim() ? `${why} — ${note.trim().slice(0, 400)}` : why,
-    });
-    await recordAdminAction(connection, admin, {
-      action: "orders.cancel",
-      resourceType: "orders",
-      resourceId: orderId,
-      metadata: { reason: why, from: current.status },
-    });
-  });
-}
+// Cancelling lives with the other status moves, as `cancelOrders` in
+// ./orders.ts, so the detail page, a list row and the bulk bar all take the
+// same path — reason required, a `cancel` event in the feed.

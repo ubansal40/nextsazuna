@@ -7,8 +7,12 @@ import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { ProductThumb } from "@/components/admin/product-thumb";
 import { cn } from "@/lib/cn";
 import { formatPrice } from "@/lib/format";
+// Pure — no `server-only`, no I/O — so the browser shares the storefront's own
+// idea of what a phone number is.
+import { normalisePhone } from "@/lib/order-lookup";
 import type { OrderDetail, OrderItemRow, OrderLineInput } from "@/lib/admin/order-detail";
 import type { OrderStatusRow } from "@/lib/admin/order-statuses";
+import { CANCEL_REASONS, CancelFields } from "../../_components/cancel-fields";
 import { STATUS_CHIP } from "../../_components/status-badge";
 import {
   saveItemsAction,
@@ -32,16 +36,37 @@ import {
  * Every save returns the re-read order rather than patching local state,
  * because these edits recompute the totals server-side — the screen must show
  * what was stored, not what the client hoped for.
+ *
+ * An editor is seeded from the order when it OPENS, never while it is open: a
+ * note added beside an address being retyped used to reset the address, because
+ * every successful action re-seeded every editor.
  */
 
-const CANCEL_REASONS = [
-  "Customer changed their mind",
-  "Out of stock",
-  "Payment not received",
-  "Duplicate order",
-  "Delivery not possible",
-  "Other",
-];
+/** A line as the editor holds it. Quantity stays the typed string until save —
+ *  coercing on every keystroke made the field impossible to clear, so replacing
+ *  a 2 by typing 1 produced 12. */
+type LineDraft = Omit<OrderLineInput, "quantity"> & { quantity: string };
+
+/**
+ * The chat link for an order's phone, or null when it cannot be dialled.
+ *
+ * Numbers are stored bare (9812345678), and wa.me wants the country code: the
+ * bare digits sent WhatsApp to +98, Iran. A number that already carries a
+ * different country code (more than ten digits, not 977 or a trunk 0) is kept
+ * as it was typed; anything shorter than a mobile is no WhatsApp number at all.
+ */
+function whatsappLink(phone: string): string | null {
+  const digits = phone.replace(/\D/g, "");
+  const local = normalisePhone(phone);
+  const nepali = digits.length === 10 || digits.startsWith("977") || (digits.length === 11 && digits.startsWith("0"));
+  if (local.length === 10 && nepali) return `https://wa.me/977${local}`;
+  const international = digits.replace(/^0+/, "");
+  return international.length > 10 ? `https://wa.me/${international}` : null;
+}
+
+/** The shop's clock, so the server's render and the browser's agree. */
+const when = (iso: string) =>
+  new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kathmandu" });
 
 export function OrderDetailScreen({
   initial,
@@ -55,11 +80,13 @@ export function OrderDetailScreen({
   const [busy, startTransition] = useTransition();
 
   const [editingItems, setEditingItems] = useState(false);
-  const [lines, setLines] = useState<OrderLineInput[]>([]);
+  const [lines, setLines] = useState<LineDraft[]>([]);
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [customer, setCustomer] = useState(toCustomerInput(initial));
   const [editingPayment, setEditingPayment] = useState(false);
   const [payment, setPayment] = useState(toPaymentInput(initial));
+  // The discount the payment editor opened with — what "untouched" means.
+  const [discountSeed, setDiscountSeed] = useState(initial.discountAmount);
   const [promoInput, setPromoInput] = useState("");
   const [note, setNote] = useState("");
   const [cancelling, setCancelling] = useState(false);
@@ -69,18 +96,27 @@ export function OrderDetailScreen({
   function handle(result: DetailResult, ok?: string) {
     if (result.ok) {
       setOrder(result.order);
-      setCustomer(toCustomerInput(result.order));
-      setPayment(toPaymentInput(result.order));
       if (ok) toast("success", ok);
+      if (result.notice) toast("info", result.notice);
     } else {
       toast("error", result.error);
     }
   }
 
-  const run = (action: () => Promise<DetailResult>, ok?: string) =>
-    startTransition(async () => handle(await action(), ok));
+  /** `reopen` puts a section's editor back, with what was typed still in it,
+   *  when its save is refused — the editor closes the moment Save is pressed. */
+  const run = (action: () => Promise<DetailResult>, ok?: string, reopen?: () => void) =>
+    startTransition(async () => {
+      const result = await action();
+      handle(result, ok);
+      if (!result.ok) reopen?.();
+    });
 
-  const whatsapp = `https://wa.me/${order.phone.replace(/\D/g, "").replace(/^0+/, "")}`;
+  const whatsapp = whatsappLink(order.phone);
+  // A deleted order is read-only: the server refuses every edit, so the screen
+  // stops offering them. Notes stay open — they change nothing about the order.
+  const deleted = order.deletedAt !== null;
+  const cancelled = order.status === "cancelled";
 
   return (
     <div className="mx-auto max-w-[900px]">
@@ -96,19 +132,24 @@ export function OrderDetailScreen({
         <span className={cn("rounded-pill border px-2 py-0.5 font-mono text-[10px] font-semibold uppercase", STATUS_CHIP[order.statusColour])}>
           {order.statusLabel}
         </span>
-        <span className="font-mono text-[11px] text-muted">
-          {new Date(order.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}
-        </span>
+        <span className="font-mono text-[11px] text-muted">{when(order.createdAt)}</span>
 
         <span className="ml-auto flex flex-wrap items-center gap-2">
           <select
             value={order.status}
             onChange={(e) => {
+              // Cancelling needs a reason, so choosing it here opens the same
+              // dialog as the button rather than moving the order bare. The
+              // select stays on the current status until that completes.
+              if (e.target.value === "cancelled") {
+                setCancelling(true);
+                return;
+              }
               const next = statuses.find((s) => s.key === e.target.value);
               if (next) run(() => setDetailStatusAction(order.id, next.key), `Moved to ${next.label}.`);
             }}
             aria-label="Order status"
-            disabled={busy}
+            disabled={busy || deleted}
             className="min-h-11 min-w-[168px] rounded-[var(--sz-admin-radius-control)] border border-line bg-raised px-2.5 text-[12.5px] font-semibold text-body"
           >
             {statuses.map((s) => (
@@ -117,15 +158,17 @@ export function OrderDetailScreen({
               </option>
             ))}
           </select>
-          <a
-            href={whatsapp}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex min-h-11 items-center gap-1.5 rounded-[var(--sz-admin-radius-control)] border border-line bg-raised px-3.5 text-[12.5px] font-semibold text-whatsapp hover:border-whatsapp"
-          >
-            <Icon name="whatsapp" size={15} /> WhatsApp
-          </a>
-          {order.status !== "cancelled" && (
+          {whatsapp && (
+            <a
+              href={whatsapp}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-[var(--sz-admin-radius-control)] border border-line bg-raised px-3.5 text-[12.5px] font-semibold text-whatsapp hover:border-whatsapp"
+            >
+              <Icon name="whatsapp" size={15} /> WhatsApp
+            </a>
+          )}
+          {!cancelled && !deleted && (
             <button
               type="button"
               onClick={() => setCancelling(true)}
@@ -137,7 +180,17 @@ export function OrderDetailScreen({
         </span>
       </div>
 
-      {order.cancelReason && (
+      {order.deletedAt && (
+        <p role="status" className="mb-4 rounded-xl border border-error-border bg-error-soft px-3.5 py-2.5 text-[12.5px] text-body">
+          <strong className="text-heading">Deleted {when(order.deletedAt)}</strong> — hidden from the orders list, and
+          read-only. Notes can still be added.
+        </p>
+      )}
+
+      {/* Only while the order IS cancelled: the reason used to outlive a move
+          back to Placed, and the banner went on announcing a cancellation
+          beside a Placed chip. */}
+      {cancelled && order.cancelReason && (
         <p role="status" className="mb-4 rounded-xl border border-error-border bg-error-soft px-3.5 py-2.5 text-[12.5px] text-body">
           Cancelled — <strong className="text-heading">{order.cancelReason}</strong>
         </p>
@@ -147,14 +200,20 @@ export function OrderDetailScreen({
       <Section
         title="Items"
         editing={editingItems}
+        locked={deleted}
         onEdit={() => {
-          setLines(order.items.map(toLineInput));
+          setLines(order.items.map(toLineDraft));
           setEditingItems(true);
         }}
         onCancel={() => setEditingItems(false)}
         onSave={() => {
+          const parsed = parseLines(lines);
+          if (!parsed) {
+            toast("error", "Give every line a quantity of 1 or more.");
+            return;
+          }
           setEditingItems(false);
-          run(() => saveItemsAction(order.id, lines), "Items saved.");
+          run(() => saveItemsAction(order.id, parsed), "Items saved.", () => setEditingItems(true));
         }}
         saveLabel="Save items"
         busy={busy}
@@ -186,14 +245,15 @@ export function OrderDetailScreen({
       <Section
         title="Customer & delivery"
         editing={editingCustomer}
-        onEdit={() => setEditingCustomer(true)}
-        onCancel={() => {
+        locked={deleted}
+        onEdit={() => {
           setCustomer(toCustomerInput(order));
-          setEditingCustomer(false);
+          setEditingCustomer(true);
         }}
+        onCancel={() => setEditingCustomer(false)}
         onSave={() => {
           setEditingCustomer(false);
-          run(() => saveCustomerAction(order.id, customer), "Details saved.");
+          run(() => saveCustomerAction(order.id, customer), "Details saved.", () => setEditingCustomer(true));
         }}
         saveLabel="Save details"
         busy={busy}
@@ -221,20 +281,38 @@ export function OrderDetailScreen({
             />
           </div>
         )}
+        {/* The order's own note: the customer's words from checkout, the
+            gift-wrap request and the payment gateway's trail all land in this
+            one column (lib/orders.ts), and none of it was shown here — a
+            paid-for gift wrap was invisible on the screen the order is packed
+            from. A record, so read-only in both modes. */}
+        {order.note?.trim() && (
+          <div className="mt-3 border-t border-line-soft pt-3">
+            <p className={labelClass}>Order note</p>
+            <p className="whitespace-pre-line text-[13px] text-body">{order.note.trim()}</p>
+          </div>
+        )}
       </Section>
 
       {/* --- payment + totals --- */}
       <Section
         title="Payment"
         editing={editingPayment}
-        onEdit={() => setEditingPayment(true)}
-        onCancel={() => {
-          setPayment(toPaymentInput(order));
-          setEditingPayment(false);
+        locked={deleted}
+        onEdit={() => {
+          const seed = toPaymentInput(order);
+          setPayment(seed);
+          setDiscountSeed(seed.discount);
+          setEditingPayment(true);
         }}
+        onCancel={() => setEditingPayment(false)}
         onSave={() => {
           setEditingPayment(false);
-          run(() => savePaymentAction(order.id, payment), "Payment saved.");
+          // An untouched discount goes as null, so the server leaves it — and
+          // any promo — alone, even if an item edit has re-priced it since this
+          // editor opened with the old figure.
+          const input = { ...payment, discount: payment.discount === discountSeed ? null : payment.discount };
+          run(() => savePaymentAction(order.id, input), "Payment saved.", () => setEditingPayment(true));
         }}
         busy={busy}
       >
@@ -269,11 +347,18 @@ export function OrderDetailScreen({
               </select>
             </label>
             <div className="sm:col-span-2">
+              {/* One discount column holds promo and manual alike, so this is
+                  the order's whole discount — it replaces a promo's, never adds
+                  to it. The hint used to promise the opposite. */}
               <Field
                 label="Discount (रु)"
                 value={payment.discount}
                 onChange={(v) => setPayment({ ...payment, discount: v })}
-                hint="A manual discount on this order, on top of any promo code."
+                hint={
+                  order.couponCode
+                    ? `The order’s total discount. Changing it replaces the ${order.couponCode} promo and takes the code off.`
+                    : "The order’s total discount. Applying a promo code later replaces it."
+                }
                 mono
               />
             </div>
@@ -295,43 +380,56 @@ export function OrderDetailScreen({
               <span className="font-mono text-[12.5px] font-semibold text-primary-700">
                 − {money(order.discountAmount)}
               </span>
-              <button
-                type="button"
-                onClick={() => run(() => removePromoAction(order.id), "Promo removed.")}
-                disabled={busy}
-                aria-label="Remove promo code"
-                className="ml-auto inline-flex size-9 items-center justify-center rounded-[7px] text-error hover:bg-error-soft"
-              >
-                <Icon name="close" size={16} />
-              </button>
+              {!deleted && (
+                <button
+                  type="button"
+                  onClick={() => run(() => removePromoAction(order.id), "Promo removed.")}
+                  disabled={busy}
+                  aria-label="Remove promo code"
+                  className="ml-auto inline-flex size-9 items-center justify-center rounded-[7px] text-error hover:bg-error-soft"
+                >
+                  <Icon name="close" size={16} />
+                </button>
+              )}
             </div>
+          ) : deleted ? (
+            <p className="text-[12.5px] text-muted">None</p>
           ) : (
-            <div className="flex gap-2">
-              <input
-                value={promoInput}
-                onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && promoInput.trim()) {
+            <>
+              <div className="flex gap-2">
+                <input
+                  value={promoInput}
+                  onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && promoInput.trim()) {
+                      run(() => applyPromoAction(order.id, promoInput), "Promo applied.");
+                      setPromoInput("");
+                    }
+                  }}
+                  placeholder="e.g. SAZUNA10"
+                  aria-label="Promo code"
+                  className={cn(fieldClass, "font-mono uppercase")}
+                />
+                <button
+                  type="button"
+                  disabled={!promoInput.trim() || busy}
+                  onClick={() => {
                     run(() => applyPromoAction(order.id, promoInput), "Promo applied.");
                     setPromoInput("");
-                  }
-                }}
-                placeholder="e.g. SAZUNA10"
-                aria-label="Promo code"
-                className={cn(fieldClass, "font-mono uppercase")}
-              />
-              <button
-                type="button"
-                disabled={!promoInput.trim() || busy}
-                onClick={() => {
-                  run(() => applyPromoAction(order.id, promoInput), "Promo applied.");
-                  setPromoInput("");
-                }}
-                className="min-h-11 shrink-0 rounded-[var(--sz-admin-radius-control)] border border-line bg-raised px-4 text-[12.5px] font-semibold text-primary-700 hover:border-primary-700 disabled:opacity-50"
-              >
-                Apply
-              </button>
-            </div>
+                  }}
+                  className="min-h-11 shrink-0 rounded-[var(--sz-admin-radius-control)] border border-line bg-raised px-4 text-[12.5px] font-semibold text-primary-700 hover:border-primary-700 disabled:opacity-50"
+                >
+                  Apply
+                </button>
+              </div>
+              {/* The discount with no code beside it was typed by hand, and a
+                  code takes its place rather than stacking on it. */}
+              {Number(order.discountAmount) > 0 && (
+                <p className="mt-1 text-[11px] text-muted">
+                  A code replaces the current discount of {money(order.discountAmount)}.
+                </p>
+              )}
+            </>
           )}
         </div>
 
@@ -408,7 +506,7 @@ export function OrderDetailScreen({
                     )}
                   </span>
                   <span className="font-mono text-[10.5px] text-muted">
-                    {new Date(entry.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}
+                    {when(entry.at)}
                     {entry.actor ? ` · ${entry.actor}` : ""}
                   </span>
                 </span>
@@ -431,30 +529,7 @@ export function OrderDetailScreen({
           setCancelNote("");
         }}
         body={
-          <>
-            <label className="block">
-              <span className={labelClass}>
-                Cancellation reason <span className="text-error">*</span>
-              </span>
-              <select value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} className={fieldClass}>
-                {CANCEL_REASONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="mt-3 block">
-              <span className={labelClass}>Note · optional</span>
-              <textarea
-                value={cancelNote}
-                onChange={(e) => setCancelNote(e.target.value)}
-                rows={2}
-                placeholder="Anything the team should know"
-                className={cn(fieldClass, "resize-y py-2")}
-              />
-            </label>
-          </>
+          <CancelFields reason={cancelReason} note={cancelNote} onReason={setCancelReason} onNote={setCancelNote} />
         }
       />
     </div>
@@ -463,8 +538,8 @@ export function OrderDetailScreen({
 
 /* --- pieces ---------------------------------------------------------------- */
 
-function ItemsEditor({ lines, onChange }: { lines: OrderLineInput[]; onChange: (next: OrderLineInput[]) => void }) {
-  const patch = (index: number, next: Partial<OrderLineInput>) =>
+function ItemsEditor({ lines, onChange }: { lines: LineDraft[]; onChange: (next: LineDraft[]) => void }) {
+  const patch = (index: number, next: Partial<LineDraft>) =>
     onChange(lines.map((line, i) => (i === index ? { ...line, ...next } : line)));
 
   return (
@@ -492,7 +567,7 @@ function ItemsEditor({ lines, onChange }: { lines: OrderLineInput[]; onChange: (
             <span className={labelClass}>Qty</span>
             <input
               value={line.quantity}
-              onChange={(e) => patch(index, { quantity: Number(e.target.value.replace(/\D/g, "")) || 1 })}
+              onChange={(e) => patch(index, { quantity: e.target.value.replace(/\D/g, "") })}
               inputMode="numeric"
               className={cn(fieldClass, "font-mono")}
             />
@@ -509,7 +584,7 @@ function ItemsEditor({ lines, onChange }: { lines: OrderLineInput[]; onChange: (
       ))}
       <button
         type="button"
-        onClick={() => onChange([...lines, { id: null, productId: null, name: "", sku: "", unitPrice: "0", quantity: 1 }])}
+        onClick={() => onChange([...lines, { id: null, productId: null, name: "", sku: "", unitPrice: "0", quantity: "1" }])}
         className="inline-flex min-h-11 items-center gap-2 rounded-[var(--sz-admin-radius-control)] border border-line bg-raised px-3.5 text-[12.5px] font-semibold text-primary-700 hover:border-primary-700"
       >
         <Icon name="plus" size={15} strokeWidth={2} /> Add a line
@@ -524,6 +599,7 @@ function ItemsEditor({ lines, onChange }: { lines: OrderLineInput[]; onChange: (
 function Section({
   title,
   editing,
+  locked = false,
   onEdit,
   onCancel,
   onSave,
@@ -533,6 +609,8 @@ function Section({
 }: {
   title: string;
   editing: boolean;
+  /** No Edit button — the order is read-only (deleted). */
+  locked?: boolean;
   onEdit: () => void;
   onCancel: () => void;
   onSave: () => void;
@@ -563,9 +641,11 @@ function Section({
             </button>
           </span>
         ) : (
-          <button type="button" onClick={onEdit} className="ml-auto min-h-9 px-1 text-xs font-semibold text-primary-700">
-            Edit
-          </button>
+          !locked && (
+            <button type="button" onClick={onEdit} className="ml-auto min-h-9 px-1 text-xs font-semibold text-primary-700">
+              Edit
+            </button>
+          )
         )}
       </div>
       {children}
@@ -626,15 +706,25 @@ function label(statuses: OrderStatusRow[], key: string | null): string {
   return statuses.find((s) => s.key === key)?.label ?? key;
 }
 
-function toLineInput(item: OrderItemRow): OrderLineInput {
+function toLineDraft(item: OrderItemRow): LineDraft {
   return {
     id: item.id,
     productId: item.productId,
     name: item.name,
     sku: item.sku,
     unitPrice: item.unitPrice,
-    quantity: item.quantity,
+    quantity: String(item.quantity),
   };
+}
+
+/** The drafts as the server takes them, or null while a quantity is blank or
+ *  zero — refused here rather than quietly saved as 1. A row with no product
+ *  name is dropped, as the server would drop it. */
+function parseLines(lines: LineDraft[]): OrderLineInput[] | null {
+  const named = lines
+    .filter((line) => line.name.trim())
+    .map((line) => ({ ...line, quantity: Number(line.quantity) }));
+  return named.every((line) => Number.isInteger(line.quantity) && line.quantity >= 1) ? named : null;
 }
 
 function toCustomerInput(order: OrderDetail) {

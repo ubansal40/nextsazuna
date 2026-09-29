@@ -87,6 +87,19 @@ async function listInTransaction(connection: import("mysql2/promise").PoolConnec
   return rows.map(toStatusRow);
 }
 
+/**
+ * Keys a status can never have, because the orders list already uses them.
+ *
+ * `all` is the list's "every status" tab and filter value: a status keyed `all`
+ * could never be filtered to, and its orders would be counted into the All tab's
+ * total. `constructor` because the tab counts are a plain object, where a status
+ * with no orders would be read back as Object.prototype's function, not a number.
+ */
+const RESERVED_KEYS = new Set(["all", "constructor"]);
+
+/** A system status key (migration 0013) — so it can be neither deleted nor re-keyed. */
+const CANCELLED = "cancelled";
+
 /** `Awaiting stone setting` -> `awaiting_stone_setting`. */
 function keyFromLabel(label: string): string {
   return label
@@ -105,6 +118,9 @@ export async function createOrderStatus(
   if (!label) throw new Error("A name is required.");
   const base = keyFromLabel(label);
   if (!base) throw new Error("That name has no letters or numbers in it.");
+  if (RESERVED_KEYS.has(base)) {
+    throw new Error(`“${label}” is a name the orders list already uses for itself — pick another.`);
+  }
 
   return transaction(async (connection) => {
     // The key is derived once and must be unique; a clash means the admin is
@@ -233,6 +249,9 @@ export async function reorderOrderStatuses(admin: AdminContext, orderedIds: numb
  * System statuses and the default are refused outright. The reassign is not
  * optional when orders are on the status: leaving them pointing at a key with
  * no row would make them unreadable everywhere the label is joined.
+ *
+ * `cancelled` is refused as a destination: cancelling needs a reason and a
+ * `cancel` event (`cancelOrders`), and a status deletion can supply neither.
  */
 export async function deleteOrderStatus(
   admin: AdminContext,
@@ -247,29 +266,44 @@ export async function deleteOrderStatus(
     if (target.is_system === 1) throw new Error("System statuses keep the platform working and can't be deleted.");
     if (target.is_default === 1) throw new Error("Make another status the default before deleting this one.");
 
+    // Counted exactly as the drawer counts `orderCount` — live orders only — so
+    // the dialog that did or did not ask where they should go, and this guard,
+    // agree on whether anything needs to. They used to count differently: a
+    // status holding only deleted orders said "nothing moves" on screen, and
+    // this then moved them to whatever the hidden select had defaulted to.
     const [[inUse]] = await connection.execute<(RowDataPacket & { n: number })[]>(
-      "SELECT COUNT(*) AS n FROM orders WHERE status = ?",
+      "SELECT COUNT(*) AS n FROM orders WHERE status = ? AND deleted_at IS NULL",
       [target.key],
     );
+    const chosen = reassignToKey && reassignToKey !== target.key ? reassignToKey : null;
+    if (Number(inUse.n) > 0 && !chosen) {
+      throw new Error("Choose a status to move those orders to first.");
+    }
 
-    if (inUse.n > 0) {
-      if (!reassignToKey || reassignToKey === target.key) {
-        throw new Error("Choose a status to move those orders to first.");
-      }
-      const [[destination]] = await connection.execute<(RowDataPacket & { id: number })[]>(
-        "SELECT id FROM order_statuses WHERE `key` = ? LIMIT 1",
-        [reassignToKey],
+    // The ids are captured BEFORE the move. Selecting them afterwards by the
+    // destination key would sweep in every order that was already on that
+    // status and write this history onto orders nobody touched. Deleted orders
+    // are included, or they would be left on a key with no row; with no live
+    // order to choose a destination for, they go to the default status.
+    const [moved] = await connection.execute<(RowDataPacket & { id: number })[]>(
+      "SELECT id FROM orders WHERE status = ?",
+      [target.key],
+    );
+    let movedTo: string | null = null;
+    if (moved.length > 0) {
+      const [[destination]] = await connection.execute<(RowDataPacket & { key: string })[]>(
+        chosen
+          ? "SELECT `key` FROM order_statuses WHERE `key` = ? LIMIT 1"
+          : "SELECT `key` FROM order_statuses WHERE is_default = 1 LIMIT 1",
+        chosen ? [chosen] : [],
       );
       if (!destination) throw new Error("That destination status no longer exists.");
+      if (destination.key === CANCELLED) {
+        throw new Error("Cancelling needs a reason, so orders can’t be moved to Cancelled from here.");
+      }
+      movedTo = destination.key;
 
-      // The ids are captured BEFORE the move. Selecting them afterwards by the
-      // destination key would sweep in every order that was already on that
-      // status and write this history onto orders nobody touched.
-      const [moved] = await connection.execute<(RowDataPacket & { id: number })[]>(
-        "SELECT id FROM orders WHERE status = ?",
-        [target.key],
-      );
-      await connection.execute("UPDATE orders SET status = ? WHERE status = ?", [reassignToKey, target.key]);
+      await connection.execute("UPDATE orders SET status = ? WHERE status = ?", [movedTo, target.key]);
 
       // Every moved order gets a feed entry: its status changed without anyone
       // opening it, and the detail must be able to say why.
@@ -277,7 +311,7 @@ export async function deleteOrderStatus(
         await connection.execute(
           `INSERT INTO order_activity (order_id, admin_id, admin_email, event_type, from_status, to_status, message)
            VALUES (?, ?, ?, 'status', ?, ?, ?)`,
-          [row.id, admin.id, admin.email, target.key, reassignToKey, `Status “${target.label}” was deleted`],
+          [row.id, admin.id, admin.email, target.key, movedTo, `Status “${target.label}” was deleted`],
         );
       }
     }
@@ -287,7 +321,7 @@ export async function deleteOrderStatus(
       action: "order_statuses.delete",
       resourceType: "order_statuses",
       resourceId: id,
-      metadata: { key: target.key, movedOrders: inUse.n, movedTo: inUse.n > 0 ? reassignToKey : null },
+      metadata: { key: target.key, movedOrders: moved.length, movedTo },
     });
     return listInTransaction(connection);
   });
