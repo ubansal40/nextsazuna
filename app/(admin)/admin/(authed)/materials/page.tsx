@@ -13,7 +13,7 @@ export default async function MaterialsPage() {
       kind="material"
       singular="Material"
       plural="Materials"
-      hint="The metal and material options products can carry, in the order they list as storefront filters. Renaming one updates every product that used it."
+      hint="The metal and material options products can carry, in the order they list as storefront filters. Renaming one updates every product and pricing rule that used it."
       counts={counts}
       initial={rows}
     />

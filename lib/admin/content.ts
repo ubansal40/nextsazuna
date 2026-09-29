@@ -80,6 +80,11 @@ export async function getEditableBlock<T = unknown>(key: EditableBlockKey): Prom
  * recorded the action after committing and outside any transaction, so a failed
  * log left a committed change with no trail — and a rolled-back change could
  * leave a log line claiming it happened.
+ *
+ * A save publishes, on both paths. The insert always did; the update left
+ * `is_published` alone, so a legacy row stored unpublished stayed invisible to
+ * the storefront (which reads published blocks only) while the builder
+ * announced "It is live now". No editor offers an unpublished state to keep.
  */
 export async function saveEditableBlock(
   admin: AdminContext,
@@ -91,7 +96,7 @@ export async function saveEditableBlock(
   await transaction(async (conn: PoolConnection) => {
     await conn.execute(
       "INSERT INTO content_blocks (`key`, `value`, is_published, updated_by) VALUES (?, ?, 1, ?) " +
-        "ON DUPLICATE KEY UPDATE `value` = VALUES(`value`), updated_by = VALUES(updated_by)",
+        "ON DUPLICATE KEY UPDATE `value` = VALUES(`value`), is_published = VALUES(is_published), updated_by = VALUES(updated_by)",
       [key, json, admin.email],
     );
     await recordAdminAction(conn, admin, {

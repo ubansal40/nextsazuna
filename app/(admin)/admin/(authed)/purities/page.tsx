@@ -13,7 +13,7 @@ export default async function PuritiesPage() {
       kind="purity"
       singular="Purity"
       plural="Purities"
-      hint="The purity / karat options products can carry, in storefront filter order. Renaming one updates every product that used it."
+      hint="The purity / karat options products can carry, in storefront filter order. Renaming one updates every product and pricing rule that used it."
       counts={counts}
       initial={rows}
     />

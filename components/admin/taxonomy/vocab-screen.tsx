@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/cn";
 import type { TaxonomyCounts, VocabKind, VocabRow } from "@/lib/admin/taxonomy";
 import { TaxonomyTabs } from "./taxonomy-tabs";
+import { settle, UNREACHABLE } from "./settle";
 import {
   addVocab,
   renameVocabAction,
@@ -88,18 +89,24 @@ export function VocabScreen({
     const name = draft.trim();
     if (!name) return;
     setDraft("");
-    startTransition(async () => handle(await addVocab(kind, name), `Added ${name}.`));
+    startTransition(async () => {
+      const result = await settle(addVocab(kind, name), UNREACHABLE);
+      // A refused or lost add hands the typed name back — unless something new
+      // has been typed since.
+      if (!result.ok) setDraft((d) => d || name);
+      handle(result, `Added ${name}.`);
+    });
   }
 
   function saveRename() {
     if (!editing) return;
     const { id, value } = editing;
     setEditing(null);
-    startTransition(async () => handle(await renameVocabAction(kind, id, value)));
+    startTransition(async () => handle(await settle(renameVocabAction(kind, id, value), UNREACHABLE)));
   }
 
   function toggleVisible(row: VocabRow) {
-    startTransition(async () => handle(await setVocabVisibilityAction(kind, row.id, !row.isVisible)));
+    startTransition(async () => handle(await settle(setVocabVisibilityAction(kind, row.id, !row.isVisible), UNREACHABLE)));
   }
 
   function confirmDelete() {
@@ -107,7 +114,7 @@ export function VocabScreen({
     const id = confirm.id;
     setBusyDelete(true);
     startTransition(async () => {
-      const result = await deleteVocabAction(kind, id);
+      const result = await settle(deleteVocabAction(kind, id), UNREACHABLE);
       setBusyDelete(false);
       setConfirm(null);
       handle(result, "Deleted.");
@@ -121,7 +128,7 @@ export function VocabScreen({
     const before = rows;
     setRows(next);
     startTransition(async () => {
-      const result = await reorderVocabAction(kind, next.map((r) => r.id));
+      const result = await settle(reorderVocabAction(kind, next.map((r) => r.id)), UNREACHABLE);
       if (result.ok) {
         setRows(result.rows);
       } else {

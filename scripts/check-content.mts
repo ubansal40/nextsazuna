@@ -14,7 +14,19 @@
  *
  * Run: npx tsx scripts/check-content.mts
  */
-import { BLOCK_DEFS, BLOCK_KINDS, FEATURE_ICONS, USP_ICONS, makeBlock, readLayout, type StoredBlock } from "../lib/admin/homepage-schema";
+import {
+  BLOCK_DEFS,
+  BLOCK_KINDS,
+  FEATURE_ICONS,
+  ITEM_KEY,
+  USP_ICONS,
+  keyRepeaterItems,
+  makeBlock,
+  readLayout,
+  selectOptions,
+  toStoredLayout,
+  type StoredBlock,
+} from "../lib/admin/homepage-schema";
 import { blockingWarnings, findVanishing } from "../lib/admin/homepage-validate";
 import { toBlocks } from "../lib/homepage-blocks";
 import { EDITABLE_BLOCKS } from "../lib/admin/content-keys";
@@ -111,9 +123,17 @@ checks.push(
 const hero = (config: Record<string, unknown>) =>
   one({ id: "x", type: "hero", visible: true, config })[0] as { autoplayMs: number; slides: { image: string | null }[] };
 
+// The field is labelled "Seconds between slides" and the parser reads
+// milliseconds. It used to store what was typed, so 6 became 6 ms — under the
+// 1000 ms floor, silently replaced by 5200.
+const delayField = BLOCK_DEFS.hero.fields.find((f) => f.kind === "number" && f.path === "autoplay_ms");
+const delayScale = delayField?.kind === "number" ? (delayField.scale ?? 1) : 1;
+
 checks.push(
   ["autoplay under a second falls back to 5200", hero({ slides: [{ headline: "H" }], autoplay_ms: 200 }).autoplayMs === 5200],
   ["the schema's default autoplay is kept as-is", hero({ slides: [{ headline: "H" }], autoplay_ms: 5200 }).autoplayMs === 5200],
+  ["the hero delay is typed in the seconds its label names", /seconds/i.test(delayField?.label ?? "") && delayScale === 1000],
+  ["...so typing 6 reaches the carousel as six seconds", hero({ slides: [{ headline: "H" }], autoplay_ms: 6 * delayScale }).autoplayMs === 6000],
   ["a protocol-relative image is rejected", hero({ slides: [{ headline: "H", image: "//evil.test/x.jpg" }] }).slides[0].image === null],
   ["an app-relative image is kept", hero({ slides: [{ headline: "H", image: "/uploads/content/x.avif" }] }).slides[0].image === "/uploads/content/x.avif"],
 );
@@ -132,6 +152,39 @@ checks.push(
   // sparkle renders in feature_cards and NOT in usp_strip; the live block uses
   // it in a usp_strip, where it falls back to a plain lozenge.
   ["the two icon lists are not interchangeable", !iconsOf("usp_strip", "items").includes("sparkle")],
+);
+
+/* --- a select never shows a value that is not stored ---------------------
+ * A <select> whose value matches no option displays the first one: a new badge
+ * read "diamond" while the shop drew the lozenge, and picking "diamond" then
+ * fired no change.
+ */
+
+const uspIcons = USP_ICONS.map((v) => ({ value: v, label: v }));
+checks.push(
+  ["a select offers a stored value that is not one of its choices", selectOptions(uspIcons, "sparkle").some((o) => o.value === "sparkle")],
+  ["...and an empty value as its own first option", selectOptions(uspIcons, "")[0]?.value === ""],
+  ["...and is left alone when the value is a choice", selectOptions(uspIcons, "truck") === uspIcons],
+);
+
+/* --- repeater editing keys stay out of the data ----------------------------
+ * Items are keyed while edited so a move or a late upload follows the item,
+ * not its position. The key must never reach the stored layout.
+ */
+
+const keyedSource: StoredBlock = {
+  id: "k1", type: "usp_strip", visible: true,
+  config: { items: [{ icon: "truck", label: "A" }, { icon: "gift", label: "B" }] },
+};
+const keyed = keyRepeaterItems(keyedSource);
+const keyedItems = keyed.config.items as Record<PropertyKey, unknown>[];
+const toSave = toStoredLayout([keyed]);
+checks.push(
+  ["every repeater item gets a distinct editing key", new Set(keyedItems.map((i) => i[ITEM_KEY])).size === 2 && keyedItems.every((i) => typeof i[ITEM_KEY] === "string")],
+  ["...without touching the block it was given", !(ITEM_KEY in ((keyedSource.config.items as object[])[0]))],
+  ["...invisible to the dirty check", JSON.stringify(keyed) === JSON.stringify(keyedSource)],
+  ["...stripped from what is saved", (toSave.blocks[0].config.items as object[]).every((i) => Object.getOwnPropertySymbols(i).length === 0)],
+  ["...and a keyed block still survives the parser", one(keyed).length === 1],
 );
 
 /* --- reading a stored layout --------------------------------------------- */

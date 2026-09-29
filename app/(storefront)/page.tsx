@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { listProducts, type SortKey } from "@/lib/catalog";
-import { getHomepageBlocks } from "@/lib/homepage";
+import { getHomepageBlocks, type HomeBlock } from "@/lib/homepage";
 import { HeroCarousel } from "./_components/home/hero-carousel";
 import { ProductEdit, type EditTab } from "./_components/home/product-edit";
 import { ReviewsCarousel } from "./_components/home/reviews-carousel";
@@ -51,18 +51,25 @@ export default async function HomePage() {
    * Every product tab's list is fetched up front, in parallel, so switching
    * tabs on the client costs nothing. There are at most a couple of tabs and
    * the queries are small.
+   *
+   * Per block, by id. Only the first product_grid's tabs used to be fetched,
+   * and every product_grid on the page then drew those same tabs.
    */
-  const editBlock = blocks.find((block) => block.type === "product_grid");
-  const editTabs: EditTab[] = editBlock
-    ? await Promise.all(
-        editBlock.tabs.map(async (tab) => ({
-          label: tab.label,
-          products: (
-            await listProducts({ sort: tab.sort as SortKey, pageSize: tab.limit, page: 1 })
-          ).products,
-        })),
-      )
-    : [];
+  const editTabs = new Map<string, EditTab[]>(
+    await Promise.all(
+      blocks
+        .filter((block): block is Extract<HomeBlock, { type: "product_grid" }> => block.type === "product_grid")
+        .map(async (block) => {
+          const tabs = await Promise.all(
+            block.tabs.map(async (tab) => ({
+              label: tab.label,
+              products: (await listProducts({ sort: tab.sort as SortKey, pageSize: tab.limit, page: 1 })).products,
+            })),
+          );
+          return [block.id, tabs] as const;
+        }),
+    ),
+  );
 
   return (
     <>
@@ -99,15 +106,17 @@ export default async function HomePage() {
           case "usp_strip":
             return <UspStrip key={block.id} items={block.items} />;
 
-          case "product_grid":
+          case "product_grid": {
+            const tabs = editTabs.get(block.id) ?? [];
             // Nothing to show is not an error — it just means the catalog is
             // empty, and an edit with no products is worse than no edit.
-            if (!editTabs.some((tab) => tab.products.length)) return null;
+            if (!tabs.some((tab) => tab.products.length)) return null;
             return (
               <section key={block.id} className={sectionClass}>
-                <ProductEdit eyebrow={block.eyebrow} link={block.link} tabs={editTabs} />
+                <ProductEdit eyebrow={block.eyebrow} link={block.link} tabs={tabs} />
               </section>
             );
+          }
 
           case "banner":
             return (

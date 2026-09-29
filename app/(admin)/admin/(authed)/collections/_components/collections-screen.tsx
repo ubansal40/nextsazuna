@@ -19,6 +19,7 @@ import { cn } from "@/lib/cn";
 import type { CollectionInput, CollectionPick, CollectionRow, TaxonomyCounts } from "@/lib/admin/taxonomy";
 import type { ProductEditorOptions } from "@/lib/admin/catalog";
 import { TaxonomyTabs } from "@/components/admin/taxonomy/taxonomy-tabs";
+import { settle, UNREACHABLE } from "@/components/admin/taxonomy/settle";
 import {
   loadCollection,
   saveCollectionAction,
@@ -96,6 +97,11 @@ export function CollectionsScreen({
   // the round trip, and two taps inside that window used to create two identical
   // collections.
   const [busy, startTransition] = useTransition();
+  // Image uploads still running. Save waits for them: saved mid-upload, the
+  // collection keeps its old image, and the new URL arrives after the drawer has
+  // closed, with nothing left to store it.
+  const [uploads, setUploads] = useState(0);
+  const trackUpload = (running: boolean) => setUploads((n) => Math.max(0, n + (running ? 1 : -1)));
 
   const { ref: drawerRef, onBackdropClick } = useDialog(editing !== null, () => setEditing(null));
 
@@ -118,7 +124,9 @@ export function CollectionsScreen({
   function loadDetail(id: number) {
     setEditing((current) => (current && current.id === id ? { ...current, phase: "loading" } : current));
     startTransition(async () => {
-      const detail = await loadCollection(id);
+      // A call that never came back is a failed load too — the drawer's own
+      // failed state, with its Try again, rather than an error page.
+      const detail = await settle(loadCollection(id), null);
       setEditing((current) => {
         // The drawer may have been closed, or reopened on another collection,
         // while this was in flight — a late reply must not seed a form the admin
@@ -143,21 +151,21 @@ export function CollectionsScreen({
     // `phase` is the guard that matters: a save posts every field, so saving a
     // drawer whose record has not arrived would write BLANK over the stored
     // rules, picks and description.
-    if (!editing || editing.phase !== "ready" || busy) return;
+    if (!editing || editing.phase !== "ready" || busy || uploads > 0) return;
     if (!editing.input.name.trim()) {
       toast("error", "A name is required.");
       return;
     }
     const { id, input, picks } = editing;
     startTransition(async () => {
-      const result = await saveCollectionAction(id, { ...input, manualProductIds: picks.map((p) => p.id) });
+      const result = await settle(saveCollectionAction(id, { ...input, manualProductIds: picks.map((p) => p.id) }), UNREACHABLE);
       if (result.ok) setEditing(null);
       handle(result, id ? "Collection updated." : "Collection created.");
     });
   }
 
   function toggleVisible(row: CollectionRow) {
-    startTransition(async () => handle(await setCollectionVisibilityAction(row.id, !row.isVisible)));
+    startTransition(async () => handle(await settle(setCollectionVisibilityAction(row.id, !row.isVisible), UNREACHABLE)));
   }
 
   function confirmDelete() {
@@ -165,7 +173,7 @@ export function CollectionsScreen({
     const id = confirm.id;
     setBusyDelete(true);
     startTransition(async () => {
-      const result = await deleteCollectionAction(id);
+      const result = await settle(deleteCollectionAction(id), UNREACHABLE);
       setBusyDelete(false);
       setConfirm(null);
       handle(result, "Collection deleted.");
@@ -179,7 +187,7 @@ export function CollectionsScreen({
     const before = rows;
     setRows(next);
     startTransition(async () => {
-      const result = await reorderCollectionsAction(next.map((r) => r.id));
+      const result = await settle(reorderCollectionsAction(next.map((r) => r.id)), UNREACHABLE);
       if (result.ok) {
         setRows(result.rows);
       } else {
@@ -204,8 +212,21 @@ export function CollectionsScreen({
     reorder(moveItem(rows, from, to));
   }
 
-  const setInput = (patch: Partial<CollectionInput>) => editing && setEditing({ ...editing, input: { ...editing.input, ...patch } });
-  const setPicks = (picks: CollectionPick[]) => editing && setEditing({ ...editing, picks });
+  /**
+   * Patch the draft of the record this render shows — applied to the drawer as
+   * it is when React gets to it, and only while it still shows that record. The
+   * image upload is why: it lands long after its file was picked, and
+   * rebuilding the draft from what it captured then reverted anything typed
+   * meanwhile, reopened a drawer that had been closed, and could put one
+   * collection's draft over another's.
+   */
+  function patchDraft(update: (draft: Editing) => Editing) {
+    if (!editing) return;
+    const id = editing.id;
+    setEditing((current) => (current && current.id === id ? update(current) : current));
+  }
+  const setInput = (patch: Partial<CollectionInput>) => patchDraft((d) => ({ ...d, input: { ...d.input, ...patch } }));
+  const setPicks = (picks: CollectionPick[]) => patchDraft((d) => ({ ...d, picks }));
 
   /** Move a pick one place up or down — the spec's per-row arrows. Order is the
    *  storefront order, so this is the whole point of the section. */
@@ -356,20 +377,24 @@ export function CollectionsScreen({
                   slug={editing.input.slug || editing.input.name || "collection"}
                   value={editing.input.imageUrl}
                   onChange={(imageUrl) => setInput({ imageUrl })}
+                  onBusyChange={trackUpload}
                   hint="Shown on the storefront collection card. Anything not square is centre-cropped."
                 />
 
                 <p className={sectionLabel}>1 · Auto-populate rules</p>
                 <div className="rounded-[10px] border border-line-soft p-3">
                   <p className="mb-2.5 text-[11px] text-muted">A product joins if it is in any chosen category OR carries any chosen tag, within the price band.</p>
+                  {/* "None", not "Any": an empty list here matches nothing. The
+                      placeholders used to read "Any category" / "Any tag", and a
+                      collection saved with only a price band came out empty. */}
                   <div className="space-y-3">
                     <div>
                       <p className="mb-1 text-[11px] font-semibold text-muted">Categories</p>
-                      <MultiSelect ariaLabel="Categories" placeholder="Any category" options={options.categories.map((c) => ({ value: String(c.id), label: c.name }))} selected={editing.input.categoryIds.map(String)} onChange={(v) => setInput({ categoryIds: v.map(Number) })} />
+                      <MultiSelect ariaLabel="Categories" placeholder="No categories chosen" options={options.categories.map((c) => ({ value: String(c.id), label: c.name }))} selected={editing.input.categoryIds.map(String)} onChange={(v) => setInput({ categoryIds: v.map(Number) })} />
                     </div>
                     <div>
                       <p className="mb-1 text-[11px] font-semibold text-muted">Tags</p>
-                      <MultiSelect ariaLabel="Tags" placeholder="Any tag" options={options.tags.map((t) => ({ value: String(t.id), label: t.name }))} selected={editing.input.tagIds.map(String)} onChange={(v) => setInput({ tagIds: v.map(Number) })} />
+                      <MultiSelect ariaLabel="Tags" placeholder="No tags chosen" options={options.tags.map((t) => ({ value: String(t.id), label: t.name }))} selected={editing.input.tagIds.map(String)} onChange={(v) => setInput({ tagIds: v.map(Number) })} />
                     </div>
                     <div className="flex gap-2.5">
                       <div className="flex-1">
@@ -382,6 +407,17 @@ export function CollectionsScreen({
                       </div>
                     </div>
                   </div>
+                  {/* The band only narrows what a category or tag brought in, and
+                      the storefront reads membership the same way — so with
+                      neither, and nothing hand-picked, the collection is empty
+                      however it is saved. Said here, before the save, rather
+                      than discovered as a "0" on the list. */}
+                  {editing.input.categoryIds.length === 0 && editing.input.tagIds.length === 0 && editing.picks.length === 0 && (
+                    <p role="status" className="mt-3 rounded-[11px] border border-accent-soft bg-warning-soft px-3 py-2.5 text-[12px] leading-relaxed text-[var(--sz-admin-gold-ink)]">
+                      Nothing is in this collection yet. Choose a category or a tag, or hand-pick a product below — a price
+                      band on its own matches nothing.
+                    </p>
+                  )}
                 </div>
 
                 <p className={sectionLabel}>2 · Manually added products</p>
@@ -402,7 +438,9 @@ export function CollectionsScreen({
               </div>
               <div className="flex gap-2.5 border-t border-line px-4 py-3.5">
                 <button type="button" onClick={() => setEditing(null)} disabled={busy} className="min-h-11 flex-1 rounded-[var(--sz-admin-radius-control)] border border-line text-[13px] font-semibold text-body hover:border-primary-700 disabled:opacity-[var(--sz-disabled-opacity)]">Cancel</button>
-                <button type="button" onClick={save} disabled={busy} aria-busy={busy || undefined} className="min-h-11 flex-1 rounded-[var(--sz-admin-radius-control)] bg-primary-700 text-[13px] font-semibold text-white hover:bg-primary-800 disabled:cursor-progress disabled:opacity-[var(--sz-disabled-opacity)]">Save</button>
+                <button type="button" onClick={save} disabled={busy || uploads > 0} aria-busy={busy || uploads > 0 || undefined} className="min-h-11 flex-1 rounded-[var(--sz-admin-radius-control)] bg-primary-700 text-[13px] font-semibold text-white hover:bg-primary-800 disabled:cursor-progress disabled:opacity-[var(--sz-disabled-opacity)]">
+                  {uploads > 0 ? "Uploading image…" : "Save"}
+                </button>
               </div>
               </>
             )}
@@ -469,19 +507,24 @@ function ManualPicks({
   const [term, setTerm] = useState("");
   const [results, setResults] = useState<CollectionPick[] | null>(null);
   const [searching, setSearching] = useState(false);
+  // The search call itself failed — said as such, rather than as "No products
+  // match", and without taking the half-built collection down with it.
+  const [failed, setFailed] = useState(false);
   const [, startTransition] = useTransition();
 
   function search(value: string) {
     setTerm(value);
+    setFailed(false);
     if (value.trim().length < 2) {
       setResults(null);
       return;
     }
     setSearching(true);
     startTransition(async () => {
-      const found = await searchProductsForPicksAction(value);
+      const found = await settle(searchProductsForPicksAction(value), null);
       setSearching(false);
-      setResults(found);
+      setFailed(found === null);
+      setResults(found ?? []);
     });
   }
 
@@ -529,6 +572,8 @@ function ManualPicks({
           <div className="mt-1.5 max-h-[220px] overflow-y-auto rounded-[9px] border border-line bg-raised p-1">
             {searching && results === null ? (
               <p className="px-2 py-2 text-[11px] text-muted">Searching…</p>
+            ) : failed ? (
+              <p role="alert" className="px-2 py-2 text-[11px] text-error">The search didn&rsquo;t reach the server — check the connection and type again.</p>
             ) : results && results.length > 0 ? (
               results.map((product) => {
                 const already = chosen.has(product.id);
