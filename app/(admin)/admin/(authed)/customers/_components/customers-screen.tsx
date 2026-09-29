@@ -190,8 +190,8 @@ export function CustomersScreen({ initialPage }: { initialPage: AdminCustomerPag
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-[560px] text-[11px] text-muted">
-          Lifetime spend counts every order except cancelled, failed and abandoned-checkout ones. The Orders column
-          counts them all — open a customer to see which is which.
+          Lifetime spend counts every order except cancelled, failed, refunded and abandoned-checkout ones. The
+          Orders column counts them all — open a customer to see which is which.
         </p>
         <div className="flex gap-2">
           <button
@@ -357,14 +357,24 @@ function ProfileDrawer({
   // detail into the same instance, and two customers imported in the same batch
   // can share an `updatedAt`. Either change re-seeds the editors from whatever
   // was stored, not from what the client hoped for; closing clears them.
+  //
+  // A save of the SAME customer re-seeds only the editors that are closed. The
+  // section that saved closed itself before the save went out, so it picks up
+  // what was stored; the other may be open with typing in it, and saving the
+  // address used to throw away a half-written note beside it.
   const seedKey = detail ? `${detail.id}:${detail.updatedAt}` : "";
   const [seeded, setSeeded] = useState(seedKey);
   if (seedKey !== seeded) {
+    const sameCustomer = detail !== null && seeded.split(":")[0] === String(detail.id);
     setSeeded(seedKey);
-    setContact(toContact(detail));
-    setPersonal(toPersonal(detail));
-    setEditingContact(false);
-    setEditingPersonal(false);
+    if (!sameCustomer || !editingContact) {
+      setContact(toContact(detail));
+      setEditingContact(false);
+    }
+    if (!sameCustomer || !editingPersonal) {
+      setPersonal(toPersonal(detail));
+      setEditingPersonal(false);
+    }
   }
 
   return (
@@ -912,10 +922,19 @@ const fieldClass =
  *  shows something rather than an empty column. */
 const money = (value: string) => formatPrice(value) ?? "—";
 
+// Pinned to the shop's zone: the list is rendered on the server and again in
+// the browser, and a zone-less format gives each its own local date — a
+// hydration mismatch, and a wrong day for anyone not sitting in Nepal.
 const shortDate = (value: string) =>
-  new Date(value).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
+  new Date(value).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "2-digit",
+    timeZone: "Asia/Kathmandu",
+  });
 
-const longDate = (value: string) => new Date(value).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+const longDate = (value: string) =>
+  new Date(value).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kathmandu" });
 
 /** `admin_adjust` -> `Admin adjust`. The ledger's reasons are written by the
  *  order flow, so they are shown as they are rather than mapped to a fixed

@@ -140,7 +140,12 @@ export function StatusManager({
     persistOrder(moveItem(statuses, from, to));
   }
 
-  const deleteTargets = deleting ? statuses.filter((s) => s.id !== deleting.id) : [];
+  // Where a deleted status's orders may go. Cancelled is not offered: cancelling
+  // needs a reason, which a status deletion cannot give, and the server refuses
+  // it for the same reason.
+  const targetsFor = (status: OrderStatusRow) =>
+    statuses.filter((s) => s.id !== status.id && s.key !== "cancelled");
+  const deleteTargets = deleting ? targetsFor(deleting) : [];
 
   return (
     <>
@@ -277,7 +282,12 @@ export function StatusManager({
                           type="button"
                           onClick={() => {
                             setDeleting(status);
-                            setReassignTo(statuses.find((s) => s.id !== status.id)?.key ?? "");
+                            // The default status, not whichever sits first — with
+                            // the seeded order that was Pending payment, which
+                            // hides a paid order from its customer and from
+                            // revenue.
+                            const targets = targetsFor(status);
+                            setReassignTo((targets.find((s) => s.isDefault) ?? targets[0])?.key ?? "");
                           }}
                           aria-label={`Delete ${status.label}`}
                           title="Delete status"

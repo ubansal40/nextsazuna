@@ -2,6 +2,7 @@
 
 import { requireSection } from "@/lib/admin/require";
 import {
+  cancelOrders,
   listAdminOrders,
   setOrdersStatus,
   softDeleteOrders,
@@ -49,6 +50,23 @@ export async function setOrdersStatusAction(
   const admin = await requireSection("orders");
   try {
     await setOrdersStatus(admin, orderIds, statusKey);
+    return { ok: true, page: await listAdminOrders(filters) };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** Cancelling is its own action because it carries a reason — a row's dropdown
+ *  and the bulk bar come here rather than through a plain status move. */
+export async function cancelOrdersAction(
+  orderIds: number[],
+  reason: string,
+  note: string,
+  filters: AdminOrderFilters,
+): Promise<OrdersResult> {
+  const admin = await requireSection("orders");
+  try {
+    await cancelOrders(admin, orderIds, reason, note);
     return { ok: true, page: await listAdminOrders(filters) };
   } catch (error) {
     return fail(error);

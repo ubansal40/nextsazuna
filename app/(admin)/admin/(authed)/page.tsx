@@ -106,7 +106,7 @@ export default async function AdminDashboardPage({
       {money && data.kpis.saleOrders !== data.kpis.orders && (
         <p className="mt-2 text-[11.5px] leading-relaxed text-muted">
           Revenue and AOV count {data.kpis.saleOrders} of these {data.kpis.orders} orders — the rest are pending
-          payment, failed or cancelled.
+          payment, failed, cancelled or refunded.
         </p>
       )}
 

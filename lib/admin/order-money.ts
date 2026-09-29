@@ -80,3 +80,44 @@ export function couponDiscountMinor(
   }
   return Math.max(0, Math.min(discount, subtotalMinor));
 }
+
+/**
+ * An amount an admin typed → integer paisa. Throws a sentence for anything that
+ * is not plainly an amount.
+ *
+ * `toMinor` is for DECIMAL strings the database hands back, and it is lenient
+ * on purpose: an unreadable stored value becomes 0 rather than NaN. That is the
+ * wrong rule for a form field. `Number()` reads "1,500" and "रु 1500" as NaN —
+ * so a price typed the way it is printed silently became रु 0 — and reads
+ * "0x10" as 16, so it became रु 16. Here the only forgiveness is for how
+ * people write money in Nepal: grouping commas or spaces (1,50,000), and a
+ * leading रु or Rs. Everything else has to be digits with at most two decimals.
+ */
+export function parseAdminMoney(value: unknown, label = "That amount"): number {
+  const typed = String(value ?? "").trim();
+  const bare = typed.replace(/^(?:र[ुू]|rs)\.?\s*/i, "").replace(/[,\s]/g, "");
+  if (!bare) throw new Error(`${label} is blank — enter an amount, like 1500.`);
+  if (!/^\d+(\.\d{1,2})?$/.test(bare)) {
+    throw new Error(`${label} isn’t an amount: “${typed}”. Use digits, like 1500 or 1,500.50.`);
+  }
+  return toMinor(bare);
+}
+
+/**
+ * Hold an order's discounts inside its goods.
+ *
+ * `computeTotals` floors the total at zero, but that alone lets a discount
+ * bigger than the items eat into the tax and the delivery charge instead — a
+ * रु 500 discount on a रु 300 item quietly waives the रु 150 delivery too.
+ * Loyalty is settled first because the customer paid for it in points; the
+ * discount, which the shop chose to give, takes whatever room is left.
+ */
+export function clampDiscounts(
+  subtotalMinor: number,
+  discountMinor: number,
+  loyaltyMinor: number,
+): { discountMinor: number; loyaltyMinor: number } {
+  const goods = Math.max(0, subtotalMinor);
+  const loyalty = Math.max(0, Math.min(loyaltyMinor, goods));
+  return { discountMinor: Math.max(0, Math.min(discountMinor, goods - loyalty)), loyaltyMinor: loyalty };
+}

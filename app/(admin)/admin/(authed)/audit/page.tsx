@@ -82,7 +82,13 @@ export default async function AuditPage({
               result.entries.map((entry) => (
                 <tr key={entry.id} className="border-b border-line-soft last:border-0 align-top">
                   <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[11px] text-muted">
-                    {new Date(entry.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}
+                    {/* The shop's clock, not the server's: this renders wherever
+                        the app is hosted, and an audit time is read in Nepal. */}
+                    {new Date(entry.createdAt).toLocaleString("en-GB", {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                      timeZone: "Asia/Kathmandu",
+                    })}
                   </td>
                   <td className="px-3 py-2.5 text-[12.5px] text-body">{entry.adminEmail ?? "—"}</td>
                   <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[11.5px] font-semibold text-primary-700">
