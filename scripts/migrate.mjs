@@ -26,7 +26,9 @@ const MIGRATIONS_DIR = join(root, "db/migrations");
 function loadEnv() {
   for (const file of [".env.local", ".env"]) {
     try {
-      for (const line of readFileSync(join(root, file), "utf8").split("\n")) {
+      // \r?\n: a .env saved on Windows ends every line in \r, which `$` never
+      // matches — the file loaded as empty and DB_HOST read as "not set".
+      for (const line of readFileSync(join(root, file), "utf8").split(/\r?\n/)) {
         const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
         if (match && process.env[match[1]] === undefined) {
           process.env[match[1]] = match[2].trim().replace(/^["']|["']$/g, "");
@@ -68,6 +70,22 @@ await connection.query(`
 const [applied] = await connection.query("SELECT name FROM schema_migrations");
 const appliedNames = new Set(applied.map((row) => row.name));
 
+/*
+ * A fresh database takes its character set from the server's default, and
+ * 0001 creates most of its tables without naming one — they inherit it. Every
+ * later migration pins utf8mb4_unicode_ci, so on a server whose default is
+ * anything else (Ubuntu's MariaDB ships utf8mb4_general_ci; MariaDB 11.6+ and
+ * MySQL 8 use newer collations) 0004 dies on "Illegal mix of collations", and
+ * with a latin1 default a Nepali name cannot be stored at all. Before the
+ * first migration only, the database is set to what the schema expects. An
+ * existing database is never altered here — that would be a migration.
+ */
+if (appliedNames.size === 0 && process.argv[2] !== "status") {
+  await connection.query(
+    `ALTER DATABASE \`${process.env.DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+  );
+}
+
 let files = [];
 try {
   files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort();
@@ -108,7 +126,15 @@ for (const file of pending) {
     await connection.rollback();
     console.log(`\r✗ ${file}`);
     console.error(`\n${error.message}\n`);
-    console.error("Rolled back. No further migrations were applied.");
+    // Only the data statements are undone: MySQL and MariaDB commit implicitly
+    // after every DDL statement, so any CREATE/ALTER before the failure stayed.
+    // Saying "rolled back" sent people to re-run into "duplicate column".
+    console.error(
+      `${file} is NOT recorded as applied, but schema changes it made before the failing ` +
+        "statement are committed (DDL cannot be rolled back). Inspect the schema and undo " +
+        "them, or finish the migration by hand, before running migrate again. No further " +
+        "migrations were applied.",
+    );
     await connection.end();
     process.exit(1);
   }

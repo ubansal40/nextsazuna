@@ -34,7 +34,8 @@ const BATCH = 500;
 function loadEnv() {
   for (const file of [".env.local", ".env"]) {
     try {
-      for (const line of readFileSync(join(root, file), "utf8").split("\n")) {
+      // \r?\n: a .env saved on Windows ends every line in \r, which `$` never matches.
+      for (const line of readFileSync(join(root, file), "utf8").split(/\r?\n/)) {
         const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
         if (m && process.env[m[1]] === undefined) {
           process.env[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
@@ -64,6 +65,13 @@ function required(name) {
  * which fails the constraint — and on a column without that constraint it would
  * have silently written garbage instead of erroring.
  *
+ * The source connection now reads JSON as text (`jsonStrings`), which is the
+ * real fix: re-stringifying only objects left every JSON *scalar* behind. A
+ * string value such as "Free delivery" went back unquoted and failed the
+ * constraint mid-copy — after earlier tables were already truncated and
+ * reloaded — while `true` was stored as 1 and "42" as the number 42. This stays
+ * as a guard for any other driver-parsed object.
+ *
  * Buffers and Dates are passed through: the driver round-trips those correctly,
  * and stringifying them would corrupt binary and temporal data.
  */
@@ -83,9 +91,11 @@ const source = await mysql.createConnection({
   password: required("SOURCE_DB_PASSWORD"),
   database: required("SOURCE_DB_NAME"),
   // Keep everything as strings/Buffers so values round-trip byte-for-byte.
-  // Parsing a DECIMAL into a float here would corrupt every price.
+  // Parsing a DECIMAL into a float here would corrupt every price, and parsing
+  // JSON loses the difference between "42" and 42 — see serialise().
   decimalNumbers: false,
   dateStrings: true,
+  jsonStrings: true,
 });
 
 const target = await mysql.createConnection({
