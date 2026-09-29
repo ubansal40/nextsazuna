@@ -147,8 +147,9 @@ const order = computeTotals({
 });
 checks.push(
   ["a three-line subtotal is exact", toDecimal(subtotal) === "42.67"],
-  ["its 10% promo is exact", toDecimal(promo) === "4.27"],
-  ["its total is exact", toDecimal(order.totalMinor) === "188.40"],
+  // 10% of 42.67 is 4.267: whole rupees, like every figure a customer is shown.
+  ["its 10% promo is whole rupees", toDecimal(promo) === "4.00"],
+  ["its total is exact", toDecimal(order.totalMinor) === "188.67"],
 );
 
 let failed = 0;

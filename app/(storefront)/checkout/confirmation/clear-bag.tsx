@@ -1,23 +1,23 @@
 "use client";
 
 import { useEffect } from "react";
-import { clearCart } from "@/lib/cart-storage";
+import { clearCartForOrder } from "@/lib/cart-storage";
 
 /**
- * Empties the browser's bag once an order has settled.
+ * Empties the browser's bag once the order it became has settled.
  *
  * A gateway returns the customer here, not to the page that placed the order,
  * so this is the only point at which a paid bag can be cleared.
+ *
+ * Only for the order this browser just placed, though. This page is also the
+ * "View your order" link in the confirmation email, and it used to clear on
+ * every visit: a customer checking last week's order wiped the bag they were
+ * filling today, in every open tab.
  */
-export function ClearBagOnMount() {
+export function ClearBagOnMount({ orderNumber }: { orderNumber: string }) {
   useEffect(() => {
-    clearCart();
-    try {
-      window.localStorage.removeItem("sazuna:gift-wrap");
-    } catch {
-      // Nothing to do; the bag itself is already cleared.
-    }
-  }, []);
+    clearCartForOrder(orderNumber);
+  }, [orderNumber]);
 
   return null;
 }

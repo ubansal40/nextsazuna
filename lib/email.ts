@@ -82,6 +82,12 @@ function transport(smtp: SmtpConfig): Transporter {
     auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
     pool: true,
     maxConnections: 2,
+    // nodemailer waits two minutes to connect and ten on an idle socket by
+    // default. Mail now goes out after the response (`after()`), but a hung
+    // server would still pin a pooled connection that long for every order.
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 30_000,
   });
   return cached;
 }

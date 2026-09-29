@@ -5,7 +5,16 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
-import { onCartChanged, readCart, type CartEntry } from "@/lib/cart-storage";
+import {
+  onCartChanged,
+  readBagOptions,
+  readCart,
+  rememberPlacedOrder,
+  writeGiftWrap,
+  writePromo,
+  type CartEntry,
+} from "@/lib/cart-storage";
+import { ORDER_FIELD_LIMITS } from "@/lib/order-fields";
 import { normalisePhone } from "@/lib/order-lookup";
 import { Icon, type IconName } from "@/components/ui";
 import { placeOrder, quoteCheckout, type CheckoutQuote } from "../_actions";
@@ -33,12 +42,14 @@ function bagSignature(entries: CartEntry[]): string {
  * customer is told what happened and the quote is refreshed underneath them.
  * "failed" is the only outcome that goes to the failure panel.
  */
-const REFUSAL: Record<"empty" | "invalid" | "unavailable" | "changed", string> = {
+const REFUSAL: Record<"empty" | "invalid" | "unavailable" | "changed" | "sold-out", string> = {
   empty: "Your bag is empty, so nothing was ordered.",
   invalid: "We need your name, delivery address and phone number to place the order.",
   unavailable: "That payment method isn't available right now — please choose another.",
   changed:
     "Your bag changed while you were here, so the total did too. Check the updated total, then place your order.",
+  "sold-out":
+    "A piece in your bag has just sold out, so nothing was ordered. It's marked below — remove it from your bag to continue.",
 };
 
 const METHOD_ICON: Record<string, IconName> = {
@@ -143,10 +154,16 @@ export function CheckoutView({
         if (typeof draft.phone === "string") setPhone(draft.phone);
         if (typeof draft.email === "string") setEmail(draft.email);
       }
-      setGiftWrap(window.localStorage.getItem("sazuna:gift-wrap") === "1");
     } catch {
       // A corrupt draft is not worth failing checkout over.
     }
+    // The gift-wrap choice and the promo code made in the bag. The code used
+    // to stay behind in the bag's own state, so a customer shown a discount
+    // there reached this page at the full price with nothing to say why.
+    const options = readBagOptions();
+    setGiftWrap(options.giftWrap);
+    setCode(options.code);
+    setPromoInput(options.code ?? "");
     setRestored(true);
   }, []);
 
@@ -158,6 +175,14 @@ export function CheckoutView({
       // Storage full or blocked — the form still works for this visit.
     }
   }, [restored, name, address, phone, email]);
+
+  // Written back, so a code applied or removed here, or gift wrap taken off,
+  // is what the bag shows if the customer steps back to it.
+  useEffect(() => {
+    if (!restored) return;
+    writeGiftWrap(giftWrap);
+    writePromo(code);
+  }, [restored, giftWrap, code]);
 
   /*
    * The phone, but only once it is a whole number, and reduced to its ten
@@ -184,6 +209,16 @@ export function CheckoutView({
         setQuote(next);
         setPricing(false);
         setFlow((current) => (current === "loading" ? "form" : current));
+        /*
+         * Cash is pre-selected, but it is the admin's to switch off. When it is,
+         * the server quotes the first method it does offer — surcharge and all
+         * — while no option looked chosen, the surcharge row (keyed to the
+         * selection) stayed hidden, and "Place Order" was refused as
+         * unavailable. Select what was actually quoted, which re-quotes once.
+         */
+        if (next.methods.length && !next.methods.some((m) => m.code === method)) {
+          setMethod(next.methods[0].code);
+        }
       })
       .catch(() => {
         if (ticket !== request.current) return;
@@ -222,6 +257,23 @@ export function CheckoutView({
     if (redirect && payForm.current) payForm.current.submit();
   }, [redirect]);
 
+  /*
+   * Back from the gateway's page. A browser that kept this page in its
+   * back/forward cache restores it exactly as it was left — on the "Redirecting
+   * to secure payment" spinner, with nothing left to redirect. Nothing was paid
+   * on the way back, so the form comes back with a fresh quote.
+   */
+  useEffect(() => {
+    const onShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      setRedirect(null);
+      setFlow((current) => (current === "redirecting" ? "form" : current));
+      refresh();
+    };
+    window.addEventListener("pageshow", onShow);
+    return () => window.removeEventListener("pageshow", onShow);
+  }, [refresh]);
+
   const nameError = (submitted || touched.name) && !name.trim();
   const addressError = (submitted || touched.address) && !address.trim();
   const phoneError = (submitted || touched.phone) && phone.replace(/\D/g, "").length < 7;
@@ -250,20 +302,34 @@ export function CheckoutView({
     }
 
     setFlow("submitting");
-    const result = await placeOrder({
-      entries,
-      // Belt to that braces: the server refuses to write an order whose total
-      // does not come to this exact figure in paisa. Catches drift the browser
-      // cannot see — a price edit, a coupon lapsing mid-checkout.
-      expectedTotalMinor: quote.totalMinor,
-      code: code ?? undefined,
-      giftWrap,
-      method,
-      name,
-      phone,
-      email,
-      address,
-    });
+    let result: Awaited<ReturnType<typeof placeOrder>>;
+    try {
+      result = await placeOrder({
+        entries,
+        // Belt to that braces: the server refuses to write an order whose total
+        // does not come to this exact figure in paisa. Catches drift the browser
+        // cannot see — a price edit, a coupon lapsing mid-checkout.
+        expectedTotalMinor: quote.totalMinor,
+        code: code ?? undefined,
+        giftWrap,
+        method,
+        name,
+        phone,
+        email,
+        address,
+      });
+    } catch {
+      /*
+       * The request itself failed — the connection dropped, or a deploy
+       * retired this page's action. It used to throw out of here and leave
+       * "Placing order…" spinning for good, and a customer who reloaded with
+       * the bag intact placed the order again. Whether this attempt reached
+       * the server cannot be known from here, so the failure panel — which
+       * offers WhatsApp as well as a retry — is the honest answer.
+       */
+      setFlow("failure");
+      return;
+    }
 
     if (!result.ok) {
       if (result.error === "failed") {
@@ -280,6 +346,9 @@ export function CheckoutView({
     }
 
     setOrderNumber(result.orderNumber);
+    // The confirmation page empties the bag only for the order this browser
+    // placed — never because someone opened an old receipt link.
+    rememberPlacedOrder(result.orderNumber);
 
     if (result.kind === "placed") {
       // Cash orders land on the same receipt as a gateway return, so there is
@@ -425,6 +494,9 @@ export function CheckoutView({
 
   const busy = flow === "submitting";
   const placeLabel = `Place Order · ${quote.total}`;
+  // Either would only be refused by the server; say so here instead.
+  const soldOut = quote.lines.some((line) => !line.inStock);
+  const noMethods = quote.methods.length === 0;
 
   const summaryRows = (
     <>
@@ -440,7 +512,18 @@ export function CheckoutView({
       )}
       {giftWrap && (
         <div className="flex justify-between py-[3px] text-control-sm text-muted">
-          <span>Gift wrap</span>
+          {/* The choice is made in the bag, but it is charged here, so it has
+              to be undoable here — it used to be removable only by leaving. */}
+          <span>
+            Gift wrap{" "}
+            <button
+              type="button"
+              onClick={() => setGiftWrap(false)}
+              className="cursor-pointer p-0 text-trust font-semibold text-muted underline hover:text-body"
+            >
+              Remove
+            </button>
+          </span>
           <span className="font-mono tabular-nums text-body">{quote.giftWrap}</span>
         </div>
       )}
@@ -465,7 +548,7 @@ export function CheckoutView({
       onClick={submit}
       // Held while a quote is in flight: for those few hundred milliseconds the
       // figure beside "Place Order" is not the one that would be charged.
-      disabled={busy || pricing}
+      disabled={busy || pricing || soldOut || noMethods}
       aria-busy={busy}
       className={cn(
         "flex w-full cursor-pointer items-center justify-center gap-[9px] bg-primary-700 text-control font-semibold text-white min-h-[var(--sz-control-h-lg)] transition-colors duration-[var(--sz-dur-fast)] hover:bg-primary-800 disabled:cursor-wait",
@@ -489,6 +572,19 @@ export function CheckoutView({
         {/* Why the last attempt did not become an order. Focused when it
             appears, because on mobile the button that was pressed is pinned to
             the bottom of the screen and this is at the top. */}
+        {soldOut && !notice && (
+          <p className="m-0 mb-[18px] flex gap-2.5 rounded-[var(--sz-radius-md)] border border-error-border bg-error-soft p-3.5 text-sm leading-relaxed text-body">
+            <Icon name="alert" size={17} className="mt-0.5 flex-none text-error" />
+            <span>
+              A piece in your bag has sold out and is marked below.{" "}
+              <Link href="/cart" className="font-semibold">
+                Remove it from your bag
+              </Link>{" "}
+              to place your order.
+            </span>
+          </p>
+        )}
+
         {notice && (
           <p
             id="co-notice"
@@ -541,6 +637,7 @@ export function CheckoutView({
                       {line.sku}
                       {line.quantity > 1 && ` · ×${line.quantity}`}
                     </p>
+                    {!line.inStock && <SoldOut />}
                   </div>
                   <p className="m-0 whitespace-nowrap font-mono text-control-sm tabular-nums text-body">
                     {line.price}
@@ -566,6 +663,7 @@ export function CheckoutView({
               </label>
               <input
                 id="co-name"
+                maxLength={ORDER_FIELD_LIMITS.name}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 onBlur={() => setTouched((t) => ({ ...t, name: true }))}
@@ -585,6 +683,7 @@ export function CheckoutView({
               </label>
               <input
                 id="co-addr"
+                maxLength={ORDER_FIELD_LIMITS.address}
                 value={address}
                 onChange={(event) => setAddress(event.target.value)}
                 onBlur={() => setTouched((t) => ({ ...t, address: true }))}
@@ -607,6 +706,7 @@ export function CheckoutView({
                 </label>
                 <input
                   id="co-phone"
+                  maxLength={ORDER_FIELD_LIMITS.phone}
                   value={phone}
                   onChange={(event) => setPhone(event.target.value)}
                   onBlur={() => setTouched((t) => ({ ...t, phone: true }))}
@@ -628,6 +728,7 @@ export function CheckoutView({
                 </label>
                 <input
                   id="co-email"
+                  maxLength={ORDER_FIELD_LIMITS.email}
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   inputMode="email"
@@ -660,6 +761,12 @@ export function CheckoutView({
             }}
             className="flex flex-col gap-3"
           >
+            {noMethods && (
+              <p className="m-0 text-trust text-muted">
+                We can&rsquo;t take payment online right now. Message us on WhatsApp and
+                we&rsquo;ll complete your order with you.
+              </p>
+            )}
             {quote.methods.map((option) => {
               const selected = option.code === method;
               return (
@@ -793,6 +900,7 @@ export function CheckoutView({
                     {line.sku}
                     {line.quantity > 1 && ` · ×${line.quantity}`}
                   </p>
+                  {!line.inStock && <SoldOut />}
                 </div>
                 <p className="m-0 whitespace-nowrap font-mono text-trust tabular-nums text-body">
                   {line.price}
@@ -818,6 +926,15 @@ export function CheckoutView({
         {placeButton("flex-1 rounded-[var(--sz-radius-sticky)]")}
       </div>
     </div>
+  );
+}
+
+function SoldOut() {
+  return (
+    <p className="m-0 mt-1 inline-flex items-center gap-1 text-trust font-semibold text-error">
+      <Icon name="alert" size={13} strokeWidth={2} />
+      Sold out
+    </p>
   );
 }
 

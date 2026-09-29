@@ -41,9 +41,12 @@ export async function siteOrigin(known?: URL): Promise<string> {
   if (configured) return configured.replace(/\/+$/, "");
 
   const incoming = await headers();
-  const host = incoming.get("x-forwarded-host") ?? incoming.get("host");
+  // Each proxy in a chain appends to these ("a.com, b.internal"), so only the
+  // first entry — the one the customer's request carried — is an origin.
+  const first = (name: string) => incoming.get(name)?.split(",")[0]?.trim() || null;
+  const host = first("x-forwarded-host") ?? first("host");
   if (host) {
-    const protocol = incoming.get("x-forwarded-proto") ?? "https";
+    const protocol = first("x-forwarded-proto") ?? "https";
     return `${protocol}://${host}`;
   }
 

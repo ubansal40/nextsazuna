@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { PoolConnection } from "mysql2/promise";
+import { couponDiscountMinor } from "./admin/order-money";
 import { query } from "./db";
 import { normalisePhone } from "./order-lookup";
 import type { CouponFailure } from "./coupon-messages";
@@ -46,6 +48,29 @@ export type { CouponFailure };
  */
 export const NON_REDEMPTION_STATUSES = ["payment_failed", "cancelled"] as const;
 
+/**
+ * How long a gateway order may wait in `pending_payment` and still hold its
+ * reservation against a per-customer limit.
+ *
+ * The reservation is right while the customer is on the gateway's page, and
+ * wrong forever after they close it: nothing moves an abandoned attempt out of
+ * `pending_payment`, so one eSewa tab closed without paying used to spend that
+ * phone's only use of the code for good. Gateway sessions expire well inside an
+ * hour (Khalti's payment link lasts 60 minutes), so past that the attempt is
+ * abandoned rather than in progress.
+ */
+export const PAYMENT_WINDOW_MINUTES = 60;
+
+/** The per-customer count, reusable inside a transaction. */
+const REDEMPTIONS_BY_PHONE = `SELECT COUNT(*) AS used
+     FROM orders
+    WHERE coupon_code = ?
+      AND deleted_at IS NULL
+      AND status NOT IN (${NON_REDEMPTION_STATUSES.map(() => "?").join(", ")})
+      AND NOT (status = 'pending_payment'
+               AND created_at < NOW() - INTERVAL ${PAYMENT_WINDOW_MINUTES} MINUTE)
+      AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', ''), 10) = ?`;
+
 export interface CouponSuccess {
   ok: true;
   code: string;
@@ -85,16 +110,11 @@ function toMinor(value: string | null): number | null {
 async function redemptionsByPhone(code: string, phone: string): Promise<number> {
   // Placeholders are counted from the list rather than written out, so adding a
   // status cannot silently shift every parameter after it by one.
-  const gaps = NON_REDEMPTION_STATUSES.map(() => "?").join(", ");
-  const [row] = await query<RowDataPacket & { used: number }>(
-    `SELECT COUNT(*) AS used
-       FROM orders
-      WHERE coupon_code = ?
-        AND deleted_at IS NULL
-        AND status NOT IN (${gaps})
-        AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', ''), 10) = ?`,
-    [code, ...NON_REDEMPTION_STATUSES, phone],
-  );
+  const [row] = await query<RowDataPacket & { used: number }>(REDEMPTIONS_BY_PHONE, [
+    code,
+    ...NON_REDEMPTION_STATUSES,
+    phone,
+  ]);
   return Number(row?.used ?? 0);
 }
 
@@ -148,24 +168,87 @@ export async function validateCoupon(
     return { ok: false, reason: "min-subtotal", minSubtotalMinor: minSubtotal };
   }
 
-  const value = toMinor(row.discount_value) ?? 0;
-  let discountMinor =
-    row.discount_type === "percent"
-      ? // `discount_value` is a percentage, so its paisa conversion has to be
-        // undone before it is used as a rate.
-        Math.round((subtotalMinor * (value / 100)) / 100)
-      : value;
-
-  const cap = toMinor(row.max_discount);
-  if (cap !== null) discountMinor = Math.min(discountMinor, cap);
-
-  // A discount larger than the bag would make the total negative.
-  discountMinor = Math.max(0, Math.min(discountMinor, subtotalMinor));
-
   return {
     ok: true,
     code: row.code,
-    discountMinor,
+    // The same function the coupon drawer's summary sentence and the admin's
+    // promo-on-an-order use: whole rupees, capped, never more than the bag.
+    discountMinor: couponDiscountMinor(subtotalMinor, {
+      discountType: row.discount_type,
+      discountValue: row.discount_value,
+      maxDiscount: row.max_discount,
+    }),
     freeShipping: row.free_shipping === 1,
   };
+}
+
+/** The code can no longer be redeemed by this order. Nothing was written. */
+export class CouponUnavailableError extends Error {
+  constructor(code: string) {
+    super(`Coupon ${code} is no longer available for this order`);
+    this.name = "CouponUnavailableError";
+  }
+}
+
+/**
+ * By name rather than `instanceof`: a module loaded twice (two bundler layers,
+ * a test harness mixing ESM and CJS) has two copies of the class, and
+ * `instanceof` against the wrong one quietly says no.
+ */
+export function isCouponUnavailable(error: unknown): error is CouponUnavailableError {
+  return error instanceof Error && error.name === "CouponUnavailableError";
+}
+
+/**
+ * Take one use of a code, inside the order's own transaction, BEFORE the order
+ * row is written.
+ *
+ * `validateCoupon` runs on the pool, outside any transaction, and the counter
+ * used to be bumped unconditionally afterwards — so two checkouts racing for
+ * the 50th use of a "first 50" code both passed and the count read 51, and two
+ * tabs on one phone both got a once-per-customer discount. Locking the coupon
+ * row serialises every checkout redeeming this code; the count and the limits
+ * are then re-read with locking reads, which see what the other checkout
+ * committed rather than this transaction's older snapshot.
+ *
+ * Throws `CouponUnavailableError` when the use is gone; the order is refused and
+ * re-quoted, and the customer sees the refusal in words.
+ */
+export async function reserveCouponUse(
+  connection: PoolConnection,
+  code: string,
+  phone: string,
+): Promise<void> {
+  const [rows] = await connection.execute<CouponRow[]>(
+    "SELECT * FROM coupons WHERE UPPER(code) = ? AND is_active = 1 LIMIT 1 FOR UPDATE",
+    [code.trim().toUpperCase()],
+  );
+  const row = rows[0];
+  if (!row) throw new CouponUnavailableError(code);
+  if (row.max_uses !== null && row.used_count >= row.max_uses) throw new CouponUnavailableError(code);
+
+  if (row.per_customer_limit !== null && row.per_customer_limit > 0) {
+    const key = normalisePhone(phone);
+    if (key.length === 10) {
+      const [counts] = await connection.execute<(RowDataPacket & { used: number })[]>(
+        `${REDEMPTIONS_BY_PHONE} LOCK IN SHARE MODE`,
+        [row.code, ...NON_REDEMPTION_STATUSES, key],
+      );
+      if (Number(counts[0]?.used ?? 0) >= row.per_customer_limit) throw new CouponUnavailableError(code);
+    }
+  }
+
+  await connection.execute("UPDATE coupons SET used_count = used_count + 1 WHERE id = ?", [row.id]);
+}
+
+/**
+ * Give back the use an order took, when that order stops being a redemption —
+ * its payment failed — so a failed card or an eSewa tab closed mid-payment does
+ * not spend a limited code.
+ */
+export async function releaseCouponUse(connection: PoolConnection, code: string): Promise<void> {
+  await connection.execute(
+    "UPDATE coupons SET used_count = used_count - 1 WHERE UPPER(code) = ? AND used_count > 0",
+    [code.trim().toUpperCase()],
+  );
 }

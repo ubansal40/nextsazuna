@@ -52,17 +52,31 @@ export function computeTotals(parts: Omit<OrderTotals, "totalMinor">): OrderTota
  *
  * Capped by `maxDiscount` and then by the subtotal itself, so a fixed-value
  * code larger than the order cannot hand money back.
+ *
+ * The ONE definition: the checkout (`validateCoupon` in lib/coupons.ts), the
+ * admin's promo on an order, and the coupon drawer's summary sentence all call
+ * this. The checkout used to carry its own copy of the arithmetic, which is how
+ * a drawer and a till come to disagree about what a code is worth.
  */
 export function couponDiscountMinor(
   subtotalMinor: number,
   coupon: { discountType: "percent" | "fixed"; discountValue: string | number; maxDiscount?: string | number | null },
 ): number {
+  /*
+   * Whole rupees, always. Every price in this shop is whole rupees and every
+   * figure on screen is rounded to one, so a discount carrying paise is a
+   * number nobody can be shown: 10% of रु 12,345 is 1,234.50, which the bag
+   * printed as −रु 1,235 above a total of रु 11,111 — rows that do not add up —
+   * while eSewa was asked for 11,110.50. The coupon drawer already refuses paise
+   * in a fixed amount for the same reason; this is the percentage's half, and
+   * the cap is floored so the discount never exceeds the maximum it names.
+   */
   let discount =
     coupon.discountType === "percent"
-      ? Math.round((subtotalMinor * Number(coupon.discountValue)) / 100)
-      : toMinor(coupon.discountValue);
+      ? Math.round((subtotalMinor * Number(coupon.discountValue)) / 10_000) * 100
+      : Math.round(toMinor(coupon.discountValue) / 100) * 100;
   if (coupon.maxDiscount != null && coupon.maxDiscount !== "") {
-    discount = Math.min(discount, toMinor(coupon.maxDiscount));
+    discount = Math.min(discount, Math.floor(toMinor(coupon.maxDiscount) / 100) * 100);
   }
   return Math.max(0, Math.min(discount, subtotalMinor));
 }

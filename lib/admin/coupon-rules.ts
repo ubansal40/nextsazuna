@@ -299,6 +299,10 @@ export function validateDraft(draft: CouponDraft, taken: Iterable<string> = []):
     if (draft.maxDiscount.trim()) {
       if (cap === null || cap <= 0) {
         errors.maxDiscount = "A cap has to be more than nothing. Leave it blank for no cap.";
+      } else if (!Number.isInteger(cap)) {
+        // Same reason as a fixed amount: the summary would print "max रु 1,000"
+        // for a cap of 999.50 while the checkout, in whole rupees, gave 999.
+        errors.maxDiscount = "Use whole rupees for a cap.";
       } else if (cap > MAX_MONEY) {
         errors.maxDiscount = `A cap has to be ${money(MAX_MONEY)} or less.`;
       }

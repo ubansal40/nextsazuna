@@ -96,7 +96,16 @@ export interface EsewaVerification {
   ok: boolean;
   /** "Success", "Pending", an HTTP/network marker, or null when unparsable. */
   status: string | null;
+  /**
+   * eSewa actually answered, success or failure. False when the call timed
+   * out, errored, came back unparsable or "Pending" — the money may well have
+   * moved, and the order must not be written off as unpaid on our say-so.
+   */
+  definitive: boolean;
 }
+
+/** How long a verification call may take before it counts as unanswered. */
+const VERIFY_TIMEOUT_MS = 15_000;
 
 /**
  * Confirm a payment with eSewa directly.
@@ -110,7 +119,7 @@ export async function verifyEsewaPayment(input: {
   referenceId: string;
 }): Promise<EsewaVerification> {
   const { merchant, verifyUrl } = await settings();
-  if (!merchant) return { ok: false, status: "not_configured" };
+  if (!merchant) return { ok: false, status: "not_configured", definitive: false };
 
   const body = new URLSearchParams({
     amt: (input.totalMinor / 100).toFixed(2),
@@ -129,17 +138,21 @@ export async function verifyEsewaPayment(input: {
       },
       body: body.toString(),
       cache: "no-store",
+      // Without a limit a hung eSewa held the customer's return redirect — and
+      // with it their confirmation — for as long as the socket stayed open.
+      signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
     });
     text = await response.text();
-    if (!response.ok) return { ok: false, status: `http_${response.status}` };
+    if (!response.ok) return { ok: false, status: `http_${response.status}`, definitive: false };
   } catch {
-    return { ok: false, status: "network_error" };
+    return { ok: false, status: "network_error", definitive: false };
   }
 
   // The response is a few dozen bytes with one tag worth reading; a DOM parser
   // would cost more than it buys.
   const match = /<response_code\s*>\s*([^<]+?)\s*<\/response_code\s*>/i.exec(text);
   const status = match ? match[1].trim() : null;
+  const code = (status ?? "").toLowerCase();
 
-  return { ok: (status ?? "").toLowerCase() === "success", status };
+  return { ok: code === "success", status, definitive: code === "success" || code === "failure" };
 }

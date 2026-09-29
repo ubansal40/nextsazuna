@@ -31,6 +31,8 @@ interface Banner {
   chip: string;
   icon: IconName;
   tone: "paid" | "pending" | "failed";
+  /** A gateway order the gateway has not confirmed yet — neither paid nor failed. */
+  awaitingPayment?: boolean;
 }
 
 /** Ends the ladder. `buildTimeline` collapses these to a single step. */
@@ -101,6 +103,7 @@ function banner(order: OrderViewData): Banner {
     chip: "Pending",
     icon: "clock",
     tone: "pending",
+    awaitingPayment: true,
   };
 }
 
@@ -143,7 +146,11 @@ export function OrderView({
   return (
     <div className="mx-auto max-w-[840px]">
       {variant === "confirmation" ? (
-        <ConfirmationHead order={order} failed={state.tone === "failed"} />
+        <ConfirmationHead
+          order={order}
+          failed={state.tone === "failed"}
+          awaitingPayment={state.awaitingPayment === true}
+        />
       ) : (
         <StatusHead order={order} />
       )}
@@ -269,24 +276,60 @@ export function OrderView({
   );
 }
 
-function ConfirmationHead({ order, failed }: { order: OrderViewData; failed: boolean }) {
+/**
+ * The three things this page can be telling someone who just paid.
+ *
+ * A gateway order whose payment is still unconfirmed — a verification that
+ * timed out, a bank hold, a card under fraud review — used to be headed "your
+ * order is confirmed" with a success tick, directly above a banner saying the
+ * payment was pending. It gets its own heading, and says not to pay twice.
+ */
+function ConfirmationHead({
+  order,
+  failed,
+  awaitingPayment,
+}: {
+  order: OrderViewData;
+  failed: boolean;
+  awaitingPayment: boolean;
+}) {
+  const head = failed
+    ? {
+        icon: "alert" as const,
+        tone: "bg-error-soft text-error",
+        title: "Your order is saved",
+        detail: "We've held your order — it just needs payment to be completed.",
+      }
+    : awaitingPayment
+      ? {
+          icon: "clock" as const,
+          tone: "bg-primary-50 text-primary-700",
+          title: "We're confirming your payment",
+          detail:
+            "Your order is saved. As soon as your payment provider confirms it we'll be in touch — there's no need to pay again.",
+        }
+      : {
+          icon: "check" as const,
+          tone: "bg-success-soft text-success",
+          title: "Thank you — your order is confirmed",
+          detail: "We've received your order and will be in touch shortly to arrange delivery.",
+        };
+
   return (
     <div className="pt-11 text-center">
       <span
         className={cn(
           "inline-flex size-[66px] items-center justify-center rounded-pill animate-scale-in",
-          failed ? "bg-error-soft text-error" : "bg-success-soft text-success",
+          head.tone,
         )}
       >
-        <Icon name={failed ? "alert" : "check"} size={32} strokeWidth={2.2} />
+        <Icon name={head.icon} size={32} strokeWidth={2.2} />
       </span>
       <h1 className="m-0 mt-5 text-content-h1 font-normal tracking-tight text-heading text-balance policy-stacked:text-content-h1-sm">
-        {failed ? "Your order is saved" : "Thank you — your order is confirmed"}
+        {head.title}
       </h1>
       <p className="mx-auto mt-3 max-w-[46ch] text-control leading-relaxed text-muted">
-        {failed
-          ? "We've held your order — it just needs payment to be completed."
-          : "We've received your order and will be in touch shortly to arrange delivery."}
+        {head.detail}
       </p>
       <OrderNumberChip orderNumber={order.orderNumber} />
     </div>
@@ -361,6 +404,9 @@ function Timeline({ steps }: { steps: TimelineStep[] }) {
                   month: "short",
                   hour: "2-digit",
                   minute: "2-digit",
+                  // The shop's clock, not the renderer's: this view is drawn on
+                  // the server for the receipt and in the browser for a lookup.
+                  timeZone: "Asia/Kathmandu",
                 })}
               </time>
             )}
