@@ -10,6 +10,7 @@
  * Run: npx tsx scripts/check-pricing.mts
  */
 import {
+  FORMULA_MAX_LENGTH,
   MRP_MULTIPLIER,
   computeRulePrice,
   evaluateFormula,
@@ -17,6 +18,7 @@ import {
   formulaError,
   keepOneDot,
   mrpFromSalePrice,
+  weightForMatch,
   wholeRupees,
 } from "../lib/admin/pricing";
 import { OFF_VOCABULARY_SUFFIX, withCurrentValue, withValuesInUse } from "../lib/admin/vocab-options";
@@ -61,6 +63,19 @@ checks.push(
   ["formulaError returns a message for an invalid one", typeof formulaError("net.toFixed(2)") === "string"],
 );
 
+// The rule editor now shows THIS check while the author types, and disables
+// Save on it. Its own hand-rolled check approved both of these, and the server
+// then refused them — after the drawer had already closed on the author's work.
+checks.push(
+  ["an alias the evaluator does not know is refused (gwt is not a variable)", formulaError("gwt*6500") !== null],
+  ["a doubled operator is refused", formulaError("net * * 2") !== null],
+  // Refused whole, rather than cut to the limit and saved if what is left parses.
+  [
+    "a formula over the length limit is refused",
+    formulaError(`net_weight * 1${"0".repeat(FORMULA_MAX_LENGTH)}`) !== null,
+  ],
+);
+
 // --- the matcher ---
 const rules = [
   { material: "Gold", purity: "18KT", category_id: 5, formula: "net_weight * 12000", priority: 1 },
@@ -95,6 +110,28 @@ checks.push(
 checks.push(
   ["computeRulePrice returns a fixed-2 string", computeRulePrice(rules, { material: "Gold", purity: null, categoryIds: [], net_weight: 3 }) === "29400.00"],
   ["computeRulePrice is null when no rule matches", computeRulePrice([], { material: "Gold", purity: null, categoryIds: [], net_weight: 3 }) === null],
+);
+
+// A rule that cannot price THESE weights gives no price — it used to throw,
+// which aborted the editor's preview and left the previous weights' price on
+// screen. And it does not fall through to a lower rule the author never meant.
+const perCarat = { material: null, purity: null, category_id: null, formula: "net_weight * 1000 / diamond_weight" };
+const catchAll = { material: null, purity: null, category_id: null, formula: "net_weight * 5000" };
+const noDiamonds = { material: null, purity: null, categoryIds: [], net_weight: 3, diamond_weight: 0 };
+let threw = false;
+let divided: string | null = "unset";
+try {
+  divided = computeRulePrice([perCarat], noDiamonds);
+} catch {
+  threw = true;
+}
+checks.push(
+  ["a division by a zero weight yields no price rather than throwing", !threw && divided === null],
+  [
+    "a stored formula that no longer parses yields no price",
+    computeRulePrice([{ ...catchAll, formula: "net * * 2" }], noDiamonds) === null,
+  ],
+  ["...and neither falls through to the next rule", computeRulePrice([perCarat, catchAll], noDiamonds) === null],
 );
 
 
@@ -159,6 +196,31 @@ checks.push(
       [{ material: "gold", purity: null, category_id: null, formula: "x", net_weight: { min: 1, max: 4 } }],
       { material: "Silver", purity: null, categoryIds: [], net_weight: 2 },
     ) === null,
+  ],
+);
+
+/* --- a blank weight reaches the matcher as unknown, not as zero ------------
+ * The rule above ("NO weight does not match a banded rule") only holds if a
+ * blank field or a NULL column arrives as `undefined`. Both callers used
+ * `Number(x) || 0`, which made a blank a measured zero — inside every "under X"
+ * band — so a piece with no diamond weight on record took the light-diamond rule.
+ */
+const underHalfCarat = [
+  { material: null, purity: null, category_id: null, formula: "x", diamond_weight: { min: null, max: 0.5 } },
+];
+checks.push(
+  ["a blank field is unknown", weightForMatch("") === undefined && weightForMatch("   ") === undefined],
+  ["a NULL column is unknown", weightForMatch(null) === undefined && weightForMatch(undefined) === undefined],
+  ["rubbish is unknown, never NaN", weightForMatch("abc") === undefined],
+  ["a recorded zero is still zero", weightForMatch("0.000") === 0],
+  ["a DECIMAL string is its number", weightForMatch(" 2.500 ") === 2.5],
+  [
+    "a blank diamond weight does not match an 'under 0.5 ct' band",
+    findMatchingRule(underHalfCarat, { material: null, purity: null, categoryIds: [], diamond_weight: weightForMatch("") }) === null,
+  ],
+  [
+    "...while a recorded zero does",
+    findMatchingRule(underHalfCarat, { material: null, purity: null, categoryIds: [], diamond_weight: weightForMatch("0.000") }) !== null,
   ],
 );
 

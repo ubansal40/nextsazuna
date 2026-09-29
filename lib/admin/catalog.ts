@@ -280,8 +280,10 @@ export type DeleteOutcome = { mode: "hard" } | { mode: "soft"; reason: "has_orde
  * A product referenced by an order line is a seven-year record's counterpart and
  * is never hard-deleted; it is unpublished (`is_active = 0`) instead, so the
  * order still names a real product. Only a product with zero order history is
- * removed outright, its `product_images` rows cascading with it. (Image FILES on
- * disk are unlinked by the image pipeline; external URLs have nothing to clean.)
+ * removed outright, its `product_images` rows cascading with it. (Its image
+ * FILES are not: nothing in the app deletes a processed photo from disk — not
+ * this, and not a photo removed in the editor — so they stay in the upload
+ * directory until someone clears them by hand.)
  */
 export async function deleteProduct(admin: AdminContext, id: number): Promise<DeleteOutcome> {
   return transaction(async (conn) => {

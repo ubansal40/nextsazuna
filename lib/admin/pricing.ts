@@ -140,6 +140,24 @@ function withinRange(value: number | null | undefined, range: WeightRange | null
   return true;
 }
 
+/**
+ * A stored or typed weight as the matcher should see it: blank is UNKNOWN, not
+ * zero.
+ *
+ * `Number("")` and `Number(null)` are both 0, and 0 sits inside every "under X"
+ * band — so a piece with no diamond weight on record matched a rule written for
+ * light diamond pieces, the opposite of what `withinRange` promises. A recorded
+ * zero is still zero. (The formula reads a missing weight as 0 regardless; this
+ * is only about which rule gets to price the piece.)
+ */
+export function weightForMatch(value: string | number | null | undefined): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  const raw = String(value).trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 export interface ProductPricingInput {
   material: string | null;
   purity: string | null;
@@ -181,6 +199,14 @@ export function findMatchingRule<T extends PricingRuleCondition>(
  * caller then leaves the price as entered). Rounded to paisa via `toFixed(2)` and
  * returned as a string so it slots straight into a DECIMAL column without a float
  * round-trip.
+ *
+ * Also null when the matching rule cannot produce a price for THESE weights — a
+ * division by a zero weight, or a stored formula that no longer parses. That is
+ * the same outcome as a formula that comes out at zero: no price. Throwing
+ * instead aborted the editor's preview and left its previous answer on screen,
+ * derived from weights the piece no longer has. It does not fall through to the
+ * next rule: the first match is the rule meant for this piece, and pricing it
+ * from a lower one would be a guess.
  */
 export function computeRulePrice(
   rules: readonly PricingRuleCondition[],
@@ -188,7 +214,12 @@ export function computeRulePrice(
 ): string | null {
   const rule = findMatchingRule(rules, product);
   if (!rule) return null;
-  const value = evaluateFormula(rule.formula, product);
+  let value: number;
+  try {
+    value = evaluateFormula(rule.formula, product);
+  } catch {
+    return null;
+  }
   if (value <= 0) return null;
   return value.toFixed(2);
 }

@@ -22,7 +22,8 @@ export type AutoField = (typeof AUTO_FIELDS)[number];
  * This is the whole of the autofill-vs-typed rule: autofill writes into a field
  * that is `empty` or that autofill itself last wrote (`auto`), and NEVER into
  * one the admin has edited (`typed`). Correcting a mistyped SKU therefore
- * re-fills the weights it filled before, while a weight the admin measured by
+ * withdraws the weights it filled before (`withdrawAutofill`) and lets the
+ * corrected SKU's row fill them afresh, while a weight the admin measured by
  * hand survives every subsequent lookup. Overwriting a typed field is possible,
  * but only as the explicit "Use sheet values" action on the card.
  */
@@ -337,6 +338,39 @@ export function applyAutofill(
   next.sheetRow = row;
   next.sheetFilled = filled || card.sheetFilled;
   return { patch: next, filled };
+}
+
+/**
+ * Withdraw what the inventory sheet filled for the SKU in the field, because
+ * that SKU is changing.
+ *
+ * An autofilled value belongs to the SKU that fetched it, exactly as the sheet
+ * row does. Without this, correcting a SKU to one that is NOT on the sheet kept
+ * the previous piece's weights and purity — and the price derived from them —
+ * on a different piece. So the fields autofill owns (`auto`) go back to empty,
+ * and the new SKU's own row, if it has one, fills them again. A typed value was
+ * never the sheet's and is untouched.
+ *
+ * The rule price goes with them, as does the sale price unless the admin typed
+ * it: it was derived from weights this card is giving back. Null when autofill
+ * owned nothing, so a SKU typed over hand-entered weights changes nothing else.
+ */
+export function withdrawAutofill(card: EditorCard): Partial<EditorCard> | null {
+  const owned = AUTO_FIELDS.filter((field) => card.origin[field] === "auto");
+  if (owned.length === 0) return null;
+  const origin = { ...card.origin };
+  const next: Partial<EditorCard> = { origin, rulePrice: null };
+  for (const field of owned) {
+    next[field] = "";
+    origin[field] = "empty";
+  }
+  if (!card.saleOverride) next.salePrice = "";
+  return next;
+}
+
+/** A card mid-save or saved is locked: nothing asynchronous may write to it. */
+export function isLocked(card: EditorCard): boolean {
+  return card.status === "saving" || card.status === "saved";
 }
 
 /** Cards that still need saving — an already-saved card is locked. */

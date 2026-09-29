@@ -1,9 +1,9 @@
 import "server-only";
 
-import type { PoolConnection, RowDataPacket } from "mysql2/promise";
+import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
 import { pool, transaction } from "../db";
 import { recordAdminAction } from "./audit";
-import { computeRulePrice, mrpFromSalePrice, type PricingRuleCondition } from "./pricing";
+import { computeRulePrice, mrpFromSalePrice, weightForMatch, type PricingRuleCondition } from "./pricing";
 import { MAX_PRODUCT_PHOTOS } from "./product-limits";
 import type { AdminContext } from "./rbac";
 
@@ -149,8 +149,16 @@ interface CurrentRow extends RowDataPacket {
   slug: string;
   sku: string;
   is_active: number;
-  /** How many photos the product has right now — governs the SKU lock. */
-  photo_count: number;
+  /** The fields the stored description may have been generated from. */
+  name: string;
+  material: string | null;
+  purity: string | null;
+  description: string | null;
+  /** A legacy product's one photo, when it has no product_images rows. */
+  image_url: string | null;
+}
+interface UrlRow extends RowDataPacket {
+  image_url: string;
 }
 
 /** Active rules in priority order, with their weight bands mapped for the
@@ -199,14 +207,19 @@ export async function previewRulePrice(input: {
   diamondWeight: string;
   stoneWeight: string;
 }): Promise<string | null> {
-  return computeRulePrice(await loadPricingRules(), {
+  const [rules, categoryIds] = await Promise.all([loadPricingRules(), withAncestors(pool(), input.categoryIds)]);
+  return computeRulePrice(rules, {
     material: input.material || null,
     purity: input.purity || null,
-    categoryIds: input.categoryIds,
-    gross_weight: Number(input.grossWeight) || 0,
-    net_weight: Number(input.netWeight) || 0,
-    diamond_weight: Number(input.diamondWeight) || 0,
-    stone_weight: Number(input.stoneWeight) || 0,
+    // With parents, as the save will store them: a rule on Rings prices every
+    // saved product in Rings › Solitaire, so the preview must see Rings too.
+    categoryIds,
+    // A blank field is an unknown weight, which matches no banded rule — see
+    // `weightForMatch`. The formula still reads it as 0.
+    gross_weight: weightForMatch(input.grossWeight),
+    net_weight: weightForMatch(input.netWeight),
+    diamond_weight: weightForMatch(input.diamondWeight),
+    stone_weight: weightForMatch(input.stoneWeight),
   });
 }
 
@@ -223,8 +236,9 @@ async function uniqueSlug(conn: PoolConnection, base: string, excludeId: number 
 }
 
 /** Categories plus their parents, so a product in a child category also lists
- *  under its parent — the storefront browses by the whole tree. */
-async function withAncestors(conn: PoolConnection, categoryIds: number[]): Promise<number[]> {
+ *  under its parent — the storefront browses by the whole tree. The rule
+ *  preview expands through the same query, outside any transaction. */
+async function withAncestors(conn: Pool | PoolConnection, categoryIds: number[]): Promise<number[]> {
   if (categoryIds.length === 0) return [];
   const placeholders = categoryIds.map(() => "?").join(",");
   const [rows] = await conn.execute<(RowDataPacket & { parent_id: number | null })[]>(
@@ -246,7 +260,7 @@ async function writeJoins(conn: PoolConnection, productId: number, input: Produc
   }
 }
 
-function autoDescription(input: ProductInput): string {
+function autoDescription(input: Pick<ProductInput, "name" | "material" | "purity" | "description">): string {
   if (input.description) return input.description;
   const bits = [input.purity, input.material].filter(Boolean).join(" ");
   return bits ? `${input.name} in ${bits}.` : `${input.name}.`;
@@ -275,13 +289,12 @@ export async function saveProduct(
   const imageUrls = input.imageUrls;
 
   // Current state for an update: keep the existing slug and visibility, and
-  // learn whether photos exist (which locks the SKU).
+  // learn what the SKU lock and the description need to know.
   let current: CurrentRow | null = null;
   if (id) {
     const [rows] = await pool().execute<CurrentRow[]>(
-      `SELECT p.slug, p.sku, p.is_active,
-              (SELECT COUNT(*) FROM product_images pi WHERE pi.product_id = p.id) AS photo_count
-         FROM products p WHERE p.id = ? LIMIT 1`,
+      `SELECT slug, sku, is_active, name, material, purity, description, image_url
+         FROM products WHERE id = ? LIMIT 1`,
       [id],
     );
     current = rows[0] ?? null;
@@ -298,12 +311,31 @@ export async function saveProduct(
      *
      * The editor disables the field, which is where an operator actually meets
      * this rule. This is the boundary that makes it true.
+     *
+     * What locks it is a stamped photo that SURVIVES this save — one the product
+     * already has and the save still lists. The editor's way out is to remove
+     * the photos and then change the code, which arrives here as one save with
+     * the old photos gone; counting the photos the product had BEFORE refused
+     * exactly that. (A legacy product's one photo lives in `image_url` alone,
+     * and the editor shows and locks for it too.)
+     *
+     * Both SKUs are compared normalised, as `parseProductInput` normalises the
+     * incoming one: a legacy "saz-ring-01" is the same code as "SAZ-RING-01", and
+     * comparing it raw failed every save of such a product.
      */
-    if (Number(current.photo_count) > 0 && input.sku !== current.sku) {
-      throw new ProductValidationError(
-        "This product's photos are stamped with its SKU, so the SKU can't be changed. Remove the photos first.",
-        "sku",
+    if (input.sku !== current.sku.trim().toUpperCase()) {
+      const [photoRows] = await pool().execute<UrlRow[]>(
+        "SELECT image_url FROM product_images WHERE product_id = ?",
+        [id],
       );
+      const stamped = new Set(photoRows.map((row) => row.image_url));
+      if (current.image_url) stamped.add(current.image_url);
+      if (imageUrls.some((url) => stamped.has(url))) {
+        throw new ProductValidationError(
+          "This product's photos are stamped with its SKU, so the SKU can't be changed. Remove the photos first.",
+          "sku",
+        );
+      }
     }
   }
 
@@ -312,7 +344,24 @@ export async function saveProduct(
   // every time cannot wipe anything an operator typed — and keeping a stale MRP
   // beside an edited sale price is the only way the pair could disagree.
   const price = mrpFromSalePrice(input.salePrice);
-  const description = autoDescription(input);
+
+  // The editor has no description field, so an edit hands back whatever is
+  // stored — and the sentence generated on create then froze on the name,
+  // material and purity the piece had that day. A stored description that is
+  // still exactly what would be generated from the stored values was never
+  // written by anyone, so it follows the new ones. Anything else is somebody's
+  // words and is kept verbatim.
+  const generated =
+    current !== null &&
+    input.description === (current.description ?? "") &&
+    input.description ===
+      autoDescription({
+        name: current.name,
+        material: current.material ?? "",
+        purity: current.purity ?? "",
+        description: "",
+      });
+  const description = autoDescription(generated ? { ...input, description: "" } : input);
   // New products publish by default; an edit keeps whatever visibility it had.
   const activeNow = (id ? current!.is_active === 1 : true) ? 1 : 0;
   const primaryImage = imageUrls[0] ?? null;

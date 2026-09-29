@@ -30,12 +30,15 @@ export function MultiSelect({
   onChange,
   placeholder = "Select…",
   ariaLabel,
+  disabled = false,
 }: {
   options: MultiSelectOption[];
   selected: string[];
   onChange: (next: string[]) => void;
   placeholder?: string;
   ariaLabel?: string;
+  /** Shows the picks but takes no new ones. */
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   /** Where the list opened, decided on the click that opened it. */
@@ -93,16 +96,21 @@ export function MultiSelect({
     setOpen(true);
   }
 
+  // A list left open when the control is disabled (a save starting from the
+  // keyboard) is hidden, not left taking picks the caller would throw away.
+  const expanded = open && !disabled;
+
   return (
     <div className="relative" ref={ref}>
       <button
         ref={buttonRef}
         type="button"
         onClick={toggleOpen}
+        disabled={disabled}
         aria-haspopup="listbox"
-        aria-expanded={open}
+        aria-expanded={expanded}
         aria-label={ariaLabel}
-        className="flex min-h-10 w-full items-center gap-1.5 rounded-[var(--sz-admin-radius-control)] border border-line bg-admin-canvas px-2.5 py-1.5 text-left text-[13px] text-body hover:border-accent"
+        className="flex min-h-10 w-full items-center gap-1.5 rounded-[var(--sz-admin-radius-control)] border border-line bg-admin-canvas px-2.5 py-1.5 text-left text-[13px] text-body hover:border-accent disabled:cursor-not-allowed disabled:opacity-[var(--sz-disabled-opacity)] disabled:hover:border-line"
       >
         <span className="flex flex-1 flex-wrap gap-1">
           {chips.length > 0 ? (
@@ -115,10 +123,10 @@ export function MultiSelect({
             <span className="text-muted">{placeholder}</span>
           )}
         </span>
-        <Icon name="chevron-down" size={14} className={cn("shrink-0 text-muted transition-transform", open && "rotate-180")} />
+        <Icon name="chevron-down" size={14} className={cn("shrink-0 text-muted transition-transform", expanded && "rotate-180")} />
       </button>
 
-      {open && (
+      {expanded && (
         <div
           role="listbox"
           aria-multiselectable="true"

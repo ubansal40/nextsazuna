@@ -31,7 +31,8 @@ type Phase =
   | { kind: "busy"; file: File; mode: "dry" | "apply"; step: string }
   | { kind: "preview"; file: File; plan: StockPlan }
   | { kind: "result"; fileName: string; plan: StockPlan }
-  | { kind: "syncError"; file: File | null };
+  /** `unknown` when an apply got no answer — it may have committed regardless. */
+  | { kind: "syncError"; file: File | null; outcome: "unchanged" | "unknown" };
 
 const ACCEPT = ".xlsx,.csv";
 const MAX_BYTES = 12 * 1024 * 1024;
@@ -79,11 +80,13 @@ export function StockScreen() {
 
       if (!response.ok || !payload.ok || !payload.plan) {
         // A 400 is the file's fault and the message names the fix; anything
-        // else is ours, and gets the spec's "nothing was applied" panel.
+        // else is ours, and gets the spec's "nothing was applied" panel. That
+        // is true here: the route only answers after its transaction has
+        // committed or rolled back, and it says `ok: false` for the rollback.
         if (response.status === 400) {
           setPhase({ kind: "fileError", title: "That file couldn't be used", body: payload.error ?? "Check the file and try again." });
         } else {
-          setPhase({ kind: "syncError", file });
+          setPhase({ kind: "syncError", file, outcome: "unchanged" });
         }
         return;
       }
@@ -94,7 +97,12 @@ export function StockScreen() {
           : { kind: "result", fileName: file.name, plan: payload.plan },
       );
     } catch {
-      setPhase({ kind: "syncError", file });
+      // No answer from the route at all: the connection dropped, or a proxy in
+      // front of the app timed out and replied in its place. Harmless for a dry
+      // run. For an apply it means nobody knows — the server may have finished
+      // the update after the browser stopped listening, so "nothing was
+      // applied" would be a guess presented as a fact.
+      setPhase({ kind: "syncError", file, outcome: mode === "apply" ? "unknown" : "unchanged" });
     }
   }
 
@@ -378,14 +386,26 @@ export function StockScreen() {
           <span className="inline-flex size-12 items-center justify-center rounded-pill bg-error-soft text-error">
             <Icon name="alert" size={22} />
           </span>
-          <h3 className="mt-3 font-display text-lg font-medium text-heading">The sync didn&rsquo;t finish</h3>
-          <p className="mx-auto mt-1.5 max-w-[40ch] text-[12.5px] leading-relaxed text-muted">
-            No changes were applied — the catalogue is exactly as it was. Try again, or upload the file once more.
-          </p>
+          {phase.outcome === "unknown" ? (
+            <>
+              <h3 className="mt-3 font-display text-lg font-medium text-heading">We couldn&rsquo;t confirm the sync</h3>
+              <p className="mx-auto mt-1.5 max-w-[40ch] text-[12.5px] leading-relaxed text-muted">
+                The connection dropped before the server answered, so the file may or may not have been applied. Check
+                it again: if the dry run finds nothing left to publish or draft, the changes went through.
+              </p>
+            </>
+          ) : (
+            <>
+              <h3 className="mt-3 font-display text-lg font-medium text-heading">The sync didn&rsquo;t finish</h3>
+              <p className="mx-auto mt-1.5 max-w-[40ch] text-[12.5px] leading-relaxed text-muted">
+                No changes were applied — the catalogue is exactly as it was. Try again, or upload the file once more.
+              </p>
+            </>
+          )}
           <div className="mt-4 flex flex-wrap justify-center gap-2.5">
             {phase.file && (
               <button type="button" onClick={() => void run(phase.file!, "dry")} className={primaryButton}>
-                Try again
+                {phase.outcome === "unknown" ? "Check the file again" : "Try again"}
               </button>
             )}
             <button type="button" onClick={() => setPhase({ kind: "idle" })} className={secondaryButton}>

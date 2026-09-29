@@ -203,15 +203,18 @@ async function getLogoOverlay(): Promise<{ buffer: Buffer; left: number }> {
  * But it must not be so narrow that it silently rewrites the code it is meant to
  * record: `.` is here because a SKU like `DLR10102-22KT-YG-0.75CT` was being
  * stamped as `…YG-075CT`, which is a different, wrong, entirely plausible-looking
- * SKU burned into a photograph nobody would think to re-read.
+ * SKU burned into a photograph nobody would think to re-read. `+ # ( ) ,` are
+ * here for the same reason — none of them means anything to pango. The cap is
+ * the `products.sku` column's own 80: at 64, a longer code the catalogue
+ * accepts was stamped as a shorter, different one.
  */
 export function normaliseSku(sku: string): string {
   return (
     String(sku ?? "")
       .trim()
       .toUpperCase()
-      .replace(/[^A-Z0-9_./\- ]/g, "")
-      .slice(0, 64) || "SKU"
+      .replace(/[^A-Z0-9_./+#(),\- ]/g, "")
+      .slice(0, 80) || "SKU"
   );
 }
 
@@ -351,7 +354,7 @@ async function buildSkuLabel(sku: string): Promise<OverlayOptions> {
    * `wrap: "none"` with a fixed width does not ellipsize, it cuts — so a long
    * SKU at a fixed 32px would render as a *different, shorter* SKU burned into
    * the photograph, which is the same class of fault as dropping the decimal
-   * point. Sizing to fit means a 64-character SKU comes out smaller but whole.
+   * point. Sizing to fit means an 80-character SKU comes out smaller but whole.
    */
   const fontSize = Math.max(
     12,
