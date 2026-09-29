@@ -33,6 +33,8 @@ export const faqs = {
         {
           id: "is-cod-really-available",
           question: "Is COD really available?",
+          // The copy only ever says "COD"; this is what most people type.
+          keywords: "cash on delivery",
           answer:
             "Yes, on every order, everywhere in Nepal. Pay the courier at your doorstep — no advance, no online payment, no extra fee. You can also start with COD and switch to a prepaid method by replying to our WhatsApp message.",
         },

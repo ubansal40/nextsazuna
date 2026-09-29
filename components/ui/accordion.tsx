@@ -75,8 +75,14 @@ export function Accordion({
         // The card draws its own frame and rules between rows. `~` rather than
         // `+` so a filtered-out row does not leave a divider stranded above the
         // next visible one.
+        //
+        // `overflow-clip`, not `-hidden`: both clip to the rounded frame, but
+        // `hidden` also makes the card a scroll container, and scrolling a row
+        // into view clips its scroll margin to that container — the first
+        // question of a topic landed flush under the sticky header however
+        // much margin it asked for. `clip` is not scrollable, so it cannot.
         card
-          ? "overflow-hidden rounded-[var(--sz-radius-lg)] border border-line bg-raised [&>*:not([hidden])~*:not([hidden])]:border-t [&>*:not([hidden])~*:not([hidden])]:border-line-soft"
+          ? "overflow-clip rounded-[var(--sz-radius-lg)] border border-line bg-raised [&>*:not([hidden])~*:not([hidden])]:border-t [&>*:not([hidden])~*:not([hidden])]:border-line-soft"
           : "divide-y divide-line border-y border-line",
         className,
       )}
@@ -87,7 +93,9 @@ export function Accordion({
           id={item.id}
           name={exclusive ? group : undefined}
           open={defaultOpen.includes(item.id)}
-          className="group"
+          // The id is a deep-link target (/faqs#is-cod-really-available), and
+          // without the offset the panel it opens landed under the sticky header.
+          className="group scroll-mt-[var(--sz-anchor-offset)]"
           {...item.data}
         >
           <summary

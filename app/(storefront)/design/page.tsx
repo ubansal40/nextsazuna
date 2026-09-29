@@ -26,6 +26,9 @@ import {
 export const metadata: Metadata = {
   title: "Ceremony design system",
   description: "Every component and variant in the Sazuna Ceremony design system.",
+  // A reference for the people building the shop, not a page of it: its
+  // product cards carry invented prices that must not turn up in a search.
+  robots: { index: false, follow: false },
 };
 
 const PRIMARY_STEPS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900] as const;
@@ -448,10 +451,13 @@ export default function DesignSystemPage() {
         title="Product card"
         intro="The product is the hero. Sale pricing is a hard rule — oxblood, weight 600, Geist Mono, with the original struck alongside. Regular prices stay ink."
       >
+        {/* Demo pieces, not stock. They linked to /jewellery/<slug> without the
+            `.html` every product URL carries (ADR 0007), for products that do
+            not exist either way — so they point back at this section. */}
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <ProductCard
             title="Solitaire Halo Ring"
-            href="/jewellery/solitaire-halo-ring"
+            href="#cards"
             price="रु 1,25,000"
             compareAtPrice="रु 1,40,000"
             offerLabel="Offer"
@@ -459,13 +465,13 @@ export default function DesignSystemPage() {
           />
           <ProductCard
             title="Petal Drop Earrings"
-            href="/jewellery/petal-drop-earrings"
+            href="#cards"
             price="रु 78,500"
             certified
           />
           <ProductCard
             title="Halo Solitaire Pendant"
-            href="/jewellery/halo-solitaire-pendant"
+            href="#cards"
             price="रु 96,000"
             outOfStock
           />

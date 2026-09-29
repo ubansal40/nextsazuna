@@ -81,9 +81,11 @@ export function AnnouncementBar({ messages, autoSlide = true, interval = 3200 }:
 
           {messages.length > 1 && (
             <span aria-hidden="true" className="flex shrink-0 items-center gap-[5px]">
-              {messages.map((label, dot) => (
+              {messages.map((_, dot) => (
                 <span
-                  key={label}
+                  // Positional, one per message: the admin can enter the same
+                  // copy twice, and keyed by it two dots collided.
+                  key={dot}
                   className={cn(
                     "h-[var(--sz-ann-dot-h)] rounded-[2px] transition-[width,background-color] duration-[var(--sz-dur)] ease-[var(--sz-ease-out)]",
                     dot === index

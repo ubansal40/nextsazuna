@@ -127,27 +127,37 @@ export async function SiteFooter() {
               columns would squash. A real <details>, so it opens without
               JavaScript and announces its state to a screen reader for free —
               and it stays a single copy of the links, rather than one arrangement
-              per breakpoint. It is rendered `open`: that is the desktop state,
-              where the summary is inert and reads as the eyebrow it replaces.
-              Below 760px the summary becomes the control and a customer can
-              collapse a section they are done with. */}
+              per breakpoint. It is rendered `open`, and below 760px the summary
+              is the control, so a customer can collapse a section they are done
+              with.
+
+              On the rail there is nothing to collapse, so there is no summary
+              there at all: a plain eyebrow stands in for it. The summary used
+              to stay on the rail as that eyebrow, made pointer-inert — but it
+              still took focus, and Enter or Space shut a column that no click
+              could reopen. The content is also held visible on the rail, so a
+              section collapsed on a phone is not stranded shut when the window
+              widens. */}
           {FOOTER_SECTIONS.map((section) => (
             <nav
               key={section.title}
               aria-label={section.title}
               className="footer-stacked:border-t footer-stacked:border-footer-rule"
             >
-              <details open className="group">
+              <p className="m-0 mb-4 font-mono text-eyebrow uppercase tracking-eyebrow text-footer-eyebrow footer-stacked:hidden">
+                {section.title}
+              </p>
+              <details
+                open
+                className="group not-footer-stacked:details-content:[content-visibility:visible]"
+              >
                 <summary
                   className={cn(
-                    "flex list-none items-center justify-between gap-3",
+                    "hidden list-none items-center justify-between gap-3",
                     "font-mono text-eyebrow uppercase tracking-eyebrow text-footer-eyebrow",
                     "marker:hidden [&::-webkit-details-marker]:hidden",
-                    // Inert on the rail: the column is always open there, so the
-                    // summary must not invite a click that would close it.
-                    "mb-4 pointer-events-none",
-                    "footer-stacked:mb-0 footer-stacked:min-h-11 footer-stacked:cursor-pointer",
-                    "footer-stacked:pointer-events-auto footer-stacked:py-3.5",
+                    "footer-stacked:flex footer-stacked:min-h-11 footer-stacked:cursor-pointer",
+                    "footer-stacked:py-3.5",
                   )}
                 >
                   {section.title}

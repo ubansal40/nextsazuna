@@ -1,3 +1,4 @@
+import { unstable_rethrow } from "next/navigation";
 import { currentCustomer } from "@/lib/auth/session";
 import { getAnnouncementBar, getWhatsAppHref } from "@/lib/content";
 import { SiteFooter } from "./site-footer";
@@ -33,7 +34,7 @@ export async function StorefrontShell({ children }: { children: React.ReactNode 
   const [announcement, whatsappHref, signedIn] = await Promise.all([
     getAnnouncementBar(),
     getWhatsAppHref(),
-    currentCustomer(),
+    sessionCustomer(),
   ]);
 
   /**
@@ -63,4 +64,28 @@ export async function StorefrontShell({ children }: { children: React.ReactNode 
       {whatsappHref && <WhatsAppButton href={whatsappHref} />}
     </ToastProvider>
   );
+}
+
+/**
+ * The session read, degraded to "signed out" when the database cannot answer.
+ *
+ * The two content blocks beside it already degrade to null; this was the one
+ * read in the shell that threw. Every storefront page waits on it, and a
+ * layout's own error is caught by no error.tsx beneath it — so a database blip
+ * served every customer holding a session cookie a bare error page, while
+ * everyone signed out browsed on. Now they get the shop with a sign-in button,
+ * and since nothing is deleted, the next request that reaches the database
+ * finds their session again.
+ *
+ * `unstable_rethrow` first: `cookies()` signals dynamic rendering by throwing,
+ * and swallowing that would let Next prerender the page as signed out.
+ */
+async function sessionCustomer() {
+  try {
+    return await currentCustomer();
+  } catch (error) {
+    unstable_rethrow(error);
+    console.error("[shell] customer session unavailable; rendering signed out", error);
+    return null;
+  }
 }

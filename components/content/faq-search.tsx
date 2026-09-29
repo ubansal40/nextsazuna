@@ -22,7 +22,10 @@ import { whatsappHref } from "@/lib/whatsapp";
  */
 
 import { FAQ_LIST_ID } from "./faq-anchor";
-/** Set on each <details>, holding its question and answer, already lowercased. */
+/**
+ * Set on each <details>, holding its topic, question, answer and any search
+ * keywords, already lowercased.
+ */
 export const FAQ_SEARCH_ATTR = "data-faq-search";
 
 export function FaqSearch({ resultCount }: { resultCount: number }) {
@@ -55,18 +58,26 @@ export function FaqSearch({ resultCount }: { resultCount: number }) {
     const root = document.getElementById(FAQ_LIST_ID);
     if (!root) return;
 
-    const needle = value.trim().toLowerCase();
+    /**
+     * Every word has to appear, in any order and anywhere in the entry. The
+     * whole query used to be matched as one run of text, so "free shipping"
+     * missed "Is shipping really free?" and "ring size" missed the sizing
+     * question — and "returns" matched nothing, because the topic it names was
+     * not part of what was searched.
+     */
+    const terms = value.trim().toLowerCase().split(/\s+/).filter(Boolean);
     let hits = 0;
 
     for (const topic of root.querySelectorAll<HTMLElement>("[data-faq-topic]")) {
       let shown = 0;
 
       for (const item of topic.querySelectorAll<HTMLDetailsElement>("[data-faq-search]")) {
-        const hit = !needle || (item.getAttribute(FAQ_SEARCH_ATTR) ?? "").includes(needle);
+        const haystack = item.getAttribute(FAQ_SEARCH_ATTR) ?? "";
+        const hit = terms.every((term) => haystack.includes(term));
         item.hidden = !hit;
         // A hit that stays collapsed hides the very text that matched, so
         // searching opens what it finds — and clearing puts them all away again.
-        item.open = hit && needle.length > 0;
+        item.open = hit && terms.length > 0;
         if (hit) shown += 1;
       }
 

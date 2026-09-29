@@ -58,8 +58,10 @@ export default function FaqsPage() {
     <div className={policyContainer}>
       <script
         type="application/ld+json"
-        // Serialised from a literal built above, not from user input.
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+        // Serialised from a literal built above, not from user input — escaped
+        // the same way as every other JSON-LD block regardless, so a `<` in the
+        // copy can never end the tag early.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema).replace(/</g, "\\u003c") }}
       />
 
       <ContentHeader kicker={faqs.kicker} title={faqs.title} updated={faqs.updated}>
@@ -78,8 +80,15 @@ export default function FaqsPage() {
                 id: item.id,
                 question: item.question,
                 answer: <p className="m-0 max-w-[64ch]">{renderInline(item.answer)}</p>,
+                // The topic is part of the entry: "returns" should find the
+                // Returns questions whether or not their copy says the word.
                 // Lowercased here so the filter never has to case-fold on input.
-                data: { "data-faq-search": `${item.question} ${plainText(item.answer)}`.toLowerCase() },
+                data: {
+                  "data-faq-search": [topic.title, item.question, plainText(item.answer), item.keywords]
+                    .filter(Boolean)
+                    .join(" ")
+                    .toLowerCase(),
+                },
               }))}
             />
           </section>

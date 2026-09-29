@@ -41,6 +41,8 @@ export function Select({
           id={id}
           disabled={disabled}
           aria-invalid={hasError || undefined}
+          // Field renders the helper and error under these ids; as in Input.
+          aria-describedby={id ? (hasError ? `${id}-error` : helper ? `${id}-helper` : undefined) : undefined}
           className={cn(
             controlBox,
             controlState(hasError),

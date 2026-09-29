@@ -95,7 +95,10 @@ export default async function JournalPostPage({
     <article>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+        // Title, excerpt and author are admin-authored; `<` escaped so a
+        // `</script>` in one cannot end the tag early. See Next's JSON-LD
+        // guidance.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(schema).replace(/</g, "\\u003c") }}
       />
 
       {post.cover && (
@@ -168,7 +171,7 @@ export default async function JournalPostPage({
 
         <div className="mx-auto mt-10 grid max-w-[976px] items-start gap-14 grid-cols-[232px_minmax(0,688px)] journal-stacked:max-w-[688px] journal-stacked:grid-cols-1 journal-stacked:gap-0">
           {toc.length > 0 ? (
-            <PolicyToc entries={toc.map((h) => ({ id: h.id, label: h.label }))} />
+            <PolicyToc entries={toc.map((h) => ({ id: h.id, label: h.label }))} layout="journal" />
           ) : (
             <div className="journal-stacked:hidden" />
           )}

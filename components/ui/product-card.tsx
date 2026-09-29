@@ -65,11 +65,15 @@ export function ProductCard({
 }: ProductCardProps) {
   const onSale = Boolean(compareAtPrice);
   const flag = offerLabel ?? (onSale ? "Offer" : undefined);
+  // The label replaces everything inside the link for a screen reader, so it
+  // has to say what the card says. It was the title alone, and the price — and
+  // on a sale, what it was cut from — was never announced.
+  const priceLabel = compareAtPrice ? `${price}, was ${compareAtPrice}` : price;
 
   return (
     <Link
       href={href}
-      aria-label={outOfStock ? `${title} — out of stock` : title}
+      aria-label={`${title}, ${priceLabel}${outOfStock ? " — out of stock" : ""}`}
       className={cn(
         "group block bg-raised border border-line rounded-[var(--sz-radius-lg)] overflow-hidden",
         "no-underline hover:no-underline",

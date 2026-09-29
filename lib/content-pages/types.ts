@@ -144,6 +144,12 @@ export interface FaqItem {
   id: string;
   question: string;
   answer: InlineText;
+  /**
+   * Words a reader searches for that the copy itself never uses — the spelled
+   * out form of an abbreviation, say. The /faqs filter matches them; nothing
+   * displays them.
+   */
+  keywords?: string;
 }
 
 export interface FaqTopic {

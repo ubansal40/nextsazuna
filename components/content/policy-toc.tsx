@@ -10,17 +10,38 @@ export interface TocEntry {
 }
 
 /**
+ * Which breakpoint trades the rail for the disclosure — the one at which the
+ * page's own grid stacks. Literal class names, so Tailwind can see them.
+ *
+ * The Journal reuses this component but stacks its grid at 980px, not the
+ * policy pages' 860px. With the policy switch alone, a post between the two
+ * widths drew the whole rail as a static block above the article instead of
+ * the compact disclosure.
+ */
+const LAYOUTS = {
+  policy: { rail: "policy-stacked:hidden", disclosure: "policy-split:hidden" },
+  journal: { rail: "journal-stacked:hidden", disclosure: "journal-split:hidden" },
+} as const;
+
+/**
  * "On this page" — Sazuna Policy.dc.html §policy.
  *
  * Renders both arrangements and lets the breakpoint choose: a sticky rail
- * beside the prose from 860px up, a disclosure above it below. Two DOM copies
- * of six links is cheaper than a resize listener that has to guess which one to
- * mount, and it means the links are in the markup either way.
+ * beside the prose from the page's split width up (860px on a policy page), a
+ * disclosure above it below. Two DOM copies of six links is cheaper than a
+ * resize listener that has to guess which one to mount, and it means the links
+ * are in the markup either way.
  *
  * The disclosure is a real <details>, so it opens without JavaScript and
  * announces its state to a screen reader for free.
  */
-export function PolicyToc({ entries }: { entries: TocEntry[] }) {
+export function PolicyToc({
+  entries,
+  layout = "policy",
+}: {
+  entries: TocEntry[];
+  layout?: keyof typeof LAYOUTS;
+}) {
   const [activeId, setActiveId] = useState(entries[0]?.id ?? "");
   const disclosure = useRef<HTMLDetailsElement>(null);
 
@@ -77,10 +98,10 @@ export function PolicyToc({ entries }: { entries: TocEntry[] }) {
 
   return (
     <>
-      {/* Rail — from 860px up. */}
+      {/* Rail — from the split width up. */}
       <aside
         aria-label="On this page"
-        className="sticky top-[var(--sz-toc-top)] policy-stacked:hidden"
+        className={cn("sticky top-[var(--sz-toc-top)]", LAYOUTS[layout].rail)}
       >
         <p className={cn("m-0 mb-3.5", eyebrowClass)}>On this page</p>
         <nav className="flex flex-col border-s border-line">
@@ -106,10 +127,13 @@ export function PolicyToc({ entries }: { entries: TocEntry[] }) {
         </nav>
       </aside>
 
-      {/* Disclosure — below 860px. */}
+      {/* Disclosure — below it. */}
       <details
         ref={disclosure}
-        className="group mb-6 overflow-hidden rounded-[var(--sz-radius-md)] border border-line bg-raised policy-split:hidden"
+        className={cn(
+          "group mb-6 overflow-hidden rounded-[var(--sz-radius-md)] border border-line bg-raised",
+          LAYOUTS[layout].disclosure,
+        )}
       >
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2.5 px-4 py-3.5 text-control-sm font-semibold text-heading marker:hidden [&::-webkit-details-marker]:hidden">
           On this page

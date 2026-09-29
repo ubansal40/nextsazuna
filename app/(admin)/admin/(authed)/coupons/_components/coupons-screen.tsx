@@ -500,7 +500,7 @@ export function CouponsScreen({ initial, nowIso }: { initial: AdminCouponRow[]; 
                       onClick={() => setDraft(kind === "fixed" ? { discountType: kind, maxDiscount: "" } : { discountType: kind })}
                       className={cn(
                         "min-h-9 flex-1 rounded-[7px] text-[12.5px] font-semibold",
-                        editing.draft.discountType === kind ? "bg-raised text-heading shadow-[var(--sz-shadow-card)]" : "text-muted hover:text-body",
+                        editing.draft.discountType === kind ? "bg-raised text-heading shadow-sm" : "text-muted hover:text-body",
                       )}
                     >
                       {kind === "percent" ? "Percent" : "Fixed amount"}

@@ -89,6 +89,9 @@ export default async function AccountPage() {
                       day: "numeric",
                       month: "short",
                       year: "numeric",
+                      // The shop's day, not the server's: in UTC an order
+                      // placed before 05:45 in Kathmandu is dated yesterday.
+                      timeZone: "Asia/Kathmandu",
                     })}
                   </span>
                   {/* formatPrice returns null for an absent total; without the

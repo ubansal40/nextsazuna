@@ -52,16 +52,47 @@ export function safeUrl(raw: unknown): string {
   return "";
 }
 
-/** Inline rules, applied to already-escaped text. */
+/**
+ * Inverse of `escapeHtml`, for text that leaves as a React string rather than
+ * as HTML — React escapes it again on the way out. `&amp;` goes last, so an
+ * author's literal "&lt;" (escaped to "&amp;lt;") comes back as "&lt;".
+ */
+function unescapeHtml(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * Inline rules, applied to already-escaped text.
+ *
+ * Each rule's finished markup is parked behind a placeholder the moment it is
+ * built, so no later rule can reach inside it. They used to run over each
+ * other's output: `a*b*c` in a code span came out with an <em> in it, and a
+ * `*` in a link's URL put an <em> inside the href.
+ *
+ * The placeholder is `<n>`, which author text can never contain: escaping has
+ * already turned every `<` it had into `&lt;`. Only the link's tags are parked,
+ * not its label, which stays text that code and emphasis may still format.
+ */
 function inline(text: string): string {
-  return (
+  const parked: string[] = [];
+  const park = (html: string) => `<${parked.push(html) - 1}>`;
+  // Parked markup can hold earlier placeholders (a link inside a code span).
+  const restore = (html: string): string =>
+    html.replace(/<(\d+)>/g, (_match, index: string) => restore(parked[Number(index)]));
+
+  return restore(
     text
       // Images first: ![alt](url) would otherwise match the link rule.
       .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match, alt: string, url: string) => {
         const href = safeUrl(url);
         // A bad URL degrades to the alt text rather than an empty frame.
         return href
-          ? `<img src="${href}" alt="${alt}" loading="eager" decoding="async">`
+          ? park(`<img src="${href}" alt="${alt}" loading="eager" decoding="async">`)
           : alt;
       })
       .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label: string, url: string) => {
@@ -70,11 +101,11 @@ function inline(text: string): string {
         // Only links that actually leave the site open a tab.
         const external = /^https?:\/\//i.test(href);
         const attrs = external ? ' target="_blank" rel="noopener"' : "";
-        return `<a href="${href}"${attrs}>${label}</a>`;
+        return `${park(`<a href="${href}"${attrs}>`)}${label}${park("</a>")}`;
       })
-      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/`([^`]+)`/g, (_match, code: string) => park(`<code>${code}</code>`))
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-      .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>"),
   );
 }
 
@@ -197,12 +228,24 @@ export function readingMinutes(source: unknown): number {
   return Math.max(1, Math.round(words / 200));
 }
 
-/** "15 April 2026", or empty. Never the string "Invalid Date". */
+/**
+ * "15 April 2026", or empty. Never the string "Invalid Date".
+ *
+ * Read in the shop's time zone rather than the server's. A bare "2026-04-15"
+ * parses as UTC midnight, which a server west of Greenwich printed as the 14th;
+ * Kathmandu is ahead of UTC, so the calendar date survives, and a full
+ * timestamp lands on the day it was in Nepal.
+ */
 export function formatPostDate(value: unknown): string {
   if (!value) return "";
   const date = new Date(String(value));
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  return date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Kathmandu",
+  });
 }
 
 /** YYYY-MM-DD for `datetime`, or empty. */
@@ -250,7 +293,10 @@ export function withHeadingIds(html: string): { html: string; toc: TocHeading[] 
     const count = (seen.get(base) ?? 0) + 1;
     seen.set(base, count);
     const id = count === 1 ? base : `${base}-${count}`;
-    toc.push({ id, label: label.replace(/<[^>]*>/g, "") });
+    // The rail renders the label as React text, which escapes it itself — so it
+    // has to be the reader's text, not this HTML's. Left escaped, "What's in
+    // the box" printed as "What&#39;s in the box".
+    toc.push({ id, label: unescapeHtml(label.replace(/<[^>]*>/g, "")) });
     return `<h2 id="${id}">${label}</h2>`;
   });
 
