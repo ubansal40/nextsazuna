@@ -87,11 +87,22 @@ export async function getWhatsAppHref(): Promise<string | null> {
     whatsapp_message?: unknown;
   }>("site_identity");
 
-  const number =
+  const digits =
     typeof identity?.whatsapp_number === "string"
       ? identity.whatsapp_number.replace(/\D/g, "")
       : "";
-  if (!number) return null;
+  if (!digits) return null;
+
+  // wa.me needs the country code. A bare Nepali mobile — 98XXXXXXXX, the way
+  // it is printed on a card and the way the checkout asks for one — opened a
+  // chat with a number in Iran (+98). A local number, with or without its
+  // trunk 0, is completed with 977; anything longer already carries its own.
+  const number =
+    digits.length === 10
+      ? `977${digits}`
+      : digits.length === 11 && digits.startsWith("0")
+        ? `977${digits.slice(1)}`
+        : digits;
 
   const message =
     typeof identity?.whatsapp_message === "string" ? identity.whatsapp_message.trim() : "";

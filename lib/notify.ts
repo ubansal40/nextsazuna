@@ -1,6 +1,7 @@
 import "server-only";
 
 import { execute, queryOne } from "./db";
+import { normalisePhone } from "./order-lookup";
 import type { RowDataPacket } from "mysql2";
 
 /**
@@ -34,8 +35,11 @@ interface ExistingRow extends RowDataPacket {
  */
 function splitContact(contact: string): { phone: string | null; email: string | null } {
   const value = contact.trim();
-  if (value.includes("@")) return { phone: null, email: value };
-  const digits = value.replace(/\D/g, "");
+  if (value.includes("@")) return { phone: null, email: value.toLowerCase() };
+  // The same ten digits however they were typed — "+977 980-…" and "980…"
+  // used to be stored as two numbers, so one reader was queued, and would have
+  // been messaged, twice. The rule is the one orders and sign-in use.
+  const digits = normalisePhone(value);
   return { phone: digits || null, email: null };
 }
 
@@ -68,7 +72,11 @@ export async function requestStockNotification(input: NotifyInput): Promise<Noti
     [
       input.productSlug,
       input.productId,
-      phone,
+      // `phone` is NOT NULL with no default in the shared schema, so a request
+      // left by email alone — NULL here — failed with ER_BAD_NULL_ERROR and the
+      // reader got the error panel: half the waiting list could not be joined.
+      // Empty is what "no phone" has to be in this table.
+      phone ?? "",
       email,
       input.name?.trim() || null,
       input.userAgent?.slice(0, 255) ?? null,
