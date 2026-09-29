@@ -5,11 +5,18 @@ import { Icon } from "@/components/ui";
 /**
  * Route error state — spec lines 62-70.
  *
- * Next's error boundary is exactly the spec's "Error" page state, and `reset`
- * is its "Try again": it re-renders the segment rather than reloading, so a
- * transient database hiccup recovers without losing the reader's place.
+ * Next's error boundary is exactly the spec's "Error" page state, and `retry`
+ * is its "Try again": it re-fetches the segment from the server and re-renders
+ * it rather than reloading, so a transient database hiccup recovers without
+ * losing the reader's place.
+ *
+ * It must be `retry` (stable since Next 16.3), not `reset`. `reset` only clears
+ * the boundary and re-renders the children it already holds — the server
+ * payload that failed — so after a database error "Try again" drew the same
+ * error again, however long the reader waited. `retry` is a router refresh
+ * plus that reset, in one transition.
  */
-export default function JewelleryError({ reset }: { error: Error; reset: () => void }) {
+export default function JewelleryError({ retry }: { error: Error; retry: () => void }) {
   return (
     <div className="mx-auto max-w-[var(--sz-container)] px-10 pdp-narrow:px-5">
       <div className="mt-6 rounded-[var(--sz-radius-modal)] border border-line-soft bg-raised px-6 py-[90px] text-center">
@@ -24,7 +31,7 @@ export default function JewelleryError({ reset }: { error: Error; reset: () => v
         </p>
         <button
           type="button"
-          onClick={reset}
+          onClick={retry}
           className="mt-[26px] cursor-pointer rounded-[var(--sz-radius-thumb)] bg-primary-700 px-[26px] text-sm font-semibold text-white min-h-12 transition-colors duration-[var(--sz-dur-fast)] hover:bg-primary-800"
         >
           Try again

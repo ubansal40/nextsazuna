@@ -18,6 +18,8 @@ interface Props {
   state: FilterState;
   sort: string;
   pageSize: number;
+  /** From `getWhatsAppHref()`; null when no number is configured. */
+  whatsappHref: string | null;
   request: Omit<LoadMoreInput, "page" | "pageSize">;
 }
 
@@ -39,6 +41,7 @@ export function ProductListingView({
   state,
   sort,
   pageSize,
+  whatsappHref,
   request,
 }: Props) {
   const { products, total } = listing;
@@ -80,9 +83,19 @@ export function ProductListingView({
           <div className="grid items-start gap-10 lg:grid-cols-[var(--sz-plp-sidebar)_minmax(0,1fr)]">
             <FilterSidebar facets={facets} state={state} basePath={basePath} sort={sort} />
 
-            <div className="min-w-0">
+            {/* Pinned to the second track. The sidebar renders nothing when no
+                group has an option — a search with no results, an empty
+                category — and an unplaced grid item then fell into the first
+                track, squeezing the results into the 256px sidebar slot. */}
+            <div className="min-w-0 lg:col-start-2">
               {products.length === 0 ? (
-                <EmptyState basePath={basePath} extra={extra} filtered={activeCount > 0} />
+                <EmptyState
+                  basePath={basePath}
+                  extra={extra}
+                  filtered={activeCount > 0}
+                  searched={Boolean(request.search)}
+                  whatsappHref={whatsappHref}
+                />
               ) : (
                 <InfiniteGrid
                   // Remount on any filter or sort change so the accumulated
@@ -102,24 +115,46 @@ export function ProductListingView({
   );
 }
 
+/**
+ * Nothing to show — and the copy says why. "No pieces match these filters"
+ * used to be the only wording, so an empty category or a search that found
+ * nothing blamed filters the customer had never set.
+ */
 function EmptyState({
   basePath,
   extra,
   filtered,
+  searched,
+  whatsappHref,
 }: {
   basePath: string;
   extra: Record<string, string | undefined>;
   filtered: boolean;
+  searched: boolean;
+  whatsappHref: string | null;
 }) {
+  const [title, suggestion] = filtered
+    ? ["No pieces match these filters", "Try removing a filter"]
+    : searched
+      ? ["No pieces match your search", "Try another word, or a SKU"]
+      : ["No pieces here yet", "New pieces are added regularly"];
+
   return (
     <div className="flex flex-col items-center justify-center gap-4 rounded-[var(--sz-radius-lg)] border border-line bg-raised px-6 py-20 text-center">
       <span className="inline-flex size-14 items-center justify-center rounded-[var(--sz-radius-pill)] bg-surface text-muted">
         <Icon name="search" size={24} />
       </span>
-      <h2 className="text-lg">No pieces match these filters</h2>
+      <h2 className="text-lg">{title}</h2>
       <p className="max-w-[46ch] text-sm leading-[var(--sz-leading-relaxed)] text-muted">
-        Try removing a filter — or tell us what you&rsquo;re looking for and we&rsquo;ll find it in
-        the atelier.
+        {/* The atelier offer only stands when there is a way to take it up. */}
+        {whatsappHref ? (
+          <>
+            {suggestion} — or tell us what you&rsquo;re looking for and we&rsquo;ll find it in the
+            atelier.
+          </>
+        ) : (
+          `${suggestion}.`
+        )}
       </p>
       <div className="mt-2 flex flex-wrap items-center justify-center gap-3">
         {filtered && (
@@ -134,19 +169,23 @@ function EmptyState({
             Clear filters
           </Link>
         )}
-        <a
-          href="https://wa.me/9779800000000"
-          target="_blank"
-          rel="noreferrer noopener"
-          className={cn(
-            "inline-flex items-center gap-2 rounded-[var(--sz-radius-control)] border border-primary-700 px-5 py-[11px]",
-            "text-[length:var(--sz-text-control)] font-semibold text-primary-700 no-underline",
-            "transition-colors duration-[var(--sz-dur)] hover:bg-primary-50 hover:no-underline",
-          )}
-        >
-          <Icon name="whatsapp" size={18} />
-          WhatsApp us
-        </a>
+        {/* The shop's own number from site_identity. This used to be a
+            hardcoded placeholder, wa.me/9779800000000, which reaches no one. */}
+        {whatsappHref && (
+          <a
+            href={whatsappHref}
+            target="_blank"
+            rel="noreferrer noopener"
+            className={cn(
+              "inline-flex items-center gap-2 rounded-[var(--sz-radius-control)] border border-primary-700 px-5 py-[11px]",
+              "text-[length:var(--sz-text-control)] font-semibold text-primary-700 no-underline",
+              "transition-colors duration-[var(--sz-dur)] hover:bg-primary-50 hover:no-underline",
+            )}
+          >
+            <Icon name="whatsapp" size={18} />
+            WhatsApp us
+          </a>
+        )}
       </div>
     </div>
   );

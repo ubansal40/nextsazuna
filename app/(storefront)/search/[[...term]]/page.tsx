@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { listProducts, type SortKey } from "@/lib/catalog";
 import { bracketById, getFacets } from "@/lib/catalog/facets";
 import { readFilters, type RawParams, readSort } from "@/lib/catalog/filter-params";
+import { getWhatsAppHref } from "@/lib/content";
 import { ProductListingView } from "@/app/(storefront)/jewellery/[slug]/_components/product-listing";
 
 /**
@@ -78,9 +79,13 @@ export default async function SearchPage({ params, searchParams }: PageProps) {
 
   const sort = readSort(one(q.sort));
 
-  const [listing, facets] = await Promise.all([
+  // The facets are scoped by the same term as the results, so the sidebar
+  // only offers what this search can actually narrow to.
+  const scope = { search: term || undefined };
+
+  const [listing, facets, whatsappHref] = await Promise.all([
     listProducts({
-      search: term || undefined,
+      ...scope,
       categorySlugs: filters.cat.length ? filters.cat : undefined,
       collectionSlugs: filters.collection.length ? filters.collection : undefined,
       material: filters.material.length ? filters.material : undefined,
@@ -92,7 +97,8 @@ export default async function SearchPage({ params, searchParams }: PageProps) {
       page: 1,
       pageSize: STEP,
     }),
-    getFacets(),
+    getFacets(scope),
+    getWhatsAppHref(),
   ]);
 
   return (
@@ -107,6 +113,7 @@ export default async function SearchPage({ params, searchParams }: PageProps) {
       state={filters}
       sort={sort}
       pageSize={STEP}
+      whatsappHref={whatsappHref}
       request={{ search: term, filters, sort }}
     />
   );

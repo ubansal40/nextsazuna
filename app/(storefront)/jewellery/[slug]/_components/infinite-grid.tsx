@@ -23,11 +23,23 @@ const SCROLL_KEY = "sz-plp-scroll";
  */
 const FIRST_SCREEN = 6;
 
+/**
+ * The most batches reloaded on the way back from a product before scrolling.
+ *
+ * Each is a round trip, made one after another, and the reader is looking at
+ * the top of the listing while they run. Ten batches is 120 pieces — deeper
+ * than almost anyone scrolls — and past it the position restores as far down
+ * as those batches reach, with infinite scroll carrying on from there.
+ */
+const MAX_RESTORED_PAGES = 10;
+
 /** What we park in sessionStorage on the way to a product. */
 interface SavedScroll {
   /** Identity of the listing the offset was taken from. */
   listing?: unknown;
   y?: unknown;
+  /** How many batches were on the page, so they can be reloaded first. */
+  pages?: unknown;
 }
 
 /**
@@ -108,6 +120,18 @@ export function InfiniteGrid({ initial, total, pageSize, request }: Props) {
     }
   }, [failed, request, pageSize, seen]);
 
+  /**
+   * Re-created after every append — hence `products.length` below.
+   *
+   * An IntersectionObserver reports *changes* in intersection. When a batch is
+   * short enough that the sentinel is still inside the 640px zone after it
+   * lands (a tall viewport, a zoomed-out page, a few narrow cards), nothing has
+   * changed as far as the observer is concerned, so it never fired again and
+   * the list stalled until the customer happened to scroll. A fresh observer
+   * always reports its target's current state once, so re-observing after each
+   * append asks the question again. `busy` and `exhausted` still bound it: at
+   * most one request in flight, and none once the server has run out.
+   */
   useEffect(() => {
     const node = sentinel.current;
     if (!node || !hasMore) return;
@@ -121,7 +145,7 @@ export function InfiniteGrid({ initial, total, pageSize, request }: Props) {
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [hasMore, loadMore]);
+  }, [hasMore, loadMore, products.length]);
 
   /**
    * Scroll restoration — spec §Product grid, "restores scroll position when
@@ -146,12 +170,29 @@ export function InfiniteGrid({ initial, total, pageSize, request }: Props) {
     try {
       sessionStorage.setItem(
         SCROLL_KEY,
-        JSON.stringify({ listing: listingKey, y: Math.round(window.scrollY) }),
+        JSON.stringify({ listing: listingKey, y: Math.round(window.scrollY), pages: page.current }),
       );
     } catch {
       /* private mode — position restore is a nicety, not a requirement */
     }
   }, [listingKey]);
+
+  /**
+   * Where to scroll back to, once enough of the listing is on the page again.
+   *
+   * Coming back from a product remounts this grid with the first batch only —
+   * the rest were fetched on the client and are gone. The offset used to be
+   * replayed straight away, and anything past the first batch is past the end
+   * of a page that short, so the reader landed at the bottom of batch one,
+   * nowhere near the piece they left from. The batch count is saved with the
+   * offset now, and the missing batches are loaded before scrolling.
+   *
+   * A ref, set by the effect that reads storage and consumed by the one that
+   * scrolls. Effects run in declaration order, so on mount the second sees
+   * what the first set; and a re-run of either (Strict Mode runs every effect
+   * twice in development) can neither lose the target nor scroll twice.
+   */
+  const restoreTo = useRef<{ y: number; pages: number } | null>(null);
 
   useEffect(() => {
     let saved: SavedScroll | null = null;
@@ -169,10 +210,28 @@ export function InfiniteGrid({ initial, total, pageSize, request }: Props) {
     if (!saved || saved.listing !== listingKey) return;
     const y = typeof saved.y === "number" ? saved.y : 0;
     if (y <= 0) return;
+    const pages = typeof saved.pages === "number" && Number.isInteger(saved.pages) ? saved.pages : 1;
 
-    const id = setTimeout(() => window.scrollTo(0, y), 60);
-    return () => clearTimeout(id);
+    restoreTo.current = { y, pages: Math.min(Math.max(pages, 1), MAX_RESTORED_PAGES) };
   }, [listingKey]);
+
+  useEffect(() => {
+    const target = restoreTo.current;
+    if (!target || loading) return;
+
+    // Reload the next missing batch; this effect runs again once it lands, or
+    // once the list turns out to be exhausted or the request fails.
+    if (page.current < target.pages && hasMore && !failed) {
+      void loadMore();
+      return;
+    }
+
+    const id = setTimeout(() => {
+      restoreTo.current = null;
+      window.scrollTo(0, target.y);
+    }, 60);
+    return () => clearTimeout(id);
+  }, [loading, hasMore, failed, loadMore, products.length]);
 
   return (
     <>

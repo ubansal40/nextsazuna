@@ -6,8 +6,16 @@ import Link from "next/link";
 import { Drawer, Icon } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { Facets } from "@/lib/catalog/facets";
-import { clearAllUrl, sortUrl, toggleUrl, SORT_OPTIONS, type FilterState } from "@/lib/catalog/filter-params";
+import {
+  clearAllUrl,
+  isSelected,
+  sortUrl,
+  toggleUrl,
+  SORT_OPTIONS,
+  type FilterState,
+} from "@/lib/catalog/filter-params";
 import { buildGroups, FilterOption } from "./filter-sidebar";
+import { ToggleLink } from "./toggle-link";
 
 interface Props {
   countLabel: string;
@@ -150,7 +158,7 @@ export function Toolbar({ countLabel, basePath, state, sort, facets }: Props) {
                 <FilterOption
                   key={option.value}
                   href={toggleUrl(basePath, state, group.key, option.value, extra)}
-                  checked={state[group.key].includes(option.value)}
+                  checked={isSelected(state[group.key], option.value)}
                   label={option.label}
                   mono={group.mono}
                   onSelect={() => setSheet(null)}
@@ -167,7 +175,9 @@ export function Toolbar({ countLabel, basePath, state, sort, facets }: Props) {
           {SORT_OPTIONS.map((option) => {
             const selected = option.value === sort;
             return (
-              <Link
+              // A link, so sorting works without JavaScript; Space, as a radio
+              // promises, via `ToggleLink`.
+              <ToggleLink
                 key={option.value}
                 href={sortUrl(basePath, state, option.value)}
                 onClick={() => setSheet(null)}
@@ -184,7 +194,7 @@ export function Toolbar({ countLabel, basePath, state, sort, facets }: Props) {
                 {selected && (
                   <Icon name="check" size={17} strokeWidth={2.4} className="text-primary-700" />
                 )}
-              </Link>
+              </ToggleLink>
             );
           })}
         </div>

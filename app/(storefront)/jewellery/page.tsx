@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { listProducts, type SortKey } from "@/lib/catalog";
 import { bracketById, getFacets } from "@/lib/catalog/facets";
 import { readFilters, type RawParams, readSort } from "@/lib/catalog/filter-params";
+import { getWhatsAppHref } from "@/lib/content";
 import { ProductListingView } from "./[slug]/_components/product-listing";
 
 /**
@@ -36,7 +37,7 @@ export default async function AllJewelleryPage({
 
   const sort = readSort(one(q.sort));
 
-  const [listing, facets] = await Promise.all([
+  const [listing, facets, whatsappHref] = await Promise.all([
     listProducts({
       categorySlugs: filters.cat.length ? filters.cat : undefined,
       collectionSlugs: filters.collection.length ? filters.collection : undefined,
@@ -50,6 +51,7 @@ export default async function AllJewelleryPage({
       pageSize: STEP,
     }),
     getFacets(),
+    getWhatsAppHref(),
   ]);
 
   return (
@@ -62,6 +64,7 @@ export default async function AllJewelleryPage({
       state={filters}
       sort={sort}
       pageSize={STEP}
+      whatsappHref={whatsappHref}
       request={{ filters, sort }}
     />
   );
