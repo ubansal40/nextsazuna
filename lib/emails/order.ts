@@ -75,6 +75,11 @@ export interface OrderEmailContext {
   phone: string;
   email: string;
   address: string;
+  /**
+   * The customer paid for gift wrap. Its fee sits in the extras with any card
+   * surcharge, so without this line the shop is told a sum, not a task.
+   */
+  giftWrap?: boolean;
   lines: OrderEmailLine[];
   subtotalMinor: number;
   discountMinor: number;
@@ -190,6 +195,7 @@ export function buildAdminAlertEmail(ctx: OrderEmailContext): RenderedEmail {
     `Phone:    ${ctx.phone}`,
     ctx.email ? `Email:    ${ctx.email}` : "",
     `Address:  ${ctx.address}`,
+    ctx.giftWrap ? "Gift wrap: REQUESTED — signature box, ribbon & handwritten note" : "",
     "",
     `Payment:  ${payment} (${status})`,
     highValueCod ? "*** HIGH-VALUE CASH ON DELIVERY — confirm before dispatch ***" : "",
@@ -214,6 +220,7 @@ export function buildAdminAlertEmail(ctx: OrderEmailContext): RenderedEmail {
 <tr><td style="font-family:${SANS};font-size:13px;color:${C.muted};padding:2px 0;">Phone</td><td align="right" style="font-family:${SANS};font-size:13px;color:${C.body};">${escape(ctx.phone)}</td></tr>
 ${ctx.email ? `<tr><td style="font-family:${SANS};font-size:13px;color:${C.muted};padding:2px 0;">Email</td><td align="right" style="font-family:${SANS};font-size:13px;color:${C.body};">${escape(ctx.email)}</td></tr>` : ""}
 <tr><td style="font-family:${SANS};font-size:13px;color:${C.muted};padding:2px 0;vertical-align:top;">Address</td><td align="right" style="font-family:${SANS};font-size:13px;color:${C.body};">${escape(ctx.address)}</td></tr>
+${ctx.giftWrap ? `<tr><td style="font-family:${SANS};font-size:13px;color:${C.muted};padding:2px 0;">Gift wrap</td><td align="right" style="font-family:${SANS};font-size:13px;font-weight:600;color:${C.primary};">Requested — box, ribbon &amp; note</td></tr>` : ""}
 </table>
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${lineRows(ctx)}${totalsRows(ctx)}</table>`,

@@ -53,8 +53,17 @@ const TAG: Record<MethodCode, string> = {
   cod: "COD",
   esewa: "eSewa",
   khalti: "Khalti",
-  cybersource: "+3%",
+  cybersource: "Card",
 };
+
+/**
+ * A method that costs extra says how much, from the configured rate. The card
+ * tag used to be a literal "+3%", so a rate changed in the admin was charged in
+ * the summary while the option still promised the old one.
+ */
+function tagFor(code: MethodCode, surchargePercent: number): string {
+  return surchargePercent > 0 ? `+${surchargePercent}%` : TAG[code];
+}
 
 function isImplemented(code: string): code is MethodCode {
   return (IMPLEMENTED as readonly string[]).includes(code);
@@ -81,13 +90,14 @@ export async function listCheckoutMethods(): Promise<CheckoutMethod[]> {
       if (!method.is_enabled || !isImplemented(code)) return [];
 
       const surcharge = Number(method.surcharge_percent);
+      const surchargePercent = Number.isFinite(surcharge) && surcharge > 0 ? surcharge : 0;
       return [
         {
           code,
           label: typeof method.label === "string" ? method.label : code,
           description: typeof method.description === "string" ? method.description : "",
-          surchargePercent: Number.isFinite(surcharge) && surcharge > 0 ? surcharge : 0,
-          tag: TAG[code],
+          surchargePercent,
+          tag: tagFor(code, surchargePercent),
         },
       ];
     }),

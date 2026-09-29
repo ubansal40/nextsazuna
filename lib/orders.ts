@@ -1,8 +1,10 @@
 import "server-only";
 
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import type { PoolConnection } from "mysql2/promise";
+import { NON_REDEMPTION_STATUSES, releaseCouponUse, reserveCouponUse } from "./coupons";
 import { linkCustomerToOrder } from "./customers";
-import { execute, query, queryOne, transaction } from "./db";
+import { query, queryOne, transaction } from "./db";
 import { formatPrice } from "./format";
 import {
   contactMatches,
@@ -84,10 +86,16 @@ export interface CreatedOrder {
   orderNumber: string;
 }
 
+/** The line `createOrder` writes into the order's note when gift wrap was paid for. */
+export const GIFT_WRAP_NOTE = "[gift wrap] Signature box, ribbon & handwritten note — paid at checkout";
+
 /** Paisa to the DECIMAL string the money columns expect. */
 function decimal(minor: number): string {
   return (minor / 100).toFixed(2);
 }
+
+/** Nepal is UTC+05:45 all year — it keeps no daylight saving. */
+const NEPAL_OFFSET_MS = (5 * 60 + 45) * 60_000;
 
 /**
  * Human-facing order number.
@@ -95,14 +103,27 @@ function decimal(minor: number): string {
  * Date-prefixed and random rather than sequential: a guessable order number
  * plus an order-status page is an enumeration hole, and this one is printed on
  * invoices where the sequence would leak volume.
+ *
+ * The date is the shop's, not UTC's: an order placed at 01:00 in Kathmandu
+ * used to be stamped with the previous day.
+ *
+ * Three base-36 characters are 46,656 numbers a day, so two orders will
+ * eventually draw the same one. `createOrder` is always called through
+ * `isDuplicateOrderNumber` retries (see `placeOrder`) for that reason.
  */
 export function generateOrderNumber(now: Date = new Date()): string {
-  const stamp = now.toISOString().slice(2, 10).replace(/-/g, "");
+  const stamp = new Date(now.getTime() + NEPAL_OFFSET_MS).toISOString().slice(2, 10).replace(/-/g, "");
   const random = Math.floor(Math.random() * 46656)
     .toString(36)
     .toUpperCase()
     .padStart(3, "0");
   return `SZ-${stamp}-${random}`;
+}
+
+/** The order number was already taken — draw another and try again. */
+export function isDuplicateOrderNumber(error: unknown): boolean {
+  const e = error as { code?: string; message?: string } | null;
+  return e?.code === "ER_DUP_ENTRY" && /order_number/.test(e.message ?? "");
 }
 
 export async function createOrder(input: {
@@ -112,13 +133,32 @@ export async function createOrder(input: {
   totals: OrderTotals;
   /** Must be a value the `orders.payment_method` enum accepts. */
   paymentMethod: "cod" | "esewa" | "khalti" | "cybersource";
+  /** The customer paid for gift wrap; somebody has to wrap it. */
+  giftWrap?: boolean;
 }): Promise<CreatedOrder> {
   if (!input.lines.length) throw new Error("Cannot create an order with no lines");
 
   // Card and wallet orders are not placed until the gateway says so; cash is.
   const pending = input.paymentMethod !== "cod";
 
+  /*
+   * Gift wrap is charged inside `shipping_amount` alongside any card surcharge,
+   * and nothing else on the order said it had been asked for — the admin saw
+   * "Delivery & surcharge रु 500" and fulfilment had no way to know a box,
+   * ribbon and handwritten note were owed. The note is what the order screen
+   * and the alert email already show.
+   */
+  const note = [input.customer.note?.trim(), input.giftWrap ? GIFT_WRAP_NOTE : null]
+    .filter(Boolean)
+    .join("\n");
+
   return transaction(async (connection) => {
+    // First, before anything is written: if the code's last use (or this
+    // phone's allowance) has gone since the quote, nothing is written at all.
+    if (input.totals.couponCode) {
+      await reserveCouponUse(connection, input.totals.couponCode, input.customer.phone);
+    }
+
     /**
      * Link the order to a customer record, creating one if this is their first.
      *
@@ -153,7 +193,7 @@ export async function createOrder(input: {
         input.customer.phone,
         input.customer.address,
         input.customer.city ?? "",
-        input.customer.note ?? null,
+        note || null,
         input.totals.couponCode,
         decimal(input.totals.discountMinor),
         input.paymentMethod,
@@ -181,14 +221,6 @@ export async function createOrder(input: {
           line.quantity,
           decimal(line.lineTotalMinor),
         ],
-      );
-    }
-
-    // Only count a coupon once the order it discounted actually exists.
-    if (input.totals.couponCode) {
-      await connection.execute(
-        "UPDATE coupons SET used_count = used_count + 1 WHERE UPPER(code) = ?",
-        [input.totals.couponCode.toUpperCase()],
       );
     }
 
@@ -243,8 +275,10 @@ export async function loadOrderReceipt(
 ): Promise<OrderView | null> {
   if (!orderNumber || !verifyOrderLookupToken(orderNumber, token)) return null;
 
+  // An order the admin soft-deleted (a duplicate, a test) is gone for the
+  // customer too — here, on /order-status and in their account alike.
   const row = await queryOne<FullOrderRow>(
-    `SELECT ${ORDER_COLUMNS} FROM orders WHERE order_number = ? LIMIT 1`,
+    `SELECT ${ORDER_COLUMNS} FROM orders WHERE order_number = ? AND deleted_at IS NULL LIMIT 1`,
     [orderNumber],
   );
   if (!row) return null;
@@ -273,7 +307,7 @@ export async function lookupOrderByContact(
   if (!trimmed || !contact.trim()) return null;
 
   const row = await queryOne<FullOrderRow>(
-    `SELECT ${ORDER_COLUMNS} FROM orders WHERE order_number = ? LIMIT 1`,
+    `SELECT ${ORDER_COLUMNS} FROM orders WHERE order_number = ? AND deleted_at IS NULL LIMIT 1`,
     [trimmed],
   );
   if (!row || !isVisibleStatus(row.status) || !contactMatches(row, contact)) return null;
@@ -308,7 +342,7 @@ export async function loadOrderForCustomer(
   if (!Number.isInteger(orderId) || orderId <= 0) return null;
 
   const row = await queryOne<FullOrderRow>(
-    `SELECT ${ORDER_COLUMNS} FROM orders WHERE id = ? AND customer_id = ? LIMIT 1`,
+    `SELECT ${ORDER_COLUMNS} FROM orders WHERE id = ? AND customer_id = ? AND deleted_at IS NULL LIMIT 1`,
     [orderId, customerId],
   );
   if (!row || !isVisibleStatus(row.status)) return null;
@@ -367,16 +401,69 @@ export async function markOrderPaid(
       .filter(Boolean)
       .join(" ") || "[paid]";
 
-  const result = await execute(
-    `UPDATE orders
-        SET payment_status = 'paid',
-            status = 'placed',
-            note = CASE WHEN note IS NULL OR note = '' THEN ? ELSE CONCAT(note, '\n', ?) END
-      WHERE order_number = ? AND payment_status <> 'paid'`,
-    [trail, trail, orderNumber],
-  );
+  return transaction(async (connection) => {
+    const row = await lockUnpaidOrder(connection, orderNumber);
+    if (!row) return false;
 
-  return result.affectedRows > 0;
+    await connection.execute(
+      `UPDATE orders
+          SET payment_status = 'paid',
+              status = 'placed',
+              note = CASE WHEN note IS NULL OR note = '' THEN ? ELSE CONCAT(note, '\n', ?) END
+        WHERE id = ?`,
+      [trail, trail, row.id],
+    );
+
+    // A failure gave this order's coupon use back; a genuine success after it
+    // means the code was redeemed after all, so the use is taken again.
+    if (row.coupon_code && row.status === "payment_failed") {
+      await connection.execute("UPDATE coupons SET used_count = used_count + 1 WHERE UPPER(code) = ?", [
+        row.coupon_code.toUpperCase(),
+      ]);
+    }
+
+    await logGatewayEvent(connection, row, "placed", `Payment confirmed by the gateway (${trail})`);
+    return true;
+  });
+}
+
+interface UnpaidOrderRow extends RowDataPacket {
+  id: number;
+  status: string;
+  coupon_code: string | null;
+}
+
+/**
+ * The order, locked, if it is not already paid. Every gateway transition reads
+ * and writes under this lock, so a success and a failure callback racing for
+ * one order apply one after the other, never interleaved.
+ */
+async function lockUnpaidOrder(connection: PoolConnection, orderNumber: string): Promise<UnpaidOrderRow | null> {
+  const [rows] = await connection.execute<UnpaidOrderRow[]>(
+    `SELECT id, status, coupon_code FROM orders
+      WHERE order_number = ? AND payment_status <> 'paid'
+      LIMIT 1 FOR UPDATE`,
+    [orderNumber],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * A line on the admin's order timeline. Gateway transitions used to change an
+ * order's status with no activity row at all, so the timeline could not say
+ * why an order had moved, or when.
+ */
+async function logGatewayEvent(
+  connection: PoolConnection,
+  row: UnpaidOrderRow,
+  to: string | null,
+  message: string,
+): Promise<void> {
+  await connection.execute(
+    `INSERT INTO order_activity (order_id, admin_id, admin_email, event_type, from_status, to_status, message)
+     VALUES (?, NULL, NULL, 'status', ?, ?, ?)`,
+    [row.id, to ? row.status : null, to, message.slice(0, 500)],
+  );
 }
 
 /**
@@ -385,15 +472,66 @@ export async function markOrderPaid(
  * Never overrides a paid row: a failure callback arriving after a success is
  * rare but real, and losing the payment would be far worse than keeping a
  * stale failure notice out of the log.
+ *
+ * Only for a DEFINITIVE failure — the gateway said no, or the return could not
+ * be ours. A verification that merely could not complete is not a failure; see
+ * `markPaymentUnconfirmed`.
  */
 export async function markOrderFailed(orderNumber: string, reason: string): Promise<void> {
   const line = `[payment failed: ${reason.slice(0, 200)}]`;
-  await execute(
-    `UPDATE orders
-        SET payment_status = 'failed',
-            status = 'payment_failed',
-            note = CASE WHEN note IS NULL OR note = '' THEN ? ELSE CONCAT(note, '\n', ?) END
-      WHERE order_number = ? AND payment_status <> 'paid'`,
-    [line, line, orderNumber],
-  );
+  await transaction(async (connection) => {
+    const row = await lockUnpaidOrder(connection, orderNumber);
+    if (!row) return;
+
+    await connection.execute(
+      `UPDATE orders
+          SET payment_status = 'failed',
+              status = 'payment_failed',
+              note = CASE WHEN note IS NULL OR note = '' THEN ? ELSE CONCAT(note, '\n', ?) END
+        WHERE id = ?`,
+      [line, line, row.id],
+    );
+
+    /*
+     * The order took one use of its coupon when it was written. A payment that
+     * failed is not a redemption, so the use goes back — otherwise a declined
+     * card or a closed eSewa tab spends a limited code for good. Only once: a
+     * row already failed or cancelled has no use left to return.
+     */
+    if (row.coupon_code && !(NON_REDEMPTION_STATUSES as readonly string[]).includes(row.status)) {
+      await releaseCouponUse(connection, row.coupon_code);
+    }
+
+    if (row.status !== "payment_failed") {
+      await logGatewayEvent(connection, row, "payment_failed", line);
+    }
+  });
+}
+
+/**
+ * The gateway may have taken the money, but we could not confirm it: its
+ * verification call timed out or errored, it answered "Pending", or the card
+ * is held for fraud review.
+ *
+ * These used to be recorded as failures. The customer — whose money had very
+ * possibly left their account — was told "no charge was made" and invited to
+ * pay again, and the order was hidden as `payment_failed` with nothing kept to
+ * reconcile it by. Now the order stays `pending_payment` for someone to check
+ * against the gateway, the reference goes on the order where they will find it,
+ * and the customer is shown their order as awaiting confirmation.
+ */
+export async function markPaymentUnconfirmed(orderNumber: string, detail: string): Promise<void> {
+  const line = `[payment unconfirmed: ${detail.slice(0, 200)}]`;
+  await transaction(async (connection) => {
+    const row = await lockUnpaidOrder(connection, orderNumber);
+    if (!row) return;
+
+    await connection.execute(
+      `UPDATE orders
+          SET note = CASE WHEN note IS NULL OR note = '' THEN ? ELSE CONCAT(note, '\n', ?) END
+        WHERE id = ?`,
+      [line, line, row.id],
+    );
+    await logGatewayEvent(connection, row, null, `${line} Check the payment with the gateway before fulfilling.`);
+  });
 }

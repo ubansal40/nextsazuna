@@ -45,7 +45,7 @@ export default async function ConfirmationPage({
       <OrderView order={order} variant="confirmation" onTrackHref="/order-status" />
 
       {/* The order exists server-side now, so the browser's copy is spent. */}
-      {placed && <ClearBagOnMount />}
+      {placed && <ClearBagOnMount orderNumber={order.orderNumber} />}
     </div>
   );
 }

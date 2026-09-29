@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
-import { loadOrderForReceipt, markOrderFailed, markOrderPaid } from "@/lib/orders";
+import { after, NextResponse } from "next/server";
+import { loadOrderForReceipt, markOrderFailed, markOrderPaid, markPaymentUnconfirmed } from "@/lib/orders";
 import { notifyOrderPlaced } from "@/lib/order-notifications";
 import { verifyEsewaPayment } from "@/lib/payments/esewa";
 import { siteOrigin } from "@/lib/site-url";
@@ -59,19 +59,34 @@ export async function GET(request: Request) {
     referenceId: refId,
   });
 
+  const receipt = `${site}/checkout/confirmation?order=${encodeURIComponent(order.orderNumber)}&token=${encodeURIComponent(token ?? "")}`;
+
   if (!verification.ok) {
-    // "Pending" is a bank hold, not a payment. Treated as unpaid on purpose.
-    await markOrderFailed(order.orderNumber, `eSewa verify status: ${verification.status ?? "unknown"}`);
-    return fail(`esewa_${(verification.status ?? "failed").toLowerCase().replace(/[^a-z0-9]+/g, "_")}`);
+    if (verification.definitive) {
+      await markOrderFailed(order.orderNumber, `eSewa verify status: ${verification.status ?? "unknown"}`);
+      return fail(`esewa_${(verification.status ?? "failed").toLowerCase().replace(/[^a-z0-9]+/g, "_")}`);
+    }
+    /*
+     * eSewa only sends a buyer here after taking their money, so a verification
+     * that timed out, errored or answered "Pending" (a bank hold) is not a "no".
+     * It used to be recorded as one: the order became `payment_failed`, the
+     * customer read "no charge was made" and paid a second time. The order now
+     * waits, with the reference kept for reconciliation, and the receipt page
+     * tells them their payment is being confirmed.
+     */
+    await markPaymentUnconfirmed(
+      order.orderNumber,
+      `eSewa verification ${verification.status ?? "unanswered"} — refId ${refId}`,
+    );
+    return NextResponse.redirect(receipt);
   }
 
   const justPromoted = await markOrderPaid(order.orderNumber, { transactionId: refId });
   if (justPromoted) {
     // Guarded by the transition, so a retried callback cannot send twice.
-    await notifyOrderPlaced(order.orderNumber);
+    // After the redirect, so a slow mail server cannot hold it up.
+    after(() => notifyOrderPlaced(order.orderNumber));
   }
 
-  return NextResponse.redirect(
-    `${site}/checkout/confirmation?order=${encodeURIComponent(order.orderNumber)}&token=${encodeURIComponent(token ?? "")}`,
-  );
+  return NextResponse.redirect(receipt);
 }

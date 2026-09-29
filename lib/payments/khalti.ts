@@ -22,6 +22,9 @@ const HOST = {
   live: "https://khalti.com",
 } as const;
 
+/** How long one Khalti API call may take before it counts as unanswered. */
+const CALL_TIMEOUT_MS = 15_000;
+
 export interface KhaltiSession {
   pidx: string;
   paymentUrl: string;
@@ -53,6 +56,9 @@ async function call<T>(
     },
     body: JSON.stringify(body),
     cache: "no-store",
+    // A hung Khalti held the customer on "Placing order…", or on the return
+    // redirect after paying, for as long as the socket stayed open.
+    signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
   });
 
   const text = await response.text();

@@ -58,6 +58,14 @@ const checks: [string, boolean][] = [
   ["html is a complete document", customer.html.startsWith("<!doctype html>") && customer.html.trimEnd().endsWith("</html>")],
   ["uses the Ceremony palette", customer.html.includes("#7A2226") && !customer.html.includes("#84292B")],
   ["escapes customer-supplied text", buildAdminAlertEmail({ ...ctx, customerName: '<script>x</script>' }).html.includes("&lt;script&gt;")],
+  // Its fee hides inside the extras with any surcharge, so the alert has to
+  // say it in words or nobody wraps the parcel.
+  [
+    "paid gift wrap is spelled out for the shop",
+    buildAdminAlertEmail({ ...ctx, giftWrap: true }).text.includes("Gift wrap: REQUESTED") &&
+      buildAdminAlertEmail({ ...ctx, giftWrap: true }).html.includes("Gift wrap"),
+  ],
+  ["no gift wrap, no gift-wrap line", !admin.text.includes("Gift wrap:")],
 ];
 
 let failed = 0;

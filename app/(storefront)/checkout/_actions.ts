@@ -1,11 +1,14 @@
 "use server";
 
+import { after } from "next/server";
 import { priceCart } from "@/lib/cart";
+import { isCouponUnavailable } from "@/lib/coupons";
 import { notifyOrderPlaced } from "@/lib/order-notifications";
 import { orderLookupToken } from "@/lib/order-tokens";
 import { siteOrigin } from "@/lib/site-url";
 import { MAX_QUANTITY, type CartEntry } from "@/lib/cart-storage";
-import { createOrder, generateOrderNumber } from "@/lib/orders";
+import { ORDER_FIELD_LIMITS } from "@/lib/order-fields";
+import { createOrder, generateOrderNumber, isDuplicateOrderNumber, markOrderFailed } from "@/lib/orders";
 import { listCheckoutMethods, type CheckoutMethod, type MethodCode } from "@/lib/payments/config";
 import { buildEsewaForm } from "@/lib/payments/esewa";
 import { buildCardForm } from "@/lib/payments/cybersource";
@@ -30,6 +33,8 @@ export interface CheckoutQuote {
     imageUrl: string | null;
     quantity: number;
     price: string;
+    /** False for a piece that sold out after it went in the bag. */
+    inStock: boolean;
   }[];
   methods: CheckoutMethod[];
   couponApplied: boolean;
@@ -83,10 +88,12 @@ async function quote(input: {
   });
 
   // Surcharge applies to what is actually being charged — after the discount,
-  // and including gift wrap, since that is part of the amount taken.
+  // and including gift wrap, since that is part of the amount taken. Whole
+  // rupees, like every figure the customer is shown: 3% of रु 11,111 is
+  // 333.33, and a total with paise is printed rounded and charged unrounded.
   const chargeable = cart.totals.totalMinor;
   const surchargeMinor = method
-    ? Math.round((chargeable * method.surchargePercent) / 100)
+    ? Math.round((chargeable * method.surchargePercent) / 10_000) * 100
     : 0;
 
   return {
@@ -123,6 +130,7 @@ export async function quoteCheckout(
       imageUrl: line.imageUrl,
       quantity: line.quantity,
       price: line.price,
+      inStock: line.inStock,
     })),
     methods: priced.methods,
     couponApplied: coupon?.ok === true,
@@ -173,14 +181,18 @@ export type PlaceOrderResult =
    * "changed" — the bag re-priced to something other than the quoted total, so
    * nothing was written. Recoverable: the caller re-quotes and shows the new
    * figure. Never silently proceed past it.
+   *
+   * "sold-out" — a piece in the bag is no longer in stock. Nothing was written.
    */
-  | { ok: false; error: "empty" | "invalid" | "unavailable" | "changed" | "failed" };
+  | { ok: false; error: "empty" | "invalid" | "unavailable" | "changed" | "sold-out" | "failed" };
 
 /** Enough to reach someone about a delivery, not a format police. */
 function validPhone(phone: string): boolean {
   return phone.replace(/\D/g, "").length >= 7;
 }
 
+/** Attempts at a fresh order number before giving up. See `generateOrderNumber`. */
+const ORDER_NUMBER_ATTEMPTS = 5;
 
 export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResult> {
   const name = (input.name ?? "").trim();
@@ -189,6 +201,16 @@ export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResu
   const email = (input.email ?? "").trim();
 
   if (!name || !address || !validPhone(phone)) return { ok: false, error: "invalid" };
+  // The form's inputs carry the same limits, so only a hand-built request
+  // reaches this — but it must be refused, not written and truncated or thrown.
+  if (
+    name.length > ORDER_FIELD_LIMITS.name ||
+    address.length > ORDER_FIELD_LIMITS.address ||
+    phone.length > ORDER_FIELD_LIMITS.phone ||
+    email.length > ORDER_FIELD_LIMITS.email
+  ) {
+    return { ok: false, error: "invalid" };
+  }
 
   const entries = cleanEntries(input.entries);
   if (!entries.length) return { ok: false, error: "empty" };
@@ -210,6 +232,9 @@ export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResu
     if (!priced.method || priced.method.code !== input.method) {
       return { ok: false, error: "unavailable" };
     }
+    // The product page stops selling a piece once it is out of stock, but a
+    // bag filled before then still held it, and checkout sold it anyway.
+    if (priced.cart.lines.some((line) => !line.inStock)) return { ok: false, error: "sold-out" };
 
     /*
      * The customer agreed to a figure. If pricing here produces a different one
@@ -226,68 +251,115 @@ export async function placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResu
     }
 
     const methodCode = priced.method.code as MethodCode;
-    const orderNumber = generateOrderNumber();
     const coupon = priced.cart.coupon;
 
-    await createOrder({
-      orderNumber,
-      customer: { name, phone, email, address },
-      lines: priced.cart.lines,
-      totals: {
-        subtotalMinor: priced.cart.totals.subtotalMinor,
-        discountMinor: priced.cart.totals.discountMinor,
-        extrasMinor: priced.cart.totals.giftWrapMinor + priced.surchargeMinor,
-        totalMinor: priced.totalMinor,
-        couponCode: coupon?.ok ? coupon.code : null,
-      },
-      paymentMethod: methodCode,
-    });
+    let orderNumber = "";
+    for (let attempt = 1; ; attempt++) {
+      orderNumber = generateOrderNumber();
+      try {
+        await createOrder({
+          orderNumber,
+          customer: { name, phone, email, address },
+          lines: priced.cart.lines,
+          totals: {
+            subtotalMinor: priced.cart.totals.subtotalMinor,
+            discountMinor: priced.cart.totals.discountMinor,
+            extrasMinor: priced.cart.totals.giftWrapMinor + priced.surchargeMinor,
+            totalMinor: priced.totalMinor,
+            couponCode: coupon?.ok ? coupon.code : null,
+          },
+          paymentMethod: methodCode,
+          giftWrap: priced.cart.totals.giftWrapMinor > 0,
+        });
+        break;
+      } catch (error) {
+        // Nothing was written — the transaction rolled back — so a fresh
+        // number is all a collision needs. It used to fail the checkout.
+        if (isDuplicateOrderNumber(error) && attempt < ORDER_NUMBER_ATTEMPTS) continue;
+        // The code's last use, or this phone's allowance, went between the
+        // quote and the click. Re-quoting shows the customer why in words.
+        if (isCouponUnavailable(error)) return { ok: false, error: "changed" };
+        throw error;
+      }
+    }
 
     // Authorises the receipt and the gateway return without exposing the
     // order to anyone who can guess a number.
     const token = orderLookupToken(orderNumber);
 
     if (methodCode === "cod") {
-      // Cash orders are real the moment they are written, so notify now.
-      await notifyOrderPlaced(orderNumber);
+      // Cash orders are real the moment they are written, so notify now — but
+      // after the response. A slow mail server used to hold the customer on
+      // "Placing order…" for as long as SMTP took, long enough to press again
+      // and place the same order twice. Nothing in it throws.
+      after(() => notifyOrderPlaced(orderNumber));
       return { ok: true, kind: "placed", orderNumber, token };
     }
 
-    const origin = await siteOrigin();
-    const back = `order=${encodeURIComponent(orderNumber)}&token=${encodeURIComponent(token)}`;
-
-    if (methodCode === "esewa") {
-      const form = await buildEsewaForm({
+    try {
+      return await startGatewayPayment(methodCode, {
         orderNumber,
+        token,
         totalMinor: priced.totalMinor,
-        successUrl: `${origin}/api/payments/esewa/success?${back}`,
-        failureUrl: `${origin}/api/payments/esewa/failure?${back}`,
+        name,
+        email,
+        phone,
       });
-      return { ok: true, kind: "redirect", orderNumber, token, ...form };
+    } catch (error) {
+      /*
+       * The order is written but the gateway could not be reached (Khalti's
+       * initiate call failed, a gateway is misconfigured). The customer is told
+       * no charge was made, which is true — so the order must not sit in
+       * `pending_payment` holding its coupon use and looking like a payment
+       * in flight. Failing it gives the use back and says what happened.
+       */
+      console.error("[checkout] gateway hand-off failed", { orderNumber, error });
+      await markOrderFailed(orderNumber, "could not start the gateway payment");
+      return { ok: false, error: "failed" };
     }
-
-    if (methodCode === "khalti") {
-      const session = await initiateKhaltiPayment({
-        orderNumber,
-        totalMinor: priced.totalMinor,
-        returnUrl: `${origin}/api/payments/khalti/callback?${back}`,
-        websiteUrl: origin,
-        customer: { name, email, phone },
-      });
-      return { ok: true, kind: "navigate", orderNumber, token, url: session.paymentUrl };
-    }
-
-    const form = await buildCardForm({
-      referenceNumber: orderNumber,
-      totalMinor: priced.totalMinor,
-      customerName: name,
-      email,
-      phone,
-    });
-    return { ok: true, kind: "redirect", orderNumber, token, ...form };
-  } catch {
-    // The order either committed or it did not; either way the customer gets
+  } catch (error) {
+    // Nothing was committed: the transaction rolled back. The customer gets
     // the failure panel rather than a stack trace.
+    console.error("[checkout] order not placed", error);
     return { ok: false, error: "failed" };
   }
+}
+
+async function startGatewayPayment(
+  method: Exclude<MethodCode, "cod">,
+  order: { orderNumber: string; token: string; totalMinor: number; name: string; email: string; phone: string },
+): Promise<PlaceOrderResult> {
+  const { orderNumber, token } = order;
+  const origin = await siteOrigin();
+  const back = `order=${encodeURIComponent(orderNumber)}&token=${encodeURIComponent(token)}`;
+
+  if (method === "esewa") {
+    const form = await buildEsewaForm({
+      orderNumber,
+      totalMinor: order.totalMinor,
+      successUrl: `${origin}/api/payments/esewa/success?${back}`,
+      failureUrl: `${origin}/api/payments/esewa/failure?${back}`,
+    });
+    return { ok: true, kind: "redirect", orderNumber, token, ...form };
+  }
+
+  if (method === "khalti") {
+    const session = await initiateKhaltiPayment({
+      orderNumber,
+      totalMinor: order.totalMinor,
+      returnUrl: `${origin}/api/payments/khalti/callback?${back}`,
+      websiteUrl: origin,
+      customer: { name: order.name, email: order.email, phone: order.phone },
+    });
+    return { ok: true, kind: "navigate", orderNumber, token, url: session.paymentUrl };
+  }
+
+  const form = await buildCardForm({
+    referenceNumber: orderNumber,
+    totalMinor: order.totalMinor,
+    customerName: order.name,
+    email: order.email,
+    phone: order.phone,
+  });
+  return { ok: true, kind: "redirect", orderNumber, token, ...form };
 }

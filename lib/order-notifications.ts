@@ -6,6 +6,7 @@ import { getContentBlock } from "./content";
 import { alertRecipients, isEmailConfigured, sendMail } from "./email";
 import { buildAdminAlertEmail, buildCustomerConfirmationEmail, type OrderEmailContext } from "./emails/order";
 import { orderLookupToken } from "./order-tokens";
+import { GIFT_WRAP_NOTE } from "./orders";
 import { siteOrigin } from "./site-url";
 
 /**
@@ -33,6 +34,7 @@ interface OrderRow extends RowDataPacket {
   total_amount: string;
   payment_method: string;
   payment_status: string;
+  note: string | null;
 }
 
 interface ItemRow extends RowDataPacket {
@@ -48,7 +50,7 @@ async function buildContext(orderNumber: string): Promise<OrderEmailContext | nu
   const order = await queryOne<OrderRow>(
     `SELECT id, order_number, customer_name, email, phone, address_line1,
             coupon_code, discount_amount, shipping_amount, subtotal, total_amount,
-            payment_method, payment_status
+            payment_method, payment_status, note
        FROM orders WHERE order_number = ? LIMIT 1`,
     [orderNumber],
   );
@@ -73,6 +75,7 @@ async function buildContext(orderNumber: string): Promise<OrderEmailContext | nu
     phone: order.phone,
     email: order.email,
     address: order.address_line1,
+    giftWrap: (order.note ?? "").includes(GIFT_WRAP_NOTE),
     lines: items.map((item) => ({
       name: item.product_name,
       sku: item.product_sku || null,

@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
-import { loadOrderForReceipt, markOrderFailed, markOrderPaid } from "@/lib/orders";
+import { after, NextResponse } from "next/server";
+import { loadOrderForReceipt, markOrderFailed, markOrderPaid, markPaymentUnconfirmed } from "@/lib/orders";
 import { notifyOrderPlaced } from "@/lib/order-notifications";
 import { lookupKhaltiPayment } from "@/lib/payments/khalti";
 import { siteOrigin } from "@/lib/site-url";
@@ -31,14 +31,26 @@ export async function GET(request: Request) {
     return fail("khalti_invalid_response");
   }
 
+  const receipt = `${site}/checkout/confirmation?order=${encodeURIComponent(order.orderNumber)}&token=${encodeURIComponent(token ?? "")}`;
+
   const lookup = await lookupKhaltiPayment(pidx);
-  if (!lookup) {
-    await markOrderFailed(order.orderNumber, "Khalti lookup failed");
-    return fail("khalti_lookup_failed");
+  /*
+   * No answer, or "Pending", is not a "no" — the money may already have moved.
+   * Both used to fail the order: the customer read "no charge was made", paid
+   * again, and the pidx needed to reconcile the first payment was thrown away.
+   * The order now waits with the pidx on it, and the receipt page says the
+   * payment is being confirmed.
+   */
+  if (!lookup || lookup.status === "Pending") {
+    await markPaymentUnconfirmed(
+      order.orderNumber,
+      `Khalti ${lookup ? "status Pending" : "lookup unanswered"} — pidx ${pidx}`,
+    );
+    return NextResponse.redirect(receipt);
   }
 
   if (lookup.status !== "Completed") {
-    // Pending, Initiated, Refunded, User canceled — none of them are paid.
+    // Initiated, Expired, User canceled, Refunded — none of them are paid.
     await markOrderFailed(order.orderNumber, `Khalti status: ${lookup.status}`);
     return fail(`khalti_${lookup.status.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`);
   }
@@ -54,10 +66,9 @@ export async function GET(request: Request) {
   });
   if (justPromoted) {
     // Guarded by the transition, so a retried callback cannot send twice.
-    await notifyOrderPlaced(order.orderNumber);
+    // After the redirect, so a slow mail server cannot hold it up.
+    after(() => notifyOrderPlaced(order.orderNumber));
   }
 
-  return NextResponse.redirect(
-    `${site}/checkout/confirmation?order=${encodeURIComponent(order.orderNumber)}&token=${encodeURIComponent(token ?? "")}`,
-  );
+  return NextResponse.redirect(receipt);
 }

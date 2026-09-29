@@ -90,14 +90,30 @@ const cases: { name: string; d: CouponDraft; subtotalMinor: number; expect: numb
     says: /^रु 5,000 off/,
   },
   {
-    name: "a third off, rounded to the paisa",
+    name: "a third off, rounded to the whole rupee",
     d: draft({ code: "THIRD", discountValue: "33.33" }),
     subtotalMinor: rupees(12_345),
-    // 1234500 * 33.33 / 100 = 411458.85 -> 411459, rounded once and only once
-    expect: 411_459,
+    // 12,345 * 33.33% = 4,114.59 -> रु 4,115, rounded once and only once, to
+    // the rupee: every figure a customer sees is whole rupees, so a discount
+    // carrying paise printed one amount and charged another.
+    expect: rupees(4_115),
     says: /^33.33% off/,
   },
 ];
+
+// A cap is whole rupees for the same reason a fixed amount is. The drawer
+// refuses paise; a legacy row that carries them is floored, never exceeded.
+checks.push(
+  [
+    "the drawer refuses a cap with paise",
+    Boolean(validateDraft(draft({ code: "CAPPED", discountValue: "50", maxDiscount: "999.50" })).maxDiscount),
+  ],
+  [
+    "a stored cap with paise is floored, never exceeded",
+    couponDiscountMinor(rupees(10_000), { discountType: "percent", discountValue: "50", maxDiscount: "999.50" }) ===
+      rupees(999),
+  ],
+);
 
 /** What the checkout would take off this draft. The REAL function, fed by the
  *  one translation the drawer uses — no test-only reimplementation between. */
