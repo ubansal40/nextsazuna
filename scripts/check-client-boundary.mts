@@ -67,6 +67,61 @@ function resolve(from: string, spec: string): string | null {
 }
 
 const IMPORT = /import\s+(type\s+)?(\{[^}]*\}|[\w*]+(?:\s*,\s*\{[^}]*\})?)\s+from\s+["']([^"']+)["']/g;
+const NAMESPACE_IMPORT = /import\s+\*\s+as\s+\w+\s+from\s+["']([^"']+)["']/g;
+const RE_EXPORT = /export\s+(type\s+)?\{([^}]*)\}\s+from\s+["']([^"']+)["']/g;
+const STAR_EXPORT = /export\s+\*\s+from\s+["']([^"']+)["']/g;
+
+/**
+ * The module a name really comes from, following `export { … } from` and
+ * `export * from` re-exports.
+ *
+ * Imports are meant to go through barrels — CLAUDE.md sends every primitive
+ * through `@/components/ui` — and the barrel itself is not a client module, so
+ * a check that stopped at the first file it resolved never saw a value that a
+ * client module re-exported through one. A `"use client"` constant reached as
+ * `import { X } from "@/components/ui"` is exactly as much of a proxy as one
+ * imported from its own file.
+ */
+function origin(file: string, name: string, seen = new Set<string>()): string {
+  if (seen.has(file)) return file;
+  seen.add(file);
+  const text = source.get(file) ?? "";
+  for (const [, typeOnly, list, spec] of text.matchAll(RE_EXPORT)) {
+    if (typeOnly) continue;
+    for (const entry of list.split(",").map((e) => e.trim()).filter(Boolean)) {
+      if (entry.startsWith("type ")) continue;
+      const [original, alias] = entry.split(/\s+as\s+/).map((part) => part.trim());
+      if ((alias ?? original) !== name) continue;
+      const target = resolve(file, spec);
+      return target ? origin(target, original, seen) : file;
+    }
+  }
+  for (const [, spec] of text.matchAll(STAR_EXPORT)) {
+    const target = resolve(file, spec);
+    if (!target) continue;
+    const found = origin(target, name, seen);
+    if (found !== target || new RegExp(`export\\s+(?:const|let|var|function|class|async\\s+function)\\s+${name}\\b`).test(source.get(target) ?? "")) {
+      return found;
+    }
+  }
+  return file;
+}
+
+/** Every module a namespace import can reach, through re-exports. */
+function reachable(file: string, seen = new Set<string>()): string[] {
+  if (seen.has(file)) return [];
+  seen.add(file);
+  const text = source.get(file) ?? "";
+  const next = [...text.matchAll(RE_EXPORT)].filter((m) => !m[1]).map((m) => m[3]);
+  next.push(...[...text.matchAll(STAR_EXPORT)].map((m) => m[1]));
+  return [
+    file,
+    ...next.flatMap((spec) => {
+      const target = resolve(file, spec);
+      return target ? reachable(target, seen) : [];
+    }),
+  ];
+}
 
 interface Violation {
   file: string;
@@ -81,7 +136,7 @@ for (const [file, text] of source) {
     const [, typeOnly, clause, spec] = match;
     if (typeOnly) continue;
     const target = resolve(file, spec);
-    if (!target || !isClient(target)) continue;
+    if (!target) continue;
 
     const braces = clause.match(/\{([^}]*)\}/);
     const names = (braces ? braces[1] : clause)
@@ -94,7 +149,20 @@ for (const [file, text] of source) {
       // read and find is not what it says it is.
       .filter((n) => !/^[A-Z][a-z]/.test(n));
 
-    if (names.length > 0) violations.push({ file, target, names });
+    // Grouped by the client module each value really lives in.
+    const byOrigin = new Map<string, string[]>();
+    for (const name of names) {
+      const home = origin(target, name);
+      if (isClient(home)) byOrigin.set(home, [...(byOrigin.get(home) ?? []), name]);
+    }
+    for (const [home, found] of byOrigin) violations.push({ file, target: home, names: found });
+  }
+
+  // `import * as ns` from a client module is a proxy object, whatever it holds.
+  for (const [, spec] of text.matchAll(NAMESPACE_IMPORT)) {
+    const target = resolve(file, spec);
+    const client = target ? reachable(target).find(isClient) : undefined;
+    if (client) violations.push({ file, target: client, names: ["* (namespace import)"] });
   }
 }
 
