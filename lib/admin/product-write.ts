@@ -223,12 +223,23 @@ export async function previewRulePrice(input: {
   });
 }
 
+/**
+ * A slug no other page holds. `/jewellery/{slug}.html` resolves categories,
+ * then tags, then collections, and products last (lib/catalog/resolve-slug.ts),
+ * so a product whose name matched a category — a ring called "Rings" — saved
+ * fine and could never be opened: its URL showed the category. Checked against
+ * all four tables, as the taxonomy's own slugs are (lib/admin/taxonomy.ts).
+ */
 async function uniqueSlug(conn: PoolConnection, base: string, excludeId: number | null): Promise<string> {
   for (let n = 0; n < 50; n += 1) {
     const candidate = n === 0 ? base : `${base}-${n + 1}`;
     const [rows] = await conn.execute<SlugRow[]>(
-      "SELECT id FROM products WHERE slug = ? AND id <> ? LIMIT 1",
-      [candidate, excludeId ?? 0],
+      `SELECT id FROM products WHERE slug = ? AND id <> ?
+       UNION ALL SELECT id FROM categories WHERE slug = ?
+       UNION ALL SELECT id FROM tags WHERE slug = ?
+       UNION ALL SELECT id FROM collections WHERE slug = ?
+       LIMIT 1`,
+      [candidate, excludeId ?? 0, candidate, candidate, candidate],
     );
     if (rows.length === 0) return candidate;
   }
